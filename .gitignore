@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods / Carthage (if ever used)
+Pods/
+Carthage/Build/
+
+# Duplicate/backup folders that Xcode sometimes creates (e.g. "ShelfHead 2", "Services 2")
+ShelfHead 2/
+* 2/
+* 2.xcassets/
+* 3/

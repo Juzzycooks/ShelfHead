@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<!-- ShelfHead only uses encryption built into iOS (HTTPS via URLSession/AVFoundation),
+	     which is exempt from export compliance documentation. Setting this to false skips
+	     the per-build encryption prompt in App Store Connect. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- Self-hosted Audiobookshelf servers are frequently reached over plain HTTP
+	     on a LAN, a private IP, or a VPN address (Tailscale/WireGuard). Without an
+	     ATS exception iOS blocks those connections outright. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Shown when the app first reaches a device on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ShelfHead connects to your Audiobookshelf server, which may be on your local network.</string>
+</dict>
+</plist>
