@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+	<!-- S6 (REVIEW_2026-08-20_UI_SECURITY.md): matches ShelfHead/Info.plist's own
+	     ITSAppUsesNonExemptEncryption declaration, for consistency across targets. Accurate
+	     for the same reason it's accurate there: the only crypto anywhere in the app is
+	     OS-provided SHA256 (DiskCoverCache's cache-key hash, OIDCAuthService's PKCE
+	     code_challenge) — no CommonCrypto/AES/HMAC/custom cipher in this target or any
+	     other. App Store Connect asks this at the bundle level keyed off the primary app,
+	     so this was very likely inconsequential either way; added for consistency rather
+	     than to close a real gap. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

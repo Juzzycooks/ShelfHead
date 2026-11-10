@@ -1,0 +1,27 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.05490,0.10588,0.24314,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "02-headphones.png",
+          "name" : "02-headphones",
+          "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+        },
+        {
+          "image-name" : "01-disc.svg",
+          "name" : "01-disc",
+          "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+        }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [ "watchOS" ],
+    "squares" : "shared"
+  }
+}

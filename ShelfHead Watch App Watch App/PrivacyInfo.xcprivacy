@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ShelfHead Watch does not track users across apps/websites. -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <!-- No tracking domains. -->
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!-- The Watch app collects no data on behalf of the developer. It mirrors
+         playback/library state pushed over WatchConnectivity from the paired iPhone
+         app, and in standalone mode talks directly to the user's own Audiobookshelf
+         server for library, cover art, progress and downloads. -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <!-- Required-reason API declarations.
+
+         Refreshed 9 September 2026 (REVIEW-2026-09-09.md, HIGH "Watch privacy manifest
+         declares no required-reason APIs"). The comment that used to be here said "none.
+         Checked every source file … none are used" — that was true when the Watch target
+         was only a WatchConnectivity mirror, and became false once standalone mode landed
+         (Batch 255 onwards) and brought its own UserDefaults, storage-cap and file
+         attribute code with it. An undeclared required-reason API in an *embedded* bundle
+         is an ITMS-91053 upload rejection that blocks the whole submission, phone app
+         included, so this list is now maintained from the actual call sites below.
+
+         Structure mirrors ShelfHead/PrivacyInfo.xcprivacy exactly (same key order, same
+         dictionary shape) so the two files stay diffable against each other. -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <!-- UserDefaults: `UserDefaults.standard` only — this bundle's OWN container,
+                 no App Group suite (unlike the phone and the widget extension, which also
+                 need 1C8F.1 for cross-target access to "group.com.shelfhead.app"; the
+                 Watch reads nothing from that suite). Three call sites, all of them small
+                 user-facing preferences or resume bookkeeping:
+                   - WatchStore.swift:163, :499 — the Automatic/Always Companion/Always
+                     Standalone mode preference.
+                   - WatchStandaloneLibraryStore.swift:79, :92 — the last-chosen standalone
+                     library id, so the app doesn't re-ask on every launch.
+                   - WatchProgressSync.swift:159, :171, :289 — the last position pushed per
+                     item, used to avoid re-pushing an unchanged position. -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+        <dict>
+            <!-- Disk space: `.volumeAvailableCapacityKey` on the standalone downloads root
+                 (WatchLocalDownloadManager.swift:360-361, `refreshAvailableCapacity()`).
+                 Batch 472 review Low (30 October 2026): reason codes corrected against Apple's list.
+                   - E174.1 ("check whether there is sufficient disk space to write files, or ... low
+                     so that the app can delete files") is the primary use: `effectiveCapBytes` takes
+                     the smaller of a 500MB ceiling and half of actual free space, and
+                     `evictIfNeeded()` drops the oldest downloads against that cap.
+                   - 85F4.1 ("display disk space information to the person") also applies: the same
+                     figure is rendered by StandaloneDownloadsView ("<n> free on this Watch").
+                 B728.1 (health research apps) was wrong here and on the phone. The phone declares
+                 E174.1 only. -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string>
+                <string>85F4.1</string>
+            </array>
+        </dict>
+        <dict>
+            <!-- File timestamps: declared conservatively, matching the position the phone's
+                 manifest already takes (Apple's list flags the `attributesOfItem(atPath:)`
+                 family of calls, not only a read of `.modificationDate`). The Watch's two
+                 call sites both read `[.size]` and never look at a date:
+                 WatchLocalDownloadManager.swift:402 (`integrityFailureReason` — zero-byte /
+                 size-mismatch check on a just-finished track) and :481 (summing a completed
+                 book's on-disk bytes for the manifest). Both are inside this bundle's own
+                 container, which is exactly what C617.1 covers. Declared rather than
+                 omitted because over-declaring costs nothing while an omission here is an
+                 upload blocker; if a future audit confirms a `[.size]`-only read is out of
+                 scope for this category, this entry can go. -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Swept 9 September 2026 and NOT used anywhere under "ShelfHead Watch App Watch App"
+         (grep, read-only): system boot time (`systemUptime`, `mach_absolute_time`,
+         `CACurrentMediaTime`, `clock_gettime`) and active keyboard APIs
+         (`activeInputModes`, `UITextInputMode`) — zero hits, so neither the
+         SystemBootTime nor the ActiveKeyboards category needs an entry here. -->
+</dict>
+</plist>

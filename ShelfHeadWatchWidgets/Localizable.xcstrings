@@ -1,0 +1,74 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@, %lld percent" : {
+      "comment" : "VoiceOver label for a watch complication. %1$@ is the book title, %2$lld is the progress percentage.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld percent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "%1$@，百分之 %2$lld"
+          }
+        }
+      }
+    },
+    "%lld%% · %@" : {
+      "comment" : "Watch complication subtitle. %1$lld is the progress percentage, %2$@ is the author.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld%% · %2$@"
+          }
+        }
+      }
+    },
+    "Continue listening" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "继续收听"
+          }
+        }
+      }
+    },
+    "Open ShelfHead" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "打开 ShelfHead"
+          }
+        }
+      }
+    },
+    "ShelfHead" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "ShelfHead"
+          }
+        }
+      }
+    },
+    "Your current book, and a shortcut into ShelfHead." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "显示你当前在听的书，并可快速打开 ShelfHead。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.3"
+}

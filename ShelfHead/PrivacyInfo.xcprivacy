@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ShelfHead does not track users across apps/websites. -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <!-- No tracking domains. -->
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!-- ShelfHead collects no data on behalf of the developer. All credentials and
+         settings stay on the device or are sent only to the user's own server. -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <!-- Required-reason API declarations. -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <!-- UserDefaults: app settings/preferences (CA92.1, own-container-only) AND
+                 the shared App Group suite "group.com.shelfhead.app" (SharedPlayback's
+                 now-playing snapshot, the theme mirror, the settings mirror the widget
+                 reads) — that cross-target sharing needs the separate 1C8F.1 reason;
+                 CA92.1 alone only covers UserDefaults private to this app/app-group's
+                 own single target. SEC-7 (REVIEW_2026-08-12.md). -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+                <string>1C8F.1</string>
+            </array>
+        </dict>
+        <dict>
+            <!-- Disk space: `.volumeAvailableCapacityForImportantUsageKey` on the downloads
+                 root, read from the single call site
+                 `DownloadManager.hasSpaceAvailable(atLeast:)` (DownloadManager.swift:597-604),
+                 which `startDownload` consults before enqueuing so the user gets "Not enough
+                 free space to download …" up front instead of a failure after fetching the
+                 whole book.
+
+                 Reason corrected 30 October 2026 (Batch 472 review Low) from B728.1 back to E174.1.
+                 Apple's required-reason list (NSPrivacyAccessedAPITypeReasons): E174.1 = "Declare this
+                 reason to check whether there is sufficient disk space to write files, or to check
+                 whether the disk space is low so that the app can delete files when the disk space is
+                 low. The app must behave differently based on disk space in a way that is observable to
+                 users" (here: the "Not enough free space" refusal). B728.1 is "if your app is a health
+                 research app ... low disk space impacting the research data collection", which does not
+                 apply. 85F4.1 = display disk space to the person (not done on the phone). The 9 September
+                 2026 edit had the E174.1 / 85F4.1 meanings swapped. Call sites: `DownloadManager
+                 .hasSpaceAvailable(atLeast:)` and `availableBytes()` (bulk-download planner). -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string>
+            </array>
+        </dict>
+        <dict>
+            <!-- File timestamps: DiskCoverCache.evictIfNeeded() reads each cached cover's
+                 modification date (Caches/covers/, inside the app container) to evict the
+                 oldest files first once the cache exceeds its size cap.
+
+                 S6 (REVIEW_2026-08-20_UI_SECURITY.md): this comment previously named only
+                 DiskCoverCache, which was narrower than the app's actual usage — not a
+                 compliance gap (C617.1 covers in-container access, and every site below is
+                 inside the app container), but worth naming so the next person auditing
+                 this manifest isn't misled. Three more `attributesOfItem(atPath:)` call
+                 sites in DownloadManager.swift also fall under this same required-reason
+                 category (Apple's API list flags the call itself, not just a read of
+                 `.modificationDate`): integrity-checking a just-finished track's on-disk
+                 size (~line 101), reading an orphaned download directory's manifest.json
+                 modification date to decide whether it's abandoned (~line 866,
+                 sweepOrphanedDownloadDirectories), and a downloaded track's on-disk health
+                 check (~line 976, fileHealthIssue). Line numbers are approximate and will
+                 drift with future edits. -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

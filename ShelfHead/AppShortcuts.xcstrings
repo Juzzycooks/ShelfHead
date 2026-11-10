@@ -1,0 +1,145 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Find a passage in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Find a passage in ${applicationName}",
+              "Search my audiobook in ${applicationName}",
+              "Go back to a part of my book in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Play ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Play ${applicationName}",
+              "Play in ${applicationName}",
+              "Resume ${applicationName}",
+              "Continue ${applicationName}",
+              "Continue my audiobook in ${applicationName}",
+              "Play my book in ${applicationName}"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "播放 ${applicationName}",
+              "在 ${applicationName} 中播放",
+              "继续播放 ${applicationName}",
+              "继续使用 ${applicationName}",
+              "在 ${applicationName} 中继续播放我的有声书",
+              "在 ${applicationName} 中播放我的书"
+            ]
+          }
+        }
+      }
+    },
+    "Play ${book} in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Play ${book} in ${applicationName}",
+              "Play a book in ${applicationName}",
+              "Play an audiobook in ${applicationName}"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "用 ${applicationName} 播放 ${book}",
+              "在 ${applicationName} 中播放 ${book}",
+              "在 ${applicationName} 中播放一本书",
+              "在 ${applicationName} 中播放一本有声书"
+            ]
+          }
+        }
+      }
+    },
+    "Set a sleep timer in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Set a sleep timer in ${applicationName}",
+              "Start a sleep timer in ${applicationName}",
+              "Sleep timer in ${applicationName}"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "在 ${applicationName} 中设置睡眠定时器",
+              "在 ${applicationName} 中启动睡眠定时器",
+              "${applicationName} 睡眠定时器"
+            ]
+          }
+        }
+      }
+    },
+    "Skip ahead in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Skip ahead in ${applicationName}"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "在 ${applicationName} 中前进"
+            ]
+          }
+        }
+      }
+    },
+    "Skip back in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Skip back in ${applicationName}"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "在 ${applicationName} 中后退"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.3"
+}

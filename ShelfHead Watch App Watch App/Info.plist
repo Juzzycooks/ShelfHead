@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Batch 255 (28 August 2026): the Watch target's first-ever physical Info.plist —
+	     see WATCH_STANDALONE_PROPOSAL_2026-08-28-ADDENDUM.md §12 for why
+	     GENERATE_INFOPLIST_FILE had to go from YES to NO rather than keep the
+	     array-typed INFOPLIST_KEY_UIBackgroundModes build-setting approach: a bare
+	     single-token value (no whitespace to split on, unlike
+	     INFOPLIST_KEY_UISupportedInterfaceOrientations) could not be confirmed to
+	     synthesize as an <array> rather than a scalar <string> from the project file
+	     alone, and the live device dump confirmed the latter. Every key below either
+	     migrates a value GENERATE_INFOPLIST_FILE = YES was already producing
+	     correctly (the first four), or replaces a value Xcode was synthesizing
+	     silently that a hand-written plist does not get for free (the rest) — per the
+	     live `plutil -p` dump taken against the previously-generated bundle. -->
+
+	<!-- Batch 402: Xcode's generated plist carried this, the hand-written one never
+	     did. With English compiled into the binary and zh-Hans as the only .lproj,
+	     a missing development region made watchOS fall back to Chinese for every
+	     non-Chinese user. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+
+	<!-- Migrated: already correct under GENERATE_INFOPLIST_FILE = YES. -->
+	<key>CFBundleDisplayName</key>
+	<string>ShelfHead</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>com.justin.ShelfHead</string>
+
+	<!-- Stage 7 (28 August 2026, WATCH_STANDALONE_PROPOSAL_2026-08-28-ADDENDUM.md
+	     §5's revised stage table row 7): confirmed compatible with
+	     WKCompanionAppBundleIdentifier via Apple's own primary documentation, not a
+	     forum summary — Apple's doc for this key states plainly that Xcode sets it to
+	     YES by default for exactly this project's own template (iOS App with Watch
+	     App) and that "Users can choose to install the iOS app, the watchOS app, or
+	     both." Kept alongside WKCompanionAppBundleIdentifier rather than replacing it
+	     — the two are explicitly meant to coexist for this template, per that same
+	     documentation. -->
+	<key>WKRunsIndependentlyOfCompanionApp</key>
+	<true/>
+
+	<!-- The actual fix: hand-written as a real array, not a build-setting value that
+	     could silently resolve to a scalar. This is the one key GENERATE_INFOPLIST_FILE
+	     = YES could not be confirmed to produce correctly — see comment above. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
+	<!-- Real on-device bug fix (29 August 2026): Standalone mode showed "Retry" /
+	     couldn't-reach-server on every request even with the Watch confirmed connected
+	     to its own Wi-Fi — because this file had no NSAppTransportSecurity override at
+	     all. The main app's Info.plist (`ShelfHead/Info.plist`) has carried this exact
+	     block since before the Watch target existed (ShelfHead is a client for the
+	     user's OWN self-hosted Audiobookshelf server, routinely reached over plain HTTP
+	     at a LAN/VPN address the app can't know in advance — see that file's own longer
+	     justification comment), but this Watch target's Info.plist was hand-written
+	     from scratch in Batch 255 under GENERATE_INFOPLIST_FILE = NO and this key was
+	     simply never carried over. Under watchOS's default ATS, the Watch's own
+	     independent network stack was rejecting every plain-HTTP request outright
+	     before it was even sent — while the phone, which does have this exception,
+	     worked fine reaching the exact same server. This is why standalone mode failed
+	     specifically, and only, on the Watch's own connection:
+	     `WatchStore.resolveMode()`/`bootstrapAuth()` only route through the Watch's own
+	     `URLSession` when the phone isn't in the loop at all.
+
+	     Corrected 9 September 2026, two things:
+
+	     1. NSAllowsLocalNetworking removed. Apple documents that
+	        NSAllowsArbitraryLoads is IGNORED whenever NSAllowsLocalNetworking (or the
+	        WebContent/Media variants) is present in the same dictionary, so with both
+	        keys set only the local-networking exemption was live and a public
+	        http:// host still failed with -1022. The blanket key alone is a superset
+	        of what NSAllowsLocalNetworking granted, so the LAN/VPN case this block
+	        was added for keeps working. The phone's Info.plist got the same change in
+	        the same pass.
+
+	     2. The sentence above used to read "every plain-HTTP (or invalid-cert HTTPS)
+	        request". The parenthetical was wrong and has been deleted: ATS exceptions
+	        do not relax certificate trust. A self-signed or otherwise untrusted HTTPS
+	        certificate is rejected by the system's trust evaluation, which no key in
+	        this dictionary affects (and the Watch installs no URLSession trust-override
+	        delegate). Such a server must be reached over plain http://, or have its CA
+	        installed and trusted on the Watch.
+
+	     Honest scope note: unlike the phone, the Watch has NO in-app plain-HTTP
+	     acknowledgement. `AuthViewModel.requiresInsecureConnectionConfirmation` and the
+	     URL normalisation behind it are iOS-target-only; `WatchManualSignInView` /
+	     `WatchAudiobookshelfAPI.login` string-build the URL and send credentials with
+	     no warning, so on the Watch this blanket exception currently has no
+	     application-level gate in front of it. That gap is tracked separately as
+	     REVIEW-2026-09-09.md's HIGH "Watch standalone sign-in has no URL validation and
+	     no plain-HTTP gate" (fix-plan item 8) — it is not fixed here, and removing
+	     NSAllowsLocalNetworking does not make it worse (the exception was already
+	     blanket on paper; cleartext to a LAN host was already permitted, which is where
+	     a Watch typically signs in). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+
+	<!-- Previously synthesized silently by GENERATE_INFOPLIST_FILE = YES; written out
+	     explicitly now that nothing does that automatically. Values use build-setting
+	     variables (not literals) so the existing 12-config sync rule (version bumps
+	     via `sed` across every config) keeps working unchanged, and so this file
+	     doesn't drift from project.pbxproj's own values the way a hardcoded copy
+	     eventually would. -->
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>MinimumOSVersion</key>
+	<string>$(WATCHOS_DEPLOYMENT_TARGET)</string>
+	<!-- Build-fix (28 August 2026, real Xcode warning): "User supplied UIDeviceFamily
+	     key in the Info.plist will be overwritten. Please use the build setting
+	     TARGETED_DEVICE_FAMILY and remove UIDeviceFamily from your Info.plist." This
+	     key was migrated here on the (wrong) assumption that GENERATE_INFOPLIST_FILE
+	     = YES had been synthesizing it from nowhere, when it's actually driven by the
+	     TARGETED_DEVICE_FAMILY build setting — already `= 4` on both Watch configs
+	     (project.pbxproj), unrelated to and unaffected by this file's own
+	     GENERATE_INFOPLIST_FILE = NO / INFOPLIST_FILE switch from Batch 255. Removed
+	     rather than left in as a harmless duplicate: Xcode's own warning states it
+	     gets overwritten anyway, so keeping it here was never doing anything besides
+	     risking exactly this warning (and, per Apple's own wording, worse if the two
+	     ever disagreed). -->
+	<key>WKApplication</key>
+	<true/>
+
+	<!-- Corrected against a real `plutil -p` dump (28 August 2026) — the previously
+	     generated bundle's actual Info.plist had no top-level CFBundleIconName at
+	     all, only the nested CFBundleIcons → CFBundlePrimaryIcon → CFBundleIconName
+	     shown below. The top-level key this file used to also carry was written
+	     from general knowledge of Xcode's standard synthesis shape (flagged
+	     `[device check]` at the time, in Batch 255), and that guess turned out to
+	     be wrong in this one specific respect — removed rather than left in
+	     alongside the confirmed-correct nested version. `ASSETCATALOG_COMPILER_APPICON_NAME
+	     = AppIcon` (already set on both Watch configs) is what actually supplies
+	     the icon regardless of which of these keys is present. -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
