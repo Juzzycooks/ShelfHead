@@ -104,4 +104,18 @@ nonisolated enum ListenTogetherLogic {
 
     /// "SharePlay · 2 people" style count text is built in the view; this clamps nonsense counts.
     static func displayCount(_ participants: Int) -> Int { max(1, participants) }
+
+    /// Batch 490 (REVIEW 2026-11-11 P11): the status banner's line. Alone in the session (the
+    /// count includes you) it says who it's waiting for rather than "1 people"; otherwise the
+    /// formatted head count, which is always two or more, so "people" is always right.
+    static func statusLine(participants: Int) -> String {
+        let count = displayCount(participants)
+        if count <= 1 {
+            return String(localized: "SharePlay \u{00B7} Waiting for others",
+                          comment: "SharePlay banner while you're the only one in the session")
+        }
+        let formatted = count.formatted()
+        return String(localized: "SharePlay \u{00B7} \(formatted) people",
+                      comment: "SharePlay banner. %@ is the number of people listening, always 2 or more")
+    }
 }

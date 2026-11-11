@@ -668,6 +668,28 @@ actor AudiobookshelfAPI {
         return try await get("/api/me/listening-stats")
     }
 
+    // Batch 490 (REVIEW 2026-11-11 F11a): `GET /api/libraries/:id/stats` (LibraryController.stats; any user with
+    // access to the library). Books and podcasts both answer; the Stats tab only shows book libraries.
+    func getLibraryStats(libraryId: String) async throws -> LibraryStats {
+        try await get("/api/libraries/\(percentEncodedPathComponent(libraryId))/stats")
+    }
+
+    // Batch 490 (REVIEW 2026-11-11 F11a): the e-reader devices this user may send to. The server has no GET for
+    // them: `ereaderDevices` rides on the login/`POST /api/authorize` payload (Auth.getUserLoginResponsePayload,
+    // filtered by `EmailSettings.getEReaderDevices(user)`), so the signed-in session re-reads it here.
+    func getEReaderDevices() async throws -> [EReaderDevice] {
+        let data = try await send(path: "/api/authorize", method: "POST")
+        return try JSONDecoder().decode(AuthorizeEReaderDevices.self, from: data).ereaderDevices ?? []
+    }
+
+    /// `POST /api/emails/send-ebook-to-device` with `{ libraryItemId, deviceName }` (EmailController.sendEBookToDevice).
+    /// 200 on success; 404 (device/item/ebook missing), 403, or 400 with the mail error as plain text on failure.
+    func sendEbookToDevice(itemId: String, deviceName: String) async throws {
+        struct Body: Encodable { let libraryItemId: String; let deviceName: String }
+        _ = try await send(path: "/api/emails/send-ebook-to-device", method: "POST",
+                           body: try JSONEncoder().encode(Body(libraryItemId: itemId, deviceName: deviceName)))
+    }
+
     /// Recent listening sessions (newest first), for the history screen.
     func getListeningSessions(page: Int = 0, itemsPerPage: Int = 50) async throws -> [ListeningSession] {
         let params = [("page", "\(page)"), ("itemsPerPage", "\(itemsPerPage)")]
@@ -1068,26 +1090,113 @@ actor AudiobookshelfAPI {
     // MARK: - Search
 
     func search(libraryId: String, query: String) async throws -> [LibraryItem] {
-        struct SearchResponse: Codable {
-            let book: [BookResult]?
-            let series: [SeriesResult]?
+        // Batch 490 (REVIEW 2026-11-11 L1): a thin wrapper over the grouped search so CarPlay,
+        // Siri and the view model keep their book-only call shape.
+        try await searchGrouped(libraryId: libraryId, query: query).books
+    }
 
-            struct BookResult: Codable { let libraryItem: LibraryItem }
-            struct SeriesResult: Codable { let books: [LibraryItem]? }
+    /// Batch 490 (REVIEW 2026-11-11 L1): server cap for one search. ABS's
+    /// `LibraryController.search` uses `req.query.limit || 12`, so without this the
+    /// Library search showed at most 12 books.
+    static let searchResultLimit = 50
+
+    /// Batch 490 (REVIEW 2026-11-11 L1): the grouped online search. `GET
+    /// /api/libraries/:id/search?q=&limit=` returns, for a book library,
+    /// `{book:[{libraryItem}], series:[{series, books}], authors:[author], narrators:[{name,numBooks}], tags, genres}`;
+    /// a podcast library returns `{podcast, tags, genres, episodes}` instead, which decodes to empty groups.
+    func searchGrouped(libraryId: String, query: String) async throws -> SearchGroups {
+        let queryItems = [URLQueryItem(name: "q", value: query),
+                          URLQueryItem(name: "limit", value: String(Self.searchResultLimit))]
+        let data = try await send(path: "/api/libraries/\(pc(libraryId))/search", method: "GET", queryItems: queryItems)
+        return try SearchGroups.decode(data)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L1): one search's grouped results. Each group decodes
+    /// leniently, so one unexpected author or narrator shape can't empty the book list.
+    struct SearchGroups {
+        struct Person: Equatable, Hashable {
+            let id: String?
+            let name: String
+            let numBooks: Int?
         }
+        var books: [LibraryItem] = []
+        var authors: [Person] = []
+        var narrators: [Person] = []
 
-        let queryItems = [URLQueryItem(name: "q", value: query)]
-        let response: SearchResponse = try await get("/api/libraries/\(libraryId)/search", queryItems: queryItems)
+        nonisolated static func decode(_ data: Data) throws -> SearchGroups {
+            struct BookResult: Decodable { let libraryItem: LibraryItem }
+            struct SeriesResult: Decodable { let books: LossyArray<LibraryItem>? }
+            struct PersonResult: Decodable {
+                let id: String?
+                let name: String?
+                let numBooks: Int?
+            }
+            struct Response: Decodable {
+                let book: LossyArray<BookResult>?
+                let series: LossyArray<SeriesResult>?
+                let authors: LossyArray<PersonResult>?
+                let narrators: LossyArray<PersonResult>?
+            }
+            let response = try JSONDecoder().decode(Response.self, from: data)
 
-        // Direct book matches first, then books surfaced via matching series (so a
-        // series/author name search returns its books). De-duplicated by id.
-        var results = response.book?.map(\.libraryItem) ?? []
-        var seen = Set(results.map(\.id))
-        for book in (response.series ?? []).flatMap({ $0.books ?? [] }) where !seen.contains(book.id) {
-            results.append(book)
-            seen.insert(book.id)
+            // Direct book matches first, then books surfaced via matching series (so a
+            // series name search returns its books). De-duplicated by id.
+            var books = response.book?.elements.map(\.libraryItem) ?? []
+            var seen = Set(books.map(\.id))
+            for book in (response.series?.elements ?? []).flatMap({ $0.books?.elements ?? [] }) where !seen.contains(book.id) {
+                books.append(book)
+                seen.insert(book.id)
+            }
+            func people(_ list: [PersonResult]?, needsId: Bool) -> [Person] {
+                var seenNames = Set<String>()
+                return (list ?? []).compactMap { p in
+                    let name = (p.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty, !(needsId && (p.id ?? "").isEmpty) else { return nil }
+                    guard seenNames.insert(name.lowercased()).inserted else { return nil }
+                    return Person(id: p.id, name: name, numBooks: p.numBooks)
+                }
+            }
+            return SearchGroups(books: books,
+                                authors: people(response.authors?.elements, needsId: true),
+                                narrators: people(response.narrators?.elements, needsId: false))
         }
-        return results
+    }
+
+    // MARK: - Continue Listening (Batch 490, REVIEW 2026-11-11 F1)
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): hides one book from the server's Continue Listening shelf.
+    /// ABS routes the hide by the *media-progress* id, not the item id:
+    /// `GET /api/me/progress/:id/remove-from-continue-listening` (`MeController.removeItemFromContinueListening`,
+    /// 404 when no progress has that id). The progress id comes from `GET /api/me/progress/:libraryItemId`
+    /// (`MeController.getMediaProgress`), because a decoded `MediaProgress.id` may be synthesised.
+    func removeItemFromContinueListening(libraryItemId: String) async throws {
+        struct ProgressID: Decodable { let id: String }
+        let progress: ProgressID = try await get("/api/me/progress/\(pc(libraryItemId))")
+        _ = try await send(path: "/api/me/progress/\(pc(progress.id))/remove-from-continue-listening", method: "GET")
+        invalidateUserCache()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): the Undo for the hide above. `PATCH /api/me/progress/:libraryItemId`
+    /// with `{"hideFromContinueListening": false}` — `MediaProgress.applyProgressUpdate` sets the
+    /// payload's fields, and the flag is part of the documented `ProgressUpdatePayload`.
+    func readdItemToContinueListening(libraryItemId: String) async throws {
+        struct Body: Codable { let hideFromContinueListening: Bool }
+        try await patchNoResponse("/api/me/progress/\(pc(libraryItemId))", body: Body(hideFromContinueListening: false))
+        invalidateUserCache()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): `GET /api/me/series/:id/remove-from-continue-listening`
+    /// (`MeController.removeSeriesFromContinueListening`) hides a series from the Continue Series shelf.
+    func removeSeriesFromContinueListening(seriesId: String) async throws {
+        _ = try await send(path: "/api/me/series/\(pc(seriesId))/remove-from-continue-listening", method: "GET")
+        invalidateUserCache()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): `GET /api/me/series/:id/readd-to-continue-listening`
+    /// (`MeController.readdSeriesFromContinueListening`), the Undo for the series hide.
+    func readdSeriesToContinueListening(seriesId: String) async throws {
+        _ = try await send(path: "/api/me/series/\(pc(seriesId))/readd-to-continue-listening", method: "GET")
+        invalidateUserCache()
     }
 
     // MARK: - Networking Helpers

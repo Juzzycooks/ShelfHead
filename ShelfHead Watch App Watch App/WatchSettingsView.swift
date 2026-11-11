@@ -85,6 +85,31 @@ struct SettingsView: View {
                         title: "Downloads",
                         subtitle: downloadsSubtitle)
                 }
+
+                // Batch 490 (REVIEW 2026-11-11 F29): how much ShelfHead may keep on this Watch.
+                NavigationLink {
+                    WatchStorageLimitView()
+                } label: {
+                    WatchRow(
+                        systemImage: "internaldrive",
+                        title: "Storage Limit",
+                        subtitle: .verbatim(store.localDownloads.storageLimit.label))
+                }
+
+                // Batch 490 (REVIEW 2026-11-11 W12): off by default, so a Watch with cellular
+                // keeps downloading away from Wi-Fi as it does today. Applies per request
+                // (`URLRequest.allowsCellularAccess`): the background session's own
+                // configuration can't change after it is made.
+                Toggle(isOn: Binding(get: { store.localDownloads.wifiOnly },
+                                     set: { store.localDownloads.setWiFiOnly($0) })) {
+                    Text("Wi\u{2011}Fi Only")
+                        .font(WatchMetrics.contentRowTitleFont(weight: .medium))
+                        .foregroundStyle(WatchTheme.primaryText)
+                }
+            } header: {
+                Text("Downloads")
+            } footer: {
+                Text("Wi\u{2011}Fi Only applies to downloads you start after turning it on.")
             }
 
             // Critique 2026-10-06 (colorize/harden): these rows only show values, so they
@@ -246,6 +271,51 @@ struct SettingsView: View {
         }
         .listRowBackground(Color.clear)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F29): Settings › Downloads › Storage Limit. The cap on
+/// this Watch is the smaller of this and half the free space (`WatchDownloadCap`).
+/// Lowering it removes nothing straight away; the next download makes room as usual.
+/// Same checkmark-row shape as `WatchModeSettingsView`.
+struct WatchStorageLimitView: View {
+    @Environment(WatchStore.self) private var store
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(WatchDownloadStorageLimit.allCases) { limit in
+                    limitRow(limit)
+                }
+            } footer: {
+                Text("ShelfHead never uses more than half of the Watch\u{2019}s free space, whatever this says.")
+            }
+        }
+        .navigationTitle("Storage Limit")
+    }
+
+    private func limitRow(_ limit: WatchDownloadStorageLimit) -> some View {
+        let isSelected = store.localDownloads.storageLimit == limit
+        return Button {
+            store.localDownloads.setStorageLimit(limit)
+        } label: {
+            HStack(spacing: 10) {
+                Text(verbatim: limit.label)
+                    .font(WatchMetrics.contentRowTitleFont(weight: .medium))
+                    .foregroundStyle(WatchTheme.primaryText)
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(WatchMetrics.secondaryFont(weight: .semibold))
+                        .foregroundStyle(WatchTheme.accent)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(minHeight: 44)
+            .padding(.vertical, WatchMetrics.rowVerticalPadding)
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

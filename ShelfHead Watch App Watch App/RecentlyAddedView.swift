@@ -49,12 +49,37 @@ struct WatchPlayRequest: Equatable {
     let itemId: String
     let title: String
     let currentTitle: String
+    /// Batch 490 (REVIEW 2026-11-11 W4): `currentTitle` is playing on this Watch, not the
+    /// iPhone. Confirming saves and stops it here before the iPhone is asked to play.
+    var stopsOnWatch = false
 }
 
 extension WatchConnectivityStore {
     /// Plays `itemId` now, or parks a request in `pending` when it would replace a different
     /// book that is playing (see `WatchPlayRequestDecision`).
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 W4): a book loaded on this Watch is saved and stopped
+    /// first (`WatchPlayOnPhoneWatchAction`), asking first when it is playing; the write-out
+    /// is awaited so the iPhone resumes the same book from this Watch's place.
     func requestPlay(itemId: String, title: String, pending: Binding<WatchPlayRequest?>) {
+        let engine = WatchStore.shared.standalone
+        switch WatchPlayOnPhoneWatchAction.decide(engineIsLoaded: engine.isLoaded, engineIsPlaying: engine.isPlaying,
+                                                  engineTitle: engine.itemTitle) {
+        case .nothing:
+            requestPhonePlay(itemId: itemId, title: title, pending: pending)
+        case .stopWatch:
+            Task {
+                await engine.stopAndWriteOutProgress()
+                requestPhonePlay(itemId: itemId, title: title, pending: pending)
+            }
+        case .confirmStoppingWatch(let currentTitle):
+            pending.wrappedValue = WatchPlayRequest(itemId: itemId, title: title, currentTitle: currentTitle, stopsOnWatch: true)
+        }
+    }
+
+    /// The iPhone half of `requestPlay`: plays now, or asks when the iPhone is playing a
+    /// different book.
+    private func requestPhonePlay(itemId: String, title: String, pending: Binding<WatchPlayRequest?>) {
         switch WatchPlayRequestDecision.decide(requestedItemId: itemId, current: playbackState) {
         case .playNow:
             playItem(itemId: itemId)
@@ -75,14 +100,31 @@ private struct PlayReplacementConfirmation: ViewModifier {
             titleVisibility: .visible
         ) {
             Button("Play") {
-                if let request = pending { store.playItem(itemId: request.itemId) }
+                if let request = pending {
+                    if request.stopsOnWatch {
+                        // Batch 490 (REVIEW 2026-11-11 W4): save and stop this Watch, then
+                        // the iPhone half (which may still ask about the iPhone's book).
+                        let binding = $pending
+                        Task {
+                            await WatchStore.shared.standalone.stopAndWriteOutProgress()
+                            store.requestPlay(itemId: request.itemId, title: request.title, pending: binding)
+                        }
+                    } else {
+                        store.playItem(itemId: request.itemId)
+                    }
+                }
                 pending = nil
             }
             Button("Cancel", role: .cancel) { pending = nil }
         } message: {
             if let request = pending {
-                // Critique 2026-10-06 (polish): same shape as standalone's "stops on this Watch".
-                Text("\u{201C}\(request.currentTitle)\u{201D} stops on your iPhone.")
+                if request.stopsOnWatch {
+                    // Batch 490 (REVIEW 2026-11-11 W4): Play on Watch's own wording and key.
+                    Text(String(localized: "\u{201C}\(request.currentTitle)\u{201D} stops on this Watch.", comment: "Confirmation message; %@ is the title of the book now playing"))
+                } else {
+                    // Critique 2026-10-06 (polish): same shape as standalone's "stops on this Watch".
+                    Text("\u{201C}\(request.currentTitle)\u{201D} stops on your iPhone.")
+                }
             }
         }
     }

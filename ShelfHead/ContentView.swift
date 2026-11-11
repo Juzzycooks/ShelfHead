@@ -16,6 +16,10 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isCheckingSession = true
     @State private var appLock = AppLockManager.shared
+    /// Batch 490 (REVIEW 2026-11-11 E1): links that arrive before the main tabs exist (splash,
+    /// sign-in, the launch profile picker) wait here instead of being dropped; `MainTabView`
+    /// takes them once it's on screen.
+    @State private var linkInbox = IncomingLinkInbox.shared
     /// SEC-3: separate from `appLock.isLocked`, which only flips on `.background` (by
     /// design — flipping on `.inactive` would flash the lock screen for transient
     /// interruptions like the volume HUD). The cost of that deliberate `.background`
@@ -169,6 +173,10 @@ struct ContentView: View {
             Self.resetAccountScopedState(libraryViewModel: libraryViewModel, playerViewModel: playerViewModel,
                                          downloadManager: DownloadManager.shared)
         }
+        // Batch 490 (REVIEW 2026-11-11 E1): moved up from `MainTabView` so a link that arrives
+        // while it isn't mounted yet is held, not lost. `MainTabView` consumes the inbox and
+        // still routes everything through `handleDeepLink` (and so behind App Lock).
+        .onOpenURL { url in linkInbox.hold(url) }
         .onChange(of: scenePhase) { _, phase in
             // SEC-3: blank the switcher snapshot for any non-`.active` phase — covers
             // the `.inactive` transition the OS actually snapshots during, ahead of
@@ -341,6 +349,14 @@ struct MainTabView: View {
     @State private var deepLinkedItem: LibraryItem?
     /// Batch 458: a `shelfhead://mixtape?…` link, decoded, waiting for its import sheet.
     @State private var pendingMixtape: DecodedMixtapeLink?
+    /// Batch 490 (REVIEW 2026-11-11 E1): a link that led nowhere (a removed book, a bad
+    /// mixtape) says so in a toast instead of doing nothing.
+    @State private var linkFailureMessage: String?
+    /// Batch 490 (REVIEW 2026-11-11 E1): see `ContentView.linkInbox`.
+    @State private var linkInbox = IncomingLinkInbox.shared
+    /// Batch 490 (REVIEW 2026-11-11 F25): What's New after an update, once, over the tabs.
+    @State private var showWhatsNew = false
+    @Environment(AuthViewModel.self) private var authViewModel
     /// Measured height of the mini-player + tab bar, used as explicit bottom
     /// clearance for the ScrollView-based tabs (List-based Setup gets it for free).
     @State private var barHeight: CGFloat = 0
@@ -514,7 +530,11 @@ struct MainTabView: View {
                 RetroTabBar(selection: legacySelectedTabBinding, items: tabs) { tappedIndex in
                     switch tappedIndex {
                     case 0: homeReset += 1
-                    case 1: libraryReset += 1
+                    case 1:
+                        libraryReset += 1
+                        // Batch 490 (REVIEW 2026-11-11 F14): the stack is bound to the path now, so a
+                        // remount alone would rebuild it at the same depth.
+                        libraryPath = NavigationPath()
                     case 2: listeningReset += 1
                     case 3:
                         settingsReset += 1
@@ -662,7 +682,9 @@ struct MainTabView: View {
                 // possible, so a VoiceOver user falls straight from Home into Library,
                 // Downloads, then Settings with no indication of where they are.
                 .accessibilityHidden(selectedTab != 0)
-            NavigationStack { LibraryView(bottomInset: barHeight) }.environment(\.shelfTabIndex, 1).id("lib-\(libraryReset)-\(accentHex)")
+            // Batch 490 (REVIEW 2026-11-11 F14): bound to `libraryPath` (as on the modern path) so
+            // `shelfhead://series/<id>` and `author/<id>` can push onto it.
+            NavigationStack(path: $libraryPath) { LibraryView(bottomInset: barHeight) }.environment(\.shelfTabIndex, 1).id("lib-\(libraryReset)-\(accentHex)")
                 .opacity(selectedTab == 1 ? 1 : 0).allowsHitTesting(selectedTab == 1)
                 .accessibilityHidden(selectedTab != 1)
             // 16 September 2026: slot 2 is Listening (`StatsView`) — see `tabs`' doc
@@ -1086,8 +1108,32 @@ struct MainTabView: View {
             tabRouter.requestedSmartFilter = nil
             openLibrary(applying: filter)
         }
+        // Batch 490 (REVIEW 2026-11-11 N7): a descendant asks for a Settings page (Home's "Use a
+        // Different Server", Other Servers' empty state). Same consume-and-clear shape as above.
+        .onChange(of: tabRouter.requestedSettingsPage) { _, newValue in
+            guard let page = newValue else { return }
+            tabRouter.requestedSettingsPage = nil
+            openSettings(page: page)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .shelfheadOpenHousehold)) { _ in
-            openHouseholdSettings()
+            openSettings(page: .household)
+        }
+        // Batch 490 (REVIEW 2026-11-11 E1/F13): links (and Home Screen quick actions) held by
+        // `IncomingLinkInbox`, including any that arrived before this view was on screen.
+        .onChange(of: linkInbox.pending, initial: true) { _, _ in
+            deliverPendingLink()
+        }
+        // Batch 490 (REVIEW 2026-11-11 F25): What's New, once per update, after the tabs are up.
+        // A short wait lets a cold launch settle (and App Lock cover the app first if it's on).
+        .task {
+            try? await Task.sleep(for: .milliseconds(800))
+            presentWhatsNewIfDue()
+        }
+        .onChange(of: playerViewModel.showFullPlayer) { _, isShown in
+            if !isShown { presentWhatsNewIfDue() }
+        }
+        .sheet(isPresented: $showWhatsNew, onDismiss: { WhatsNew.markPresented() }) {
+            WhatsNewSheet()
         }
         .onReceive(NotificationCenter.default.publisher(for: .shelfheadAccountChanged)) { _ in
             // Account switched — drop the previous account's data and reload fresh.
@@ -1157,6 +1203,8 @@ struct MainTabView: View {
         // Library contract: a failed background refresh is a non-blocking toast; the
         // blocking `errorAlert` below stays for `errorMessage` (a failed first load).
         .toast(message: $libraryViewModel.refreshFailureMessage, duration: 4, bottomInset: otherToastInset)
+        // Batch 490 (REVIEW 2026-11-11 E1): a deep link that couldn't be opened.
+        .toast(message: $linkFailureMessage, style: .info, duration: 4, bottomInset: otherToastInset)
         // Critique 2026-10-06 (harden): single-book Mark Finished / Reset is undoable for 6 s,
         // from Book Detail's menu, the long-press menu and Library's list swipe alike.
         .toast(message: progressUndoBinding, style: .success, duration: 6, bottomInset: otherToastInset,
@@ -1240,10 +1288,10 @@ struct MainTabView: View {
                 + Text(when.map { "\n\n" + $0 } ?? "")
         }
         .systemChromeTint()
-        // S1 (REVIEW_2026-08-20_UI_SECURITY.md): `handleDeepLink` itself is the gate here
-        // (see its doc comment) rather than this call site, since it's also the entry
-        // point `replayPendingAction` re-enters after unlock.
-        .onOpenURL { url in handleDeepLink(url) }
+        // S1 (REVIEW_2026-08-20_UI_SECURITY.md): `handleDeepLink` itself is the gate (see its
+        // doc comment), since it's also the entry point `replayPendingAction` re-enters after
+        // unlock. Batch 490 (REVIEW 2026-11-11 E1): `.onOpenURL` lives on `ContentView` now and
+        // hands URLs over through `IncomingLinkInbox` (`deliverPendingLink`).
         // Handoff: resume the book (at the exact position) handed off from another
         // device. S1: gated — while locked, the activity is queued instead of acting on
         // it, so a Handoff continuation can't start playback over the lock screen.
@@ -1312,6 +1360,8 @@ struct MainTabView: View {
         .onChange(of: appLock.isLocked) { wasLocked, isLocked in
             // Batch 453: a household invite opened while locked waits here, like a deep link.
             HouseholdShareAcceptance.acceptPendingIfUnlocked()
+            // Batch 490 (REVIEW 2026-11-11 F25): held back while locked; offered once unlocked.
+            if wasLocked, !isLocked { presentWhatsNewIfDue() }
             guard wasLocked, !isLocked, let action = appLock.pendingAction else { return }
             appLock.pendingAction = nil
             replayPendingAction(action)
@@ -1377,14 +1427,136 @@ struct MainTabView: View {
             }
         case "mixtape":
             // Batch 458: shelfhead://mixtape?v=1&d=… opens the import sheet.
-            if let decoded = try? MixtapeLink.decode(url) { pendingMixtape = decoded }
+            // Batch 490 (REVIEW 2026-11-11 E1): a link that doesn't decode says so.
+            if let decoded = try? MixtapeLink.decode(url) {
+                pendingMixtape = decoded
+            } else {
+                linkFailureMessage = String(localized: "That mixtape link couldn\u{2019}t be read. Ask for it to be shared again.")
+            }
         case "book":
-            // shelfhead://book/<id>
-            let id = url.pathComponents.first { $0 != "/" }
-            if let id { openBook(id: id) }
+            // shelfhead://book/<id>, and (Batch 490, REVIEW 2026-11-11 F14) `?t=<seconds>` to
+            // start there. Only a valid, non-negative number counts; anything else just opens it.
+            if let id = DeepLinkParser.bookID(in: url) {
+                openBook(id: id, playAt: DeepLinkParser.startTime(in: url))
+            }
+        case "series":
+            // Batch 490 (REVIEW 2026-11-11 F14): shelfhead://series/<id> → that series in Library.
+            if let id = DeepLinkParser.seriesID(in: url) { openSeries(id: id, link: url) }
+        case "author":
+            // Batch 490 (REVIEW 2026-11-11 F14): shelfhead://author/<id> → that author's books.
+            if let id = DeepLinkParser.authorID(in: url) { openAuthor(id: id, link: url) }
+        case "search":
+            // Batch 490 (REVIEW 2026-11-11 F14/F13): shelfhead://search[?q=…] (and the Search quick
+            // action) lands on Library's Books root, with `q` (if any) in the search field.
+            libraryPath = NavigationPath()
+            libraryDetailItem = nil
+            libraryViewModel.requestedBrowseMode = .books
+            // The text, when the link carries one, goes through the Library's request seam.
+            libraryViewModel.requestedSearchText = DeepLinkParser.searchQuery(in: url)
+            selectedTab = 1
+        case "driving":
+            // Batch 490 (REVIEW 2026-11-11 F14): Driving Mode over the loaded (or last) book. It
+            // only presents the screen; it never starts playback. With no book, like `nowplaying`.
+            openFullPlayer()
+            if playerViewModel.currentBook != nil {
+                playerViewModel.pendingDrivingModeRequest = true
+            } else {
+                selectedTab = 0
+            }
         default:
             break
         }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 E1): hands a held link to `handleDeepLink` (which still gates
+    /// on App Lock) if it's still fresh — a link tapped long ago, at a sign-in screen, is dropped
+    /// rather than acted on out of the blue (`PendingLinkRule`).
+    private func deliverPendingLink() {
+        guard let link = linkInbox.take() else { return }
+        guard PendingLinkRule.isFresh(receivedAt: link.receivedAt, now: Date()) else { return }
+        handleDeepLink(link.url)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F25): shows What's New once per update — never over App Lock
+    /// (`MainTabView` only exists after sign-in) and never while another root sheet, alert or
+    /// the full player is up. Dismissing it marks it seen (`.sheet(onDismiss:)`).
+    private func presentWhatsNewIfDue() {
+        guard !showWhatsNew, WhatsNew.shouldPresentAfterUpdate,
+              !appLock.isLocked,
+              authViewModel.sessionExpiredPrompt == nil,
+              deepLinkedItem == nil, pendingMixtape == nil, !showUploadSheet,
+              downloadManager.pendingProgressConflict == nil,
+              !playerViewModel.showFullPlayer else { return }
+        showWhatsNew = true
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F14): pushes a Library screen from a link, on Library's root.
+    private func showLibraryRoute(_ route: LibraryRoute) {
+        tabBarMinimize.reexpand()
+        libraryDetailItem = nil
+        libraryPath = NavigationPath([route])
+        selectedTab = 1
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F14): `shelfhead://series/<id>`. The series page needs the
+    /// full series (with its books), which only the series list carries, so it's found there:
+    /// the copy Library already loaded, else the server's list a page at a time.
+    private func openSeries(id: String, link: URL) {
+        Task {
+            guard let series = await resolveSeries(id: id) else {
+                linkFailureMessage = Self.linkTargetFailureMessage
+                return
+            }
+            // Re-checked after the await, as `finishOpeningBook` does.
+            guard !appLock.isLocked else { appLock.pendingAction = .deepLink(link); return }
+            showLibraryRoute(.series(series))
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F14): `shelfhead://author/<id>`.
+    private func openAuthor(id: String, link: URL) {
+        Task {
+            guard let author = await resolveAuthor(id: id) else {
+                linkFailureMessage = Self.linkTargetFailureMessage
+                return
+            }
+            guard !appLock.isLocked else { appLock.pendingAction = .deepLink(link); return }
+            showLibraryRoute(.author(author))
+        }
+    }
+
+    private static var linkTargetFailureMessage: String {
+        String(localized: "Couldn\u{2019}t open that link. It may have been removed, or your server can\u{2019}t be reached.")
+    }
+
+    /// The library a link resolves against. On a cold launch Home is still loading it, so
+    /// this waits a little (up to about five seconds) rather than failing straight away.
+    private func currentLibraryId() async -> String? {
+        for _ in 0..<10 {
+            if let id = libraryViewModel.selectedLibrary?.id { return id }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return libraryViewModel.selectedLibrary?.id
+    }
+
+    private func resolveSeries(id: String) async -> Series? {
+        if let known = libraryViewModel.seriesList.first(where: { $0.id == id }) { return known }
+        guard let libraryId = await currentLibraryId() else { return nil }
+        let pageSize = 100
+        for page in 0..<20 {
+            guard let response = try? await AudiobookshelfAPI.shared.getSeries(libraryId: libraryId, limit: pageSize, page: page)
+            else { return nil }
+            if let match = response.results.first(where: { $0.id == id }) { return match }
+            if response.results.count < pageSize { break }
+        }
+        return nil
+    }
+
+    private func resolveAuthor(id: String) async -> NamedEntity? {
+        if let known = libraryViewModel.filterData?.authors?.first(where: { $0.id == id }) { return known }
+        guard let libraryId = await currentLibraryId(),
+              let data = try? await AudiobookshelfAPI.shared.getFilterData(libraryId: libraryId) else { return nil }
+        return data.authors?.first(where: { $0.id == id })
     }
 
     /// N-6 (REVIEW_2026-09-14_DESIGN.md): the single "open Library showing this smart
@@ -1430,10 +1602,11 @@ struct MainTabView: View {
 
     /// Batch 482: an accepted household invite lands on Settings › Household, where the outcome shows. On a
     /// child's account Settings needs the parent's Face ID or passcode first, as from the tab bar.
-    private func openHouseholdSettings() {
+    /// Batch 490 (REVIEW 2026-11-11 N7): any Settings page (Home and Other Servers ask for Account).
+    private func openSettings(page: SettingsPage) {
         tabBarMinimize.reexpand()
         let open = {
-            settingsPath = NavigationPath([SettingsPage.household])
+            settingsPath = NavigationPath([page])
             selectedTab = 3
         }
         if selectedTab != 3, ParentGate.settingsNeedGate(activeAccountId: AccountStore.currentAccountId) {
@@ -1466,9 +1639,16 @@ struct MainTabView: View {
     }
 
     /// Fetch a book by id and present it; optionally start playback at `playAt` (Handoff).
+    /// Batch 490 (REVIEW 2026-11-11 E1): falls back to the downloaded copy (offline, or the server
+    /// is down), and says so when neither has it instead of doing nothing.
     private func openBook(id: String, playAt: Double? = nil) {
         Task {
-            guard let item = await libraryViewModel.getItemDetail(itemId: id) else { return }
+            let fetched = await libraryViewModel.getItemDetail(itemId: id)
+            guard let item = DeepLinkParser.resolvedBook(fetched: fetched,
+                                                         downloaded: DownloadManager.shared.libraryItem(for: id)) else {
+                linkFailureMessage = String(localized: "Couldn\u{2019}t open that book. It may have been removed, or your server can\u{2019}t be reached.")
+                return
+            }
             await finishOpeningBook(item: item, playAt: playAt)
         }
     }
@@ -1583,6 +1763,67 @@ final class TabRouter {
     /// land between them — Library visibly appearing unfiltered, then re-filtering.
     /// `MainTabView.openLibrary(applying:)` performs both, in order, in one pass.
     var requestedSmartFilter: SmartFilter?
+
+    /// Batch 490 (REVIEW 2026-11-11 N7): non-nil for one render cycle — a Settings page to open
+    /// (Settings tab, that page pushed, behind the parent gate on a child's account). Consumed
+    /// and reset by `MainTabView.openSettings(page:)`.
+    var requestedSettingsPage: SettingsPage?
+}
+
+/// Batch 490 (REVIEW 2026-11-11 E1/F13): one held incoming link. `.onOpenURL` (on `ContentView`)
+/// and the Home Screen quick actions (`HouseholdSceneDelegate`) put it here; `MainTabView` takes it
+/// once it's on screen. Only the newest is kept: a second link replaces an unread first one.
+struct IncomingLink: Equatable {
+    let url: URL
+    let receivedAt: Date
+}
+
+@MainActor
+@Observable
+final class IncomingLinkInbox {
+    static let shared = IncomingLinkInbox()
+
+    private(set) var pending: IncomingLink?
+
+    func hold(_ url: URL, now: Date = Date()) {
+        pending = IncomingLink(url: url, receivedAt: now)
+    }
+
+    /// The held link, cleared, or nil.
+    func take() -> IncomingLink? {
+        defer { pending = nil }
+        return pending
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 E1): whether a held link is still worth acting on. A link waits
+/// while the app is on the splash, sign-in or profile picker; if that takes more than ten minutes
+/// it's dropped rather than suddenly opening a book or starting a route long after the tap. A
+/// receipt time in the future (the clock moved) counts as fresh. Pinned by `QuickWinsShellTests`.
+nonisolated enum PendingLinkRule {
+    static let maxAge: TimeInterval = 10 * 60
+
+    static func isFresh(receivedAt: Date, now: Date, maxAge: TimeInterval = maxAge) -> Bool {
+        now.timeIntervalSince(receivedAt) <= maxAge
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F13): the Home Screen quick actions declared in Info.plist
+/// (`UIApplicationShortcutItems`) map to the same `shelfhead://` links a widget or Shortcut uses,
+/// so they take the one deep-link path (and wait behind App Lock like any other link).
+nonisolated enum QuickActionRoute {
+    static let resumeType = "shelfhead.quickaction.resume"
+    static let downloadsType = "shelfhead.quickaction.downloads"
+    static let searchType = "shelfhead.quickaction.search"
+
+    static func url(forShortcutType type: String) -> URL? {
+        switch type {
+        case resumeType: return URL(string: "shelfhead://resume")
+        case downloadsType: return URL(string: "shelfhead://downloads")
+        case searchType: return URL(string: "shelfhead://search")
+        default: return nil
+        }
+    }
 }
 
 /// N-6 (REVIEW_2026-09-14_DESIGN.md): pure parsing for the `shelfhead://` links
@@ -1623,6 +1864,48 @@ enum DeepLinkParser {
         components.host = "library"
         components.queryItems = [URLQueryItem(name: "smartFilter", value: smartFilter.rawValue)]
         return components.url
+    }
+
+    // MARK: Batch 490 (REVIEW 2026-11-11 F14)
+
+    /// The first path component of a `shelfhead://<host>/<id>` link, or nil for another host or
+    /// an empty id.
+    static func pathID(in url: URL, host: String) -> String? {
+        guard url.host == host,
+              let id = url.pathComponents.first(where: { $0 != "/" }),
+              !id.isEmpty else { return nil }
+        return id
+    }
+
+    static func bookID(in url: URL) -> String? { pathID(in: url, host: "book") }
+    static func seriesID(in url: URL) -> String? { pathID(in: url, host: "series") }
+    static func authorID(in url: URL) -> String? { pathID(in: url, host: "author") }
+
+    /// `shelfhead://book/<id>?t=<seconds>`: where to start, in seconds. Only a finite,
+    /// non-negative number counts; anything else (missing, empty, "abc", -5, nan, inf) is nil,
+    /// so the link just opens the book.
+    static func startTime(in url: URL) -> Double? {
+        guard url.host == "book",
+              let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "t" })?.value,
+              let seconds = Double(raw.trimmingCharacters(in: .whitespaces)),
+              seconds.isFinite, seconds >= 0 else { return nil }
+        return seconds
+    }
+
+    /// `shelfhead://search?q=<text>`: the search text, trimmed, or nil when absent or blank.
+    static func searchQuery(in url: URL) -> String? {
+        guard url.host == "search",
+              let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "q" })?.value else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 E1): the server's copy of a linked book when it answered,
+    /// else the downloaded copy, else nil (the caller says it couldn't open it).
+    static func resolvedBook<Item>(fetched: Item?, downloaded: Item?) -> Item? {
+        fetched ?? downloaded
     }
 }
 

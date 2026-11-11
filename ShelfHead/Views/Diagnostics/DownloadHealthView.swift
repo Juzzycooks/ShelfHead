@@ -102,7 +102,9 @@ struct DownloadHealthView: View {
                                         // Finding 21 (code review, 26 August 2026): raw `.green`
                                         // replaced with the app's accent token for consistency
                                         // and Light-theme contrast (same fix as BookDetailView).
-                                        .foregroundStyle(report.isHealthy ? Color.shelfAccentText : Color.shelfOrange)
+                                        // Batch 490 (REVIEW 2026-11-11 V6): "healthy" is a quiet cream
+                                        // check, not the second accent (teal reads as finished).
+                                        .foregroundStyle(report.isHealthy ? Color.shelfCream : Color.shelfOrange)
                                         // Critique 2026-10-06 (colorize): alarm is shelfOrange (DESIGN.md), not raw red.
                                         // HIG audit 2026-09-17 L8: the glyph carried no label,
                                         // so VoiceOver read nothing at this stop.

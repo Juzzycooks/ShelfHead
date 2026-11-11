@@ -96,6 +96,10 @@ struct SessionExpiredSheet: View {
                                 Typo.supporting(Text(message))
                                     .foregroundStyle(Color.shelfCream)
                                     .fixedSize(horizontal: false, vertical: true)
+                                    // Batch 490 (REVIEW 2026-11-11 O4): the SSO redirect-URI
+                                    // error carries the address to allow; selectable here (the
+                                    // sign-in form has a Copy button; this file has no UIKit).
+                                    .textSelection(.enabled)
                             } icon: {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(Color.shelfOrange)

@@ -265,8 +265,8 @@ extension View {
 /// Critique 2026-10-06 (clarify): a Settings page's `List`, inside a `ScrollViewReader`,
 /// that scrolls to `focusRow` on first appearance and highlights it for about two
 /// seconds. Search results used to land at the top of the page and leave the user to
-/// hunt. Under Reduce Motion the scroll jumps instead of animating; the highlight still
-/// fades, since a fade isn't motion.
+/// hunt. Under Reduce Motion the scroll jumps instead of animating, and (Batch 490, REVIEW
+/// 2026-11-11 A5) the highlight switches on and off without the fade.
 struct SettingsAnchoredList<Content: View>: View {
     let focusRow: String?
     let content: Content
@@ -302,11 +302,11 @@ struct SettingsAnchoredList<Content: View>: View {
                         proxy.scrollTo(focusRow, anchor: .center)
                     }
                 }
-                withAnimation(.easeOut(duration: 0.2)) { highlightedRow = focusRow }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { highlightedRow = focusRow }
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
                 // Cancelled mid-highlight: clear it at once rather than leave it lit.
                 guard !Task.isCancelled else { highlightedRow = nil; return }
-                withAnimation(.easeOut(duration: 0.6)) { highlightedRow = nil }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { highlightedRow = nil }
             }
         }
     }

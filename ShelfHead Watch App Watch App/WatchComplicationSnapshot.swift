@@ -21,6 +21,17 @@ struct WatchComplicationSnapshot: Codable, Equatable, Sendable {
     static let fileName = "watch-now-playing.json"
     static let widgetKind = "ShelfHeadWatchLauncher"
 
+    /// Batch 490 (REVIEW 2026-11-11 W14): the last word after Stop or the end of a book,
+    /// so the complication drops its "playing" glyph but keeps the book and its place.
+    /// `nil` without a title (nothing worth showing).
+    static func stopped(title: String, author: String, currentTime: Double, duration: Double,
+                        at date: Date) -> WatchComplicationSnapshot? {
+        guard !title.isEmpty else { return nil }
+        return WatchComplicationSnapshot(title: title, author: author,
+                                         progress: progress(currentTime: currentTime, duration: duration),
+                                         isPlaying: false, updatedAt: date)
+    }
+
     /// Clamped 0...1, and 0 for a book with no known length.
     static func progress(currentTime: Double, duration: Double) -> Double {
         guard duration > 0, currentTime.isFinite else { return 0 }

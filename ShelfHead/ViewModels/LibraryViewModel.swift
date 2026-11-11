@@ -72,6 +72,10 @@ final class LibraryViewModel {
     /// The `PlaybackHistoryStore` entry the change recorded, so Undo goes through the
     /// store and spends that entry (Recent Changes then stops offering it).
     @ObservationIgnored private var progressUndoHistoryId: UUID?
+    /// Batch 490 (REVIEW 2026-11-11 F1): what the shared Undo toast re-adds after a
+    /// "Remove from Continue Listening" (a book or a series). Checked before
+    /// `progressUndoSnapshot`; each new offer replaces the other.
+    @ObservationIgnored private var continueListeningUndo: ContinueListeningUndo?
     var personalizedShelves: [PersonalizedView] = []
     /// Polish pass (J2-2): true while `personalizedShelves` was painted from the on-disk
     /// `HomeShelvesCache` rather than a network response, so the first real response always
@@ -107,6 +111,11 @@ final class LibraryViewModel {
         return value
     }
     var searchResults: [LibraryItem] = []
+    /// Batch 490 (REVIEW 2026-11-11 L1): the author and narrator groups of the last online
+    /// search, shown under the book list. Empty for a local (offline) search and for a
+    /// podcast library, whose search response has no such groups.
+    var searchAuthors: [AudiobookshelfAPI.SearchGroups.Person] = []
+    var searchNarrators: [AudiobookshelfAPI.SearchGroups.Person] = []
     /// Critique 2026-10-05 (Library): true when the last server search *failed* (as opposed
     /// to returning zero results), so the UI can say "Couldn't reach your server" with Retry
     /// instead of a misleading "No results".
@@ -185,6 +194,11 @@ final class LibraryViewModel {
     /// preference), so this is the one seam a caller elsewhere has to ask for a scope
     /// change without that state moving out of the view.
     var requestedBrowseMode: BrowseMode?
+
+    /// Batch 490 (REVIEW 2026-11-11 F14): the same seam for the search field. The
+    /// `shelfhead://search?q=` deep link sets it; the Library screen copies it into its own
+    /// search text (view state) and clears it. Empty or nil means "no request".
+    var requestedSearchText: String?
 
     /// Critique 2026-10-05 (Library): true when the last bulk snapshot fetch for a smart
     /// filter failed. A failed fetch used to be `try?`-swallowed into an empty (and then
@@ -311,6 +325,22 @@ final class LibraryViewModel {
     }
 
     nonisolated static let smartFilterItemCap = 20_000
+
+    /// Batch 490 (REVIEW 2026-11-11 L6): the whole current library, for screens that match
+    /// against it (Want to Read) rather than against the pages Library has loaded. Reuses
+    /// the smart-filter snapshot when it is in memory and caches a fresh fetch there, so the
+    /// library is paged at most once. `partial` is true when `smartFilterItemCap` was hit.
+    func wholeLibrarySnapshot() async throws -> (items: [LibraryItem], partial: Bool) {
+        if !smartFilterSource.isEmpty { return (smartFilterSource, smartFilterSnapshotIsPartial) }
+        let startedLibraryId = selectedLibrary?.id
+        let (fetched, partial) = try await fetchAllItemsForSmartFilter()
+        // Only cache it for the library it was fetched from.
+        if selectedLibrary?.id == startedLibraryId, smartFilterSource.isEmpty, !fetched.isEmpty {
+            smartFilterSource = fetched
+            smartFilterSnapshotIsPartial = partial
+        }
+        return (fetched, partial)
+    }
 
     /// Pure filtering logic, `static` so it doesn't accidentally read/write view-model
     /// state beyond what's passed in — `unplayedInStartedSeries` needs to compare every
@@ -498,6 +528,7 @@ final class LibraryViewModel {
         items = []
         personalizedShelves = []
         searchResults = []
+        searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
         seriesList = []
         collections = []
         playlists = []
@@ -515,6 +546,7 @@ final class LibraryViewModel {
         progressUndoMessage = nil
         progressUndoSnapshot = nil
         progressUndoHistoryId = nil
+        continueListeningUndo = nil  // Batch 490 (REVIEW 2026-11-11 F1)
         totalItems = 0
         lastVisibleRange = nil
         pageFailureBurstActive = false
@@ -714,6 +746,7 @@ final class LibraryViewModel {
         // search belong to the previous library.
         searchGeneration &+= 1
         searchResults = []
+        searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
         searchQuery = ""
         searchFailed = false
         isSearching = false
@@ -1732,6 +1765,7 @@ final class LibraryViewModel {
         guard let library = selectedLibrary,
               !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
             searchResults = []
+            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
             searchFailed = false
             searchIsLocal = false
             isSearching = false
@@ -1759,18 +1793,22 @@ final class LibraryViewModel {
         if ReachabilityStore.shared.status != .ok {
             searchIsLocal = true
             searchResults = LibraryLocalQuery.search(DownloadManager.shared.downloadedLibraryItems(), query: query)
+            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
             return
         }
         searchIsLocal = false
 
         do {
-            let results = try await AudiobookshelfAPI.shared.search(
+            // Batch 490 (REVIEW 2026-11-11 L1): grouped, so authors and narrators show too.
+            let groups = try await AudiobookshelfAPI.shared.searchGrouped(
                 libraryId: library.id,
                 query: query
             )
             // Ignore a response for a query the user has since changed.
             guard generation == searchGeneration, query == searchQuery else { return }
-            searchResults = results
+            searchResults = groups.books
+            searchAuthors = groups.authors
+            searchNarrators = groups.narrators
         } catch {
             guard generation == searchGeneration else { return }
             let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
@@ -1780,6 +1818,7 @@ final class LibraryViewModel {
             searchFailed = true
             searchIsLocal = true
             searchResults = LibraryLocalQuery.search(DownloadManager.shared.downloadedLibraryItems(), query: query)
+            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
         }
     }
 
@@ -1925,6 +1964,7 @@ final class LibraryViewModel {
     }
 
     private func offerProgressUndo(_ prior: LibraryProgressSnapshot, action: SingleProgressChange) {
+        continueListeningUndo = nil  // Batch 490 (REVIEW 2026-11-11 F1): the newest change owns the toast
         progressUndoSnapshot = prior
         // `updateProgress` has just recorded this change, so it is the newest entry.
         progressUndoHistoryId = PlaybackHistoryStore.shared.mostRecentEntry(forItemId: prior.itemId)?.id
@@ -1938,6 +1978,13 @@ final class LibraryViewModel {
     /// doesn't offer it twice; otherwise it restores the snapshot through the bulk path. A
     /// failure is a non-blocking toast that says nothing changed.
     func undoLastProgressChange() {
+        // Batch 490 (REVIEW 2026-11-11 F1): a Continue Listening removal shares this toast.
+        if let pending = continueListeningUndo {
+            continueListeningUndo = nil
+            progressUndoMessage = nil
+            Task { await undoContinueListeningRemoval(pending) }
+            return
+        }
         guard let snapshot = progressUndoSnapshot else { return }
         let historyId = progressUndoHistoryId
         progressUndoSnapshot = nil
@@ -1952,6 +1999,108 @@ final class LibraryViewModel {
                 ok = await restoreProgress([snapshot], reload: true).isEmpty
             }
             if !ok { refreshFailureMessage = Self.progressUndoFailureMessage }
+        }
+    }
+
+    // MARK: - Continue Listening (Batch 490, REVIEW 2026-11-11 F1)
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): what the Undo toast re-adds.
+    enum ContinueListeningUndo: Equatable, Sendable {
+        case item(id: String)
+        case series(id: String)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): whether a book's menu offers "Remove from Continue
+    /// Listening". Only a started, unfinished book (the server's Continue Listening shelf
+    /// holds nothing else) that isn't already hidden, and never a podcast (the show-level
+    /// item has no single progress record). Pure, pinned by `QuickWinsLibraryTests`.
+    nonisolated static func shouldOfferRemoveFromContinueListening(progress: MediaProgress?, isPodcast: Bool) -> Bool {
+        guard !isPodcast, let progress, progress.episodeId == nil else { return false }
+        guard progress.isFinished != true, progress.hideFromContinueListening != true else { return false }
+        return (progress.progress ?? 0) > 0 || (progress.currentTime ?? 0) > 0
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): whether the server's Continue Series shelf
+    /// (`LabelContinueSeries`, Home's "Next in Series") currently shows a book from this
+    /// series, so the series menu only offers a removal that changes something. Pure.
+    nonisolated static func seriesIsInContinueSeries(seriesBookIds: Set<String>, shelves: [PersonalizedView]) -> Bool {
+        guard !seriesBookIds.isEmpty else { return false }
+        return shelves.contains { shelf in
+            shelf.labelStringKey == "LabelContinueSeries"
+                && (shelf.entities ?? []).contains { seriesBookIds.contains($0.id) }
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): Undo toast copy, quoted like `progressUndoCopy`.
+    /// A series names Home's "Next in Series" shelf, which is the one it leaves. Pure.
+    nonisolated static func continueListeningRemovedCopy(title: String, isSeries: Bool = false) -> String {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isSeries {
+            let quoted = name.isEmpty
+                ? String(localized: "this series", comment: "Stands in for the series name inside the Undo toast when the name is empty")
+                : "\u{201C}\(name)\u{201D}"
+            return String(localized: "Removed \(quoted) from Next in Series", comment: "Undo toast; %@ is the quoted series name, or 'this series'. 'Next in Series' is a Home shelf name")
+        }
+        let quoted = name.isEmpty
+            ? String(localized: "this book", comment: "Stands in for the book title inside the Undo toast when the title is empty")
+            : "\u{201C}\(name)\u{201D}"
+        return String(localized: "Removed \(quoted) from Continue Listening", comment: "Undo toast; %@ is the quoted book title, or 'this book'. 'Continue Listening' is a Home shelf name")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): the failure toast for a removal (or its Undo).
+    nonisolated static var continueListeningFailureMessage: String {
+        String(localized: "Couldn\u{2019}t reach your server, so your Home shelves haven\u{2019}t changed. Try again in a moment.", comment: "Toast when hiding a book from Continue Listening or a series from Next in Series, or undoing that, failed")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): hides one book from the server's Continue Listening
+    /// shelf, refreshes Home's shelves, and offers Undo through the shared toast.
+    func removeFromContinueListening(_ item: LibraryItem) async {
+        let generation = accountGeneration
+        do {
+            try await AudiobookshelfAPI.shared.removeItemFromContinueListening(libraryItemId: item.id)
+            guard generation == accountGeneration else { return }
+            progressUndoSnapshot = nil
+            progressUndoHistoryId = nil
+            continueListeningUndo = .item(id: item.id)
+            progressUndoMessage = Self.continueListeningRemovedCopy(title: item.title)
+            await loadPersonalizedView()
+        } catch {
+            guard generation == accountGeneration else { return }
+            ShelfLog.error(.network, "Remove from Continue Listening failed: \(error.localizedDescription)")
+            refreshFailureMessage = Self.continueListeningFailureMessage
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F1): hides a series from the server's Continue Series shelf.
+    func removeSeriesFromContinueListening(seriesId: String, title: String) async {
+        let generation = accountGeneration
+        do {
+            try await AudiobookshelfAPI.shared.removeSeriesFromContinueListening(seriesId: seriesId)
+            guard generation == accountGeneration else { return }
+            progressUndoSnapshot = nil
+            progressUndoHistoryId = nil
+            continueListeningUndo = .series(id: seriesId)
+            progressUndoMessage = Self.continueListeningRemovedCopy(title: title, isSeries: true)
+            await loadPersonalizedView()
+        } catch {
+            guard generation == accountGeneration else { return }
+            ShelfLog.error(.network, "Remove series from Continue Listening failed: \(error.localizedDescription)")
+            refreshFailureMessage = Self.continueListeningFailureMessage
+        }
+    }
+
+    private func undoContinueListeningRemoval(_ pending: ContinueListeningUndo) async {
+        let generation = accountGeneration
+        do {
+            switch pending {
+            case .item(let id): try await AudiobookshelfAPI.shared.readdItemToContinueListening(libraryItemId: id)
+            case .series(let id): try await AudiobookshelfAPI.shared.readdSeriesToContinueListening(seriesId: id)
+            }
+            guard generation == accountGeneration else { return }
+            await loadPersonalizedView()
+        } catch {
+            guard generation == accountGeneration else { return }
+            refreshFailureMessage = Self.continueListeningFailureMessage
         }
     }
 

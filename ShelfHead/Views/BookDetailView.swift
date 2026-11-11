@@ -1,4 +1,5 @@
 import SwiftUI
+import AppIntents
 
 // Critique 2026-10-05 (Book Detail, 2nd): UI-10 came back through pushed detail screens. A
 // `BookDetailView` pushed from the series/author/genre pages INSIDE a sheet-presented detail
@@ -90,9 +91,14 @@ struct BookDetailView: View {
     @State private var menuNotice: String?
     /// Batch 450: read here too so the Transcript row's place in `bookToolsList` follows the setting.
     @AppStorage(SettingsKeys.transcriptsEnabled) private var transcriptsEnabled = true
+    /// Batch 490 (REVIEW 2026-11-11 F19): the Siri tip's own close button turns this off for good.
+    @AppStorage("bookDetail.siriTipVisible") private var siriTipVisible = true
     @State private var exportPayload: SharePayload?
     @State private var descriptionExpanded = false
     @State private var showEbookReader = false
+    // Batch 490 (REVIEW 2026-11-11 F11a): e-reader devices the server lets this user send to (empty = no menu item).
+    @State private var eReaderDevices: [EReaderDevice] = []
+    @State private var showEReaderDialog = false
     @State private var recapText: String?
     @State private var recapIsGenerated = false
     /// Batch 428: "Previously On…" offered in the recap card after a few days away (iOS 26+).
@@ -221,6 +227,16 @@ struct BookDetailView: View {
             Divider()
         }
 
+        // Batch 490 (REVIEW 2026-11-11 F11a): email the ebook to an e-reader the server's admin has set up.
+        // Only with an ebook file here and at least one device the server offers this user.
+        if displayItem.media?.ebookFile != nil, !eReaderDevices.isEmpty {
+            Button {
+                showEReaderDialog = true
+            } label: {
+                Label("Send to E-reader…", systemImage: "paperplane")
+            }
+        }
+
         // Batch 454: send this book to people in your household.
         if householdStore.isSocialAvailable && !displayItem.isPodcast {
             Button {
@@ -256,6 +272,21 @@ struct BookDetailView: View {
         if playerViewModel.currentBook == nil || playerViewModel.currentBook?.id == displayItem.id {
             Divider()
             shareProgressButton(title: String(localized: "Share Progress"))
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F11a): `POST /api/emails/send-ebook-to-device`. Success and failure both
+    /// show as the same toast the other menu actions use; a failure is one plain sentence (the server's reason,
+    /// usually an unfinished mail setup, isn't something the app can fix).
+    private func sendToEReader(_ device: EReaderDevice) {
+        let itemId = displayItem.id
+        Task {
+            do {
+                try await AudiobookshelfAPI.shared.sendEbookToDevice(itemId: itemId, deviceName: device.name)
+                menuNotice = String(localized: "Sent to \(device.name).", comment: "Toast after emailing an ebook to an e-reader; %@ is the device name")
+            } catch {
+                menuNotice = String(localized: "Couldn’t send that to \(device.name). Check that your server can send email, then try again.", comment: "Toast when emailing an ebook to an e-reader fails; %@ is the device name")
+            }
         }
     }
 
@@ -371,6 +402,15 @@ struct BookDetailView: View {
                     // reference).
                     detailsSection
 
+                    // Batch 490 (REVIEW 2026-11-11 F19): the system Siri tip for "Play <book> in
+                    // ShelfHead" (the App Shortcut in `ShelfHeadShortcuts`), last on the page so it
+                    // never sits between the reader and the book. Audiobooks only; dismissing it
+                    // hides it on every book.
+                    if !displayItem.isPodcast && !displayItem.isEbookOnly {
+                        SiriTipView(intent: Self.playIntent(for: displayItem), isVisible: $siriTipVisible)
+                            .siriTipViewStyle(.automatic)
+                    }
+
                     // Critique 2026-10-05 (Book Detail): the trailing `Spacer(minLength:)` is
                     // gone. Inside a scroll view it never stretched, so it was only a dead band
                     // above the pinned bar; the bar's safe-area inset already reserves the space.
@@ -471,6 +511,22 @@ struct BookDetailView: View {
         }
         .systemChromeTint()
         .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
+        // Batch 490 (REVIEW 2026-11-11 F11a): pick the device; the result comes back as the menu's toast.
+        .confirmationDialog("Send to E-reader", isPresented: $showEReaderDialog, titleVisibility: .visible) {
+            ForEach(eReaderDevices) { device in
+                Button(device.name) { sendToEReader(device) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your server emails the ebook to the device you choose.")
+        }
+        .systemChromeTint()
+        .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
+        // Batch 490 (REVIEW 2026-11-11 F11a): the device list only matters for a book with an ebook file.
+        .task(id: displayItem.media?.ebookFile != nil) {
+            guard displayItem.media?.ebookFile != nil else { eReaderDevices = []; return }
+            eReaderDevices = (try? await AudiobookshelfAPI.shared.getEReaderDevices()) ?? []
+        }
         .sheet(item: $shareSession) { session in
             ShareComposerSheet(context: session.context)
         }
@@ -506,19 +562,24 @@ struct BookDetailView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showIntelligenceRecap) {
-            RecapSheet(itemId: displayItem.id, title: displayItem.title, author: displayItem.authorName)
+            // Batch 490 (REVIEW 2026-11-11 P5): this book may not be the loaded one, so hand the
+            // sheets its chapters; moments then read "12:44 · Chapter 3" as they do in the player.
+            RecapSheet(itemId: displayItem.id, title: displayItem.title, author: displayItem.authorName,
+                       chapters: displayChapters)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showXRay) {
             XRaySheet(itemId: displayItem.id, title: displayItem.title,
-                      onSeek: { time, reason in jumpFromSheet { playerViewModel.seek(to: time, reason: reason) } })
+                      onSeek: { time, reason in jumpFromSheet { playerViewModel.seek(to: time, reason: reason) } },
+                      chapters: displayChapters)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showAskBook) {
             AskBookSheet(itemId: displayItem.id, title: displayItem.title, author: displayItem.authorName,
-                         onSeek: { time, reason in jumpFromSheet { playerViewModel.seek(to: time, reason: reason) } })
+                         onSeek: { time, reason in jumpFromSheet { playerViewModel.seek(to: time, reason: reason) } },
+                         chapters: displayChapters)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -800,12 +861,24 @@ struct BookDetailView: View {
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? 6 : 3)
                     .accessibilityAddTraits(.isHeader)
 
+                // Batch 490 (REVIEW 2026-11-11 L9): the server's subtitle, when there is one.
+                if let subtitle = Self.displaySubtitle(displayItem.media?.metadata?.subtitle) {
+                    Typo.metadata(Text(verbatim: subtitle))
+                        .foregroundStyle(Color.shelfMuted)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                }
+
                 // Design-direction pass, point 8: author is descriptive metadata, not
                 // an action or current state — was amber, which per that point should
                 // be reserved for Play/Resume, selected controls, and progress. Muted
                 // like every other secondary detail here now.
                 // Critique 2026-10-05 (Book Detail): a link now, like the narrator below.
-                if displayItem.authorName != "Unknown Author" {
+                // Batch 490 (REVIEW 2026-11-11 L9): was a compare against the English fallback
+                // "Unknown Author", which misses the localised fallback (zh-Hans), so there a
+                // book without an author linked to an author page for the fallback text. Checks
+                // the metadata instead.
+                if Self.hasAuthor(displayItem.media?.metadata?.authorName) {
                     NavigationLink(destination: AuthorLinkDestination(name: displayItem.authorName)) {
                         Typo.metadata(Text(displayItem.authorName))
                             .foregroundStyle(Color.shelfMuted)
@@ -1242,6 +1315,9 @@ struct BookDetailView: View {
                 .shelfCompactButtonStyle()
             }
             .disabled(playerViewModel.isLoadingSession)
+            // Batch 490 (REVIEW 2026-11-11 A1): this button always starts audio, so VoiceOver
+            // stays quiet after activating it instead of talking over the book.
+            .accessibilityAddTraits(.startsMediaSession)
         }
     }
 
@@ -1318,6 +1394,7 @@ struct BookDetailView: View {
                         .shelfCompactButtonStyle()
                     }
                     .disabled(target == nil || playerViewModel.isLoadingSession)
+                    .accessibilityAddTraits(.startsMediaSession)   // Batch 490 (REVIEW 2026-11-11 A1)
                 }
             }
         }
@@ -1611,7 +1688,47 @@ struct BookDetailView: View {
         if let language = displayItem.media?.metadata?.language, !language.isEmpty {
             metadata.append((String(localized: "Language", comment: "Book detail metadata label"), language.capitalized))
         }
+        // Batch 490 (REVIEW 2026-11-11 L9): size on the server and the number of audio files.
+        if let size = Self.sizeText(bytes: displayItem.size) {
+            metadata.append((String(localized: "Size", comment: "Book detail metadata label: size of the book on the server"), size))
+        }
+        if let files = Self.audioFileCountText(displayItem.media?.numAudioFiles ?? displayItem.media?.audioFiles?.count) {
+            metadata.append((String(localized: "Files", comment: "Book detail metadata label: number of audio files"), files))
+        }
         return metadata
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F19): the intent the Siri tip shows, for this book.
+    static func playIntent(for item: LibraryItem) -> PlayAudiobookIntent {
+        let intent = PlayAudiobookIntent()
+        intent.book = AudiobookEntity(from: item)
+        return intent
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L9): pure. A trimmed, non-empty subtitle, or nil.
+    static func displaySubtitle(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L9): pure. Whether the book has a real author to link to,
+    /// judged on the metadata rather than on the (localised) "Unknown Author" fallback.
+    static func hasAuthor(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L9): pure. "1.2 GB", or nil for a missing or zero size.
+    static func sizeText(bytes: Int?) -> String? {
+        guard let bytes, bytes > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L9): pure. A formatted count ("12", "1,024"), or nil for
+    /// none. Formatted here so no raw Int goes into a localised string.
+    static func audioFileCountText(_ count: Int?) -> String? {
+        guard let count, count > 0 else { return nil }
+        return count.formatted()
     }
 
     // MARK: - Genre chips
@@ -2248,6 +2365,9 @@ private struct PinnedLoadedRow: View {
                 .shelfCompactButtonStyle()
             }
             .accessibilityLabel(label)
+            // Batch 490 (REVIEW 2026-11-11 A1): Resume starts audio (Pause doesn't), as Driving
+            // Mode's Play does.
+            .accessibilityAddTraits(mode == .nowPlaying ? [] : .startsMediaSession)
 
             Button(action: openPlayer) {
                 Image(systemName: "chevron.up")

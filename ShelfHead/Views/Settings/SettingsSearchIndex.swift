@@ -112,6 +112,8 @@ enum SettingsRow {
     // Batch 433
     static let recapSpokenLinks = "transcripts.recapLinks"
     static let recapAutoPlay = "transcripts.recapAutoPlay"
+    // Batch 490 (REVIEW 2026-11-11 N3)
+    static let transcriptTranslation = "transcripts.translation"
 
     // Appearance
     static let theme = "appearance.theme"
@@ -136,6 +138,8 @@ enum SettingsRow {
     static let wifiOnly = "downloads.wifiOnly"
     static let autoDeleteFinished = "downloads.autoDelete"
     static let imageCache = "downloads.imageCache"
+    // Batch 490 (REVIEW 2026-11-11 N3)
+    static let chargingOnly = "downloads.chargingOnly"
     static let notifyDownloadComplete = "downloads.notifyComplete"
     static let storage = "downloads.storage"
 
@@ -153,6 +157,22 @@ enum SettingsRow {
     static let featureSleepShake = "features.sleepShake"
     static let featureWidget = "features.widget"
     static let featureWatch = "features.watch"
+    // Batch 490 (REVIEW 2026-11-11 N3): the features Features & Tips gained.
+    static let featureTranscriptSearch = "features.transcriptSearch"
+    static let featureCaptions = "features.captions"
+    static let featureRecaps = "features.recaps"
+    static let featureXRay = "features.xRay"
+    static let featureAskTheBook = "features.askTheBook"
+    static let featureClips = "features.clips"
+    static let featureReadAlong = "features.readAlong"
+    static let featureCassetteWall = "features.cassetteWall"
+    static let featurePassport = "features.passport"
+    static let featureDailyGoal = "features.dailyGoal"
+    static let featureDeckSkins = "features.deckSkins"
+    static let featureLiveActivities = "features.liveActivities"
+    static let featureControls = "features.controls"
+    static let featureSiri = "features.siri"
+    static let featureHousehold = "features.household"
 }
 
 /// One row per setting a user might search for, across all pages. Deliberately flat
@@ -168,6 +188,25 @@ struct SettingsSearchEntry: Equatable, Identifiable {
         /// "Remove All Servers from This Device" only shows with more than one saved
         /// server (`AccountSecuritySettingsView`).
         case multipleSavedServers
+        /// Batch 490 (REVIEW 2026-11-11 N3): rows `AccountSecuritySettingsView` only shows
+        /// when the signed-in user may upload (Upload) or update the library (Library Doctor).
+        case canUpload
+        case canUpdateLibrary
+        /// The Sharing section of `HouseholdSettingsView` only shows inside a household.
+        case inHousehold
+        /// `TranscriptsSettingsView` hides everything but its first row below iOS 26.
+        case transcriptsSupported
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 N3): the live state the conditions read. Every flag
+    /// defaults to "shown", so a caller that only knows the server count (and the older
+    /// tests) sees the same index as before.
+    struct LiveState: Equatable {
+        var savedServerCount: Int = 1
+        var canUpload: Bool = true
+        var canUpdateLibrary: Bool = true
+        var isInHousehold: Bool = true
+        var transcriptsSupported: Bool = true
     }
 
     let title: String
@@ -204,9 +243,18 @@ struct SettingsSearchEntry: Equatable, Identifiable {
 
     /// Whether this entry's row is on screen for the given live state.
     func isVisible(savedServerCount: Int) -> Bool {
+        isVisible(in: LiveState(savedServerCount: savedServerCount))
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 N3): every condition, not only the server count.
+    func isVisible(in state: LiveState) -> Bool {
         switch condition {
         case .always: return true
-        case .multipleSavedServers: return savedServerCount > 1
+        case .multipleSavedServers: return state.savedServerCount > 1
+        case .canUpload: return state.canUpload
+        case .canUpdateLibrary: return state.canUpdateLibrary
+        case .inHousehold: return state.isInHousehold
+        case .transcriptsSupported: return state.transcriptsSupported
         }
     }
 }
@@ -238,8 +286,14 @@ enum SettingsSearchIndex {
     /// Critique 2026-10-06 (clarify): the index filtered by live state, so a row that
     /// isn't on screen (Remove All Servers with one saved server) isn't offered.
     static func entries(includesClassicLockScreen: Bool, savedServerCount: Int) -> [SettingsSearchEntry] {
+        entries(includesClassicLockScreen: includesClassicLockScreen,
+                state: SettingsSearchEntry.LiveState(savedServerCount: savedServerCount))
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 N3): filtered by the whole live state.
+    static func entries(includesClassicLockScreen: Bool, state: SettingsSearchEntry.LiveState) -> [SettingsSearchEntry] {
         entries(includesClassicLockScreen: includesClassicLockScreen)
-            .filter { $0.isVisible(savedServerCount: savedServerCount) }
+            .filter { $0.isVisible(in: state) }
     }
 
     static let classicLockScreenTitle = String(localized: "Classic Lock Screen controls")
@@ -276,11 +330,13 @@ enum SettingsSearchIndex {
 
         // Transcripts (Batch 422)
         SettingsSearchEntry(title: String(localized: "Book transcripts"), keywords: ["transcript", "transcripts", "captions", "speech", "speech to text", "subtitles"], localizedKeywords: String(localized: "transcript, transcripts, captions, speech, speech to text, subtitles", comment: "Settings search keywords for 'Book transcripts', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptsEnabled),
-        SettingsSearchEntry(title: String(localized: "Transcribe while charging"), keywords: ["transcribe", "charging", "overnight", "power"], localizedKeywords: String(localized: "transcribe, charging, overnight, power", comment: "Settings search keywords for 'Transcribe while charging', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcribeWhileCharging),
-        SettingsSearchEntry(title: String(localized: "Spoken Links in Recaps"), keywords: ["recap", "previously on", "spoken", "links", "narrator", "voice"], localizedKeywords: String(localized: "recap, previously on, spoken, links, narrator, voice", comment: "Settings search keywords for 'Spoken Links in Recaps', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.recapSpokenLinks),
-        SettingsSearchEntry(title: String(localized: "Play Recap When Resuming"), keywords: ["recap", "previously on", "resume", "autoplay", "auto play", "narrator"], localizedKeywords: String(localized: "recap, previously on, resume, autoplay, auto play, narrator", comment: "Settings search keywords for 'Play Recap When Resuming', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.recapAutoPlay),
-        SettingsSearchEntry(title: String(localized: "Transcript language"), keywords: ["transcript language", "language", "locale", "speech language"], localizedKeywords: String(localized: "transcript language, language, locale, speech language", comment: "Settings search keywords for 'Transcript language', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptLanguage),
-        SettingsSearchEntry(title: String(localized: "Delete all transcripts"), keywords: ["delete transcripts", "transcript storage", "clear transcripts"], localizedKeywords: String(localized: "delete transcripts, transcript storage, clear transcripts", comment: "Settings search keywords for 'Delete all transcripts', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptStorage),
+        SettingsSearchEntry(title: String(localized: "Transcribe while charging"), keywords: ["transcribe", "charging", "overnight", "power"], localizedKeywords: String(localized: "transcribe, charging, overnight, power", comment: "Settings search keywords for 'Transcribe while charging', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcribeWhileCharging, condition: .transcriptsSupported),
+        SettingsSearchEntry(title: String(localized: "Spoken Links in Recaps"), keywords: ["recap", "previously on", "spoken", "links", "narrator", "voice"], localizedKeywords: String(localized: "recap, previously on, spoken, links, narrator, voice", comment: "Settings search keywords for 'Spoken Links in Recaps', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.recapSpokenLinks, condition: .transcriptsSupported),
+        SettingsSearchEntry(title: String(localized: "Play Recap When Resuming"), keywords: ["recap", "previously on", "resume", "autoplay", "auto play", "narrator"], localizedKeywords: String(localized: "recap, previously on, resume, autoplay, auto play, narrator", comment: "Settings search keywords for 'Play Recap When Resuming', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.recapAutoPlay, condition: .transcriptsSupported),
+        SettingsSearchEntry(title: String(localized: "Transcript language"), keywords: ["transcript language", "language", "locale", "speech language"], localizedKeywords: String(localized: "transcript language, language, locale, speech language", comment: "Settings search keywords for 'Transcript language', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptLanguage, condition: .transcriptsSupported),
+        SettingsSearchEntry(title: String(localized: "Delete all transcripts"), keywords: ["delete transcripts", "transcript storage", "clear transcripts"], localizedKeywords: String(localized: "delete transcripts, transcript storage, clear transcripts", comment: "Settings search keywords for 'Delete all transcripts', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptStorage, condition: .transcriptsSupported),
+        // Batch 490 (REVIEW 2026-11-11 N3): the row is iOS 18+, and the page hides it below iOS 26.
+        SettingsSearchEntry(title: String(localized: "Translate captions"), keywords: ["translate", "translation", "captions", "subtitles", "foreign language"], localizedKeywords: String(localized: "translate, translation, captions, subtitles, foreign language", comment: "Settings search keywords for 'Translate captions', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .transcripts, row: SettingsRow.transcriptTranslation, condition: .transcriptsSupported),
 
         // Sleep Timer
         SettingsSearchEntry(title: String(localized: "Sleep timer"), keywords: ["sleep", "timer", "fade"], localizedKeywords: String(localized: "sleep, timer, fade", comment: "Settings search keywords for 'Sleep timer', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .sleepTimer, row: SettingsRow.sleepFadeOut),
@@ -301,7 +357,7 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Theme & accent colour"), keywords: ["theme", "dark mode", "light mode", "accent", "colour", "color"], localizedKeywords: String(localized: "theme, dark mode, light mode, accent, colour, color", comment: "Settings search keywords for 'Theme & accent colour', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .appearance, row: SettingsRow.theme),
         SettingsSearchEntry(title: String(localized: "Household"), keywords: ["household", "family", "share", "invite", "recommend", "book club", "icloud"], localizedKeywords: String(localized: "household, family, share, invite, recommend, book club, icloud", comment: "Settings search keywords for 'Household', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .household, row: SettingsRow.household),
         SettingsSearchEntry(title: String(localized: "Kids"), keywords: ["child", "kids", "children", "profile", "parental", "bedtime", "picker", "family"], localizedKeywords: String(localized: "child, kids, children, profile, parental, bedtime, picker, family", comment: "Settings search keywords for 'Kids', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .household, row: SettingsRow.kids),
-        SettingsSearchEntry(title: String(localized: "Share what I’m listening to"), keywords: ["household", "now listening", "share", "presence"], localizedKeywords: String(localized: "household, now listening, share, presence", comment: "Settings search keywords for 'Share what I'm listening to', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .household, row: SettingsRow.householdSharing),
+        SettingsSearchEntry(title: String(localized: "Share what I’m listening to"), keywords: ["household", "now listening", "share", "presence"], localizedKeywords: String(localized: "household, now listening, share, presence", comment: "Settings search keywords for 'Share what I'm listening to', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .household, row: SettingsRow.householdSharing, condition: .inHousehold),
         SettingsSearchEntry(title: String(localized: "Deck skin"), keywords: ["deck", "skin", "walkman", "boombox", "reel", "8-track", "cassette", "button sounds", "click"], localizedKeywords: String(localized: "deck, skin, walkman, boombox, reel, 8-track, cassette, button sounds, click", comment: "Settings search keywords for 'Deck skin', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .appearance, row: SettingsRow.deckSkin),
 
         // System & Privacy
@@ -320,7 +376,10 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Auto-download"), keywords: ["auto-download", "auto download", "continue listening"], localizedKeywords: String(localized: "auto-download, auto download, continue listening", comment: "Settings search keywords for 'Auto-download', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.autoDownload),
         SettingsSearchEntry(title: String(localized: "Wi-Fi only downloads"), keywords: ["wifi", "cellular", "download on wifi"], localizedKeywords: String(localized: "wifi, cellular, download on wifi", comment: "Settings search keywords for 'Wi-Fi only downloads', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.wifiOnly),
         SettingsSearchEntry(title: String(localized: "Auto-delete finished"), keywords: ["delete", "finished", "storage"], localizedKeywords: String(localized: "delete, finished, storage", comment: "Settings search keywords for 'Auto-delete finished', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.autoDeleteFinished),
-        SettingsSearchEntry(title: String(localized: "Clear image cache"), keywords: ["cache", "storage", "clear"], localizedKeywords: String(localized: "cache, storage, clear", comment: "Settings search keywords for 'Clear image cache', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.imageCache),
+        // Batch 490 (REVIEW 2026-11-11 D3): renamed with the row, which now clears covers on disk too.
+        SettingsSearchEntry(title: String(localized: "Clear cover cache"), keywords: ["cache", "storage", "clear", "covers", "artwork", "images"], localizedKeywords: String(localized: "cache, storage, clear, covers, artwork, images", comment: "Settings search keywords for 'Clear cover cache', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.imageCache),
+        // Batch 490 (REVIEW 2026-11-11 N3)
+        SettingsSearchEntry(title: String(localized: "Auto-download only while charging"), keywords: ["charging", "charger", "power", "plugged in", "battery"], localizedKeywords: String(localized: "charging, charger, power, plugged in, battery", comment: "Settings search keywords for 'Auto-download only while charging', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.chargingOnly),
         SettingsSearchEntry(title: String(localized: "Download complete notification"), keywords: ["notification", "download complete"], localizedKeywords: String(localized: "notification, download complete", comment: "Settings search keywords for 'Download complete notification', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.notifyDownloadComplete),
         // Stage 3 (REDESIGN_PROPOSAL_2026-08-26.md §2.1): the management half of the
         // old Downloads tab. Critique 2026-10-06 (distill): transfers and the book list
@@ -335,8 +394,8 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Server diagnostics"), keywords: ["diagnostics", "server health", "token expiry"], localizedKeywords: String(localized: "diagnostics, server health, token expiry", comment: "Settings search keywords for 'Server diagnostics', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .diagnostics, row: SettingsRow.serverDiagnostics),
         SettingsSearchEntry(title: String(localized: "Download health"), keywords: ["download health", "paused", "repair"], localizedKeywords: String(localized: "download health, paused, repair", comment: "Settings search keywords for 'Download health', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .diagnostics, row: SettingsRow.downloadHealth),
         SettingsSearchEntry(title: String(localized: "Server backups"), keywords: ["backup", "back up", "restore"], localizedKeywords: String(localized: "backup, back up, restore", comment: "Settings search keywords for 'Server backups', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .account, row: SettingsRow.serverBackups),
-        SettingsSearchEntry(title: String(localized: "Library Doctor"), keywords: ["doctor", "duplicates", "missing cover", "series", "chapters", "metadata", "fix"], localizedKeywords: String(localized: "doctor, duplicates, missing cover, series, chapters, metadata, fix", comment: "Settings search keywords for 'Library Doctor', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .account, row: SettingsRow.libraryDoctor),
-        SettingsSearchEntry(title: String(localized: "Upload"), keywords: ["upload", "add book", "import", "epub", "m4b", "audiobook"], localizedKeywords: String(localized: "upload, add book, import, epub, m4b, audiobook", comment: "Settings search keywords for 'Upload', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .account, row: SettingsRow.upload),
+        SettingsSearchEntry(title: String(localized: "Library Doctor"), keywords: ["doctor", "duplicates", "missing cover", "series", "chapters", "metadata", "fix"], localizedKeywords: String(localized: "doctor, duplicates, missing cover, series, chapters, metadata, fix", comment: "Settings search keywords for 'Library Doctor', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .account, row: SettingsRow.libraryDoctor, condition: .canUpdateLibrary),
+        SettingsSearchEntry(title: String(localized: "Upload"), keywords: ["upload", "add book", "import", "epub", "m4b", "audiobook"], localizedKeywords: String(localized: "upload, add book, import, epub, m4b, audiobook", comment: "Settings search keywords for 'Upload', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .account, row: SettingsRow.upload, condition: .canUpload),
         SettingsSearchEntry(title: String(localized: "Release Radar"), keywords: ["release radar", "upcoming", "new releases", "audible", "series", "reminder"], localizedKeywords: String(localized: "release radar, upcoming, new releases, audible, series, reminder", comment: "Settings search keywords for 'Release Radar', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.releaseRadar),
 
         // Critique 2026-10-06 (clarify): Recent Changes is on the Settings root now.
@@ -348,6 +407,23 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Driving Mode"), keywords: ["driving", "car", "big buttons"], localizedKeywords: String(localized: "driving, car, big buttons", comment: "Settings search keywords for 'Driving Mode', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureDrivingMode),
         SettingsSearchEntry(title: String(localized: "Cassette view"), keywords: ["cassette", "tape", "flip cover"], localizedKeywords: String(localized: "cassette, tape, flip cover", comment: "Settings search keywords for 'Cassette view', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureCassette),
         SettingsSearchEntry(title: String(localized: "B-Side"), keywords: ["b-side", "bside", "shuffle", "random book"], localizedKeywords: String(localized: "b-side, bside, shuffle, random book", comment: "Settings search keywords for 'B-Side', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureBSide),
+        // Batch 490 (REVIEW 2026-11-11 N3): every Features & Tips row is searchable, except
+        // the ones whose own Settings row is already indexed (see QuickWinsSettingsTests).
+        SettingsSearchEntry(title: String(localized: "Fine scrubbing"), keywords: ["scrub", "scrubber", "precise", "slow scrub", "seek bar"], localizedKeywords: String(localized: "scrub, scrubber, precise, slow scrub, seek bar", comment: "Settings search keywords for 'Fine scrubbing', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureFineScrub),
+        SettingsSearchEntry(title: String(localized: "Home Screen widgets"), keywords: ["widget", "widgets", "home screen", "lock screen widget"], localizedKeywords: String(localized: "widget, widgets, home screen, lock screen widget", comment: "Settings search keywords for 'Home Screen widgets', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureWidget),
+        SettingsSearchEntry(title: String(localized: "Apple Watch app"), keywords: ["watch", "apple watch", "wrist"], localizedKeywords: String(localized: "watch, apple watch, wrist", comment: "Settings search keywords for 'Apple Watch app', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureWatch),
+        SettingsSearchEntry(title: String(localized: "Search inside a book"), keywords: ["search in book", "find a line", "transcript search", "quote"], localizedKeywords: String(localized: "search in book, find a line, transcript search, quote", comment: "Settings search keywords for 'Search inside a book', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureTranscriptSearch),
+        SettingsSearchEntry(title: String(localized: "Live captions"), keywords: ["captions", "subtitles", "read while listening", "lyrics"], localizedKeywords: String(localized: "captions, subtitles, read while listening, lyrics", comment: "Settings search keywords for 'Live captions', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureCaptions),
+        SettingsSearchEntry(title: String(localized: "Previously On and I Zoned Out"), keywords: ["previously on", "zoned out", "catch up", "summary", "recap", "what happened"], localizedKeywords: String(localized: "previously on, zoned out, catch up, summary, recap, what happened", comment: "Settings search keywords for 'Previously On and I Zoned Out', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureRecaps),
+        SettingsSearchEntry(title: String(localized: "X-Ray"), keywords: ["x-ray", "xray", "characters", "who is", "places", "people"], localizedKeywords: String(localized: "x-ray, xray, characters, who is, places, people", comment: "Settings search keywords for 'X-Ray', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureXRay),
+        SettingsSearchEntry(title: String(localized: "Ask the Book"), keywords: ["ask the book", "question", "ask", "apple intelligence"], localizedKeywords: String(localized: "ask the book, question, ask, apple intelligence", comment: "Settings search keywords for 'Ask the Book', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureAskTheBook),
+        SettingsSearchEntry(title: String(localized: "Quote clips and Mixtapes"), keywords: ["clip", "quote", "mixtape", "favourite moments", "favorite moments", "highlight"], localizedKeywords: String(localized: "clip, quote, mixtape, favourite moments, favorite moments, highlight", comment: "Settings search keywords for 'Quote clips and Mixtapes', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureClips),
+        SettingsSearchEntry(title: String(localized: "Read Along"), keywords: ["read along", "epub", "ebook", "follow the text", "highlight words"], localizedKeywords: String(localized: "read along, epub, ebook, follow the text, highlight words", comment: "Settings search keywords for 'Read Along', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureReadAlong),
+        SettingsSearchEntry(title: String(localized: "Cassette Wall"), keywords: ["cassette wall", "finished books", "shelf", "trophy"], localizedKeywords: String(localized: "cassette wall, finished books, shelf, trophy", comment: "Settings search keywords for 'Cassette Wall', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureCassetteWall),
+        SettingsSearchEntry(title: String(localized: "Listening Passport"), keywords: ["passport", "stamps", "genres", "narrators", "decades"], localizedKeywords: String(localized: "passport, stamps, genres, narrators, decades", comment: "Settings search keywords for 'Listening Passport', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featurePassport),
+        SettingsSearchEntry(title: String(localized: "Daily listening goal"), keywords: ["goal", "listening goal", "minutes a day", "streak", "ring"], localizedKeywords: String(localized: "goal, listening goal, minutes a day, streak, ring", comment: "Settings search keywords for 'Daily listening goal', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureDailyGoal),
+        SettingsSearchEntry(title: String(localized: "Control Centre controls"), keywords: ["control centre", "control center", "controls", "action button", "lock screen controls"], localizedKeywords: String(localized: "control centre, control center, controls, action button, lock screen controls", comment: "Settings search keywords for 'Control Centre controls', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureControls),
+        SettingsSearchEntry(title: String(localized: "Siri and Shortcuts"), keywords: ["shortcuts", "shortcut", "automation", "siri phrase"], localizedKeywords: String(localized: "shortcuts, shortcut, automation, siri phrase", comment: "Settings search keywords for 'Siri and Shortcuts', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .featuresTips, row: SettingsRow.featureSiri),
     ]
 
     /// Case-insensitive match against each entry's title or any of its keywords. Empty
@@ -358,8 +434,13 @@ enum SettingsSearchIndex {
     /// the keyboard ("sleep ") still matches, and a query of only spaces is empty. Live
     /// state filters conditional rows: pass the number of saved servers.
     static func results(for query: String, savedServerCount: Int = 1) -> [SettingsSearchEntry] {
-        results(for: query, in: entries(includesClassicLockScreen: isClassicLockScreenAvailable,
-                                        savedServerCount: savedServerCount))
+        results(for: query, state: SettingsSearchEntry.LiveState(savedServerCount: savedServerCount))
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 N3): `SettingsView` passes the live permissions,
+    /// household membership and transcript support, so a hidden row isn't offered.
+    static func results(for query: String, state: SettingsSearchEntry.LiveState) -> [SettingsSearchEntry] {
+        results(for: query, in: entries(includesClassicLockScreen: isClassicLockScreenAvailable, state: state))
     }
 
     static func results(for query: String, in entries: [SettingsSearchEntry]) -> [SettingsSearchEntry] {

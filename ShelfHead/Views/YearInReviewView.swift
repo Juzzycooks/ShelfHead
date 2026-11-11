@@ -559,7 +559,8 @@ struct YearInReviewView: View {
             placement: .chart,
             icon: "chart.bar.fill",
             value: "",
-            label: String(localized: "Minutes by Month")
+            // Batch 490 (REVIEW 2026-11-11 A4): the axis counts hours past two hours, so not "Minutes".
+            label: String(localized: "Listening by month")
         ))
 
         return cards
@@ -917,6 +918,11 @@ struct YearInReviewView: View {
                 // VoiceOver doesn't speak it twice.
                 .accessibilityHidden(true)
         } else {
+            // Batch 490 (REVIEW 2026-11-11 A4): the Stats chart's axis — hours past two hours
+            // ("50h", not "3000"), round ticks, every tick with its unit (`StatsChartAxis`).
+            let maxMinutes = data.map(\.minutes).max() ?? 0
+            let unit = StatsChartAxis.unit(maxMinutes: maxMinutes)
+            let yTicks = StatsChartAxis.ticks(maxMinutes: maxMinutes)
             Chart(data) { bar in
                 BarMark(x: .value("Month", bar.label), y: .value("Minutes", bar.minutes))
                     // Critique 2026-10-06 (colorize): data fill is shelfAmber, same as the heatmap.
@@ -926,8 +932,10 @@ struct YearInReviewView: View {
                     // step through months individually, matching StatsView.swift's
                     // chartCard (~586-594).
                     .accessibilityLabel(bar.label)
-                    .accessibilityValue(Text("\(Int(bar.minutes)) minutes"))
+                    // Batch 490 (REVIEW 2026-11-11 A4): "52 hours", not "3120 minutes".
+                    .accessibilityValue(StatsFormat.spoken(bar.minutes * 60))
             }
+            .chartYScale(domain: 0...(yTicks.last ?? max(maxMinutes, 1)))
             // HL-4 (V4): 12 month labels collide at accessibility sizes; show every third.
             .chartXAxis {
                 AxisMarks(values: dynamicTypeSize.isAccessibilitySize
@@ -936,7 +944,16 @@ struct YearInReviewView: View {
                     AxisValueLabel().foregroundStyle(Color.shelfMuted)
                 }
             }
-            .chartYAxis { AxisMarks { AxisValueLabel().foregroundStyle(Color.shelfMuted) } }
+            .chartYAxis {
+                AxisMarks(values: yTicks) { value in
+                    AxisValueLabel {
+                        if let minutes = value.as(Double.self) {
+                            Text(StatsChartAxis.label(minutes: minutes, unit: unit))
+                                .foregroundStyle(Color.shelfMuted)
+                        }
+                    }
+                }
+            }
             .frame(height: YearInReviewView.chartHeight)
         }
     }
@@ -974,7 +991,8 @@ struct YearInReviewView: View {
     private func accessibilityLabel(for card: YearInReviewCard) -> String {
         var parts: [String] = []
         if card.kind == .monthlyChart {
-            parts.append(String(localized: "Minutes listened by month, \(String(selectedYear)).", comment: "VoiceOver; %@ is a year such as 2026"))
+            // Batch 490 (REVIEW 2026-11-11 A4): matches the retitled chart.
+            parts.append(String(localized: "Listening by month, \(String(selectedYear)).", comment: "VoiceOver; %@ is a year such as 2026"))
             // HIG audit 2026-09-17 L11: this header label used to also list every
             // month's minutes, which duplicated the per-bar VoiceOver stops the chart
             // now exposes directly. Keep the no-data case (the chart shows no bars to

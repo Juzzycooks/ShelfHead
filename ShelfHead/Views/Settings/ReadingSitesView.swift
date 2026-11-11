@@ -34,7 +34,8 @@ struct ReadingSitesView: View {
                 settingRow("books.vertical", "Hardcover")
                 if model.isConnected {
                     if let name = model.username {
-                        Text(verbatim: name).font(.footnote).foregroundStyle(.secondary)
+                        // Batch 490 (REVIEW 2026-11-11 V4): type role and token, not `.footnote`/`.secondary`.
+                        Typo.supporting(Text(verbatim: name)).foregroundStyle(Color.shelfMuted)
                             .padding(.leading, 32)
                     }
                     HStack {
@@ -68,6 +69,8 @@ struct ReadingSitesView: View {
             } message: {
                 Text("Syncing turns off and the saved token is deleted.")
             }
+            // Batch 490 (REVIEW 2026-11-11 V3)
+            .systemChromeTint()
         } header: {
             RetroSectionHeader(title: "Reading Sites")
         }
@@ -143,8 +146,21 @@ struct ReadingSitesView: View {
         switch phase {
         case .idle: EmptyView()
         case .working: ProgressView().padding(.leading, 32)
-        case .done(let text): Text(verbatim: text).font(.footnote).foregroundStyle(.secondary).padding(.leading, 32)
-        case .failed(let text): Text(verbatim: text).font(.footnote).foregroundStyle(.red).padding(.leading, 32)
+        // Batch 490 (REVIEW 2026-11-11 V4): tokens, and a failure follows the DESIGN.md
+        // orange rule (orange glyph beside a cream sentence) instead of red text.
+        case .done(let text):
+            Typo.supporting(Text(verbatim: text)).foregroundStyle(Color.shelfMuted).padding(.leading, 32)
+        case .failed(let text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.shelfOrange)
+                    .accessibilityHidden(true)
+                Typo.supporting(Text(verbatim: text))
+                    .foregroundStyle(Color.shelfCream)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .padding(.leading, 32)
         }
     }
 }
@@ -175,13 +191,20 @@ struct ReadingRatingSheet: View {
             .padding()
             .navigationTitle("Rate on Hardcover")
             .navigationBarTitleDisplayMode(.inline)
+            // Batch 490 (REVIEW 2026-11-11 V1): the shared sheet buttons (system ✕ and ✓ on
+            // iOS 26, which also place in iPhone Duo's side bar). Skip is the cancel role, so it
+            // reads "Cancel" below iOS 26, as every other sheet's does.
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Skip") { ReadingSiteSync.shared.submitRating(nil); dismiss() }
+                    SheetCancelButton { ReadingSiteSync.shared.submitRating(nil); dismiss() }
+                        .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Send") { ReadingSiteSync.shared.submitRating(stars); dismiss() }.disabled(stars == 0)
+                    SheetConfirmButton(title: "Send") { ReadingSiteSync.shared.submitRating(stars); dismiss() }
+                        .disabled(stars == 0)
                 }
+                .shelfVisibilityPriority(.high)
             }
         }
         .presentationDetents([.height(260)])

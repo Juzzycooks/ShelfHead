@@ -149,13 +149,12 @@ struct TranscriptSearchSheet: View {
 
     // MARK: - Rows
 
-    private func chapter(at time: Double) -> Chapter? {
-        chapters.first { $0.start <= time && time < $0.end }
-    }
-
     private func row(_ hit: TranscriptSearchHit) -> some View {
-        let chapterTitle = chapter(at: hit.time).map { PlayerView.displayChapterTitle($0.title) }
-        let timeText = hit.time.formattedTime
+        // Batch 490 (REVIEW 2026-11-11 P5): the time is chapter-relative beside its chapter title,
+        // as the player shows it (whole-book time only for a chapterless book).
+        let chapter = BookMoment.chapter(at: hit.time, in: chapters)
+        let chapterTitle = chapter.map { PlayerView.displayChapterTitle($0.title) }
+        let timeText = BookmarksSheet.momentTime(time: hit.time, chapter: chapter)
         let snippet = Self.highlighted(hit)
         return Button {
             Haptics.selection()

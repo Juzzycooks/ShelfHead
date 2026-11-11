@@ -115,6 +115,8 @@ struct NowPlayingView: View {
                 store.addBookmarkAtCurrentPosition { ok in report(ok ? .saved : .failed) }
             },
             setSleepTimer: { store.setSleepTimer($0) },
+            // Batch 490 (REVIEW 2026-11-11 F29): "Add 15 Minutes", applied on the phone.
+            extendSleepTimer: { store.extendSleepTimer() },
             seekToChapter: { row in
                 store.seekToChapter(WatchChapterSummary(id: row.id, title: row.title, start: row.start, end: row.end))
             },

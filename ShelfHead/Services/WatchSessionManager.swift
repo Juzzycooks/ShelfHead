@@ -1031,6 +1031,12 @@ final class WatchSessionManager: NSObject {
             playerViewModel?.setPlaybackRate(rate)
         case .setSleepTimer(let option):
             playerViewModel?.setSleepTimer(mapSleepOption(option))
+        case .extendSleepTimer(let seconds):
+            // Batch 490 (REVIEW 2026-11-11 F29): "Add 15 Minutes" from the Watch's Sleep
+            // sheet. Through the view model so the phone's own rules apply (an
+            // end-of-chapter timer becomes a countdown, no timer → no-op); the generic push
+            // below sends the new remaining time back.
+            playerViewModel?.extendSleepTimer(by: seconds)
         case .markFinished:
             // `AudioPlayerService.markCurrentBookFinished(source:)` is the explicit,
             // out-of-band completion path — it replaced an earlier seek-to-duration trick

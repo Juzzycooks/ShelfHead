@@ -465,6 +465,12 @@ enum WatchCommandKind: Codable, Equatable, Sendable {
     case seekToBookmark(time: Double)
     case setPlaybackSpeed(rate: Double)
     case setSleepTimer(option: WatchSleepTimerOption)
+    /// Batch 490 (REVIEW 2026-11-11 F29): add `seconds` to the running sleep timer
+    /// (the Watch sends 900, "Add 15 Minutes"). The phone applies it through
+    /// `PlayerViewModel.extendSleepTimer(by:)`. A phone older than Batch 490 can't decode
+    /// this case and replies "malformed", so the Watch shows the command as failed and
+    /// rolls its optimistic countdown back; nothing else changes on either side.
+    case extendSleepTimer(seconds: Double)
     case markFinished
     /// Batch 414: mark a specific book finished, whether or not it is the one playing
     /// (Watch Book Details without a Watch session). `.markFinished` stays for Now
@@ -508,7 +514,7 @@ enum WatchCommandKind: Codable, Equatable, Sendable {
         case .seek, .seekToChapter, .seekToBookmark, .addBookmark, .markFinished:
             return true
         case .playPause, .play, .pause, .rewind, .forward, .setPlaybackSpeed, .setSleepTimer,
-             .playItem, .markItemFinished, .requestSnapshot:
+             .extendSleepTimer, .playItem, .markItemFinished, .requestSnapshot:
             return false
         }
     }

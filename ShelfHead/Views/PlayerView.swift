@@ -142,6 +142,24 @@ struct PlayerView: View {
     /// AX3 is where the one-page invariant actually stops holding. AX1/AX2 keep the fitted
     /// single-screen layout, with H2's 11pt label clamp doing its work there.
     var usesAccessibilityLayout: Bool { dynamicTypeSize >= .accessibility3 }
+
+    /// Batch 490 (REVIEW 2026-11-11 G1): a compact-height screen (iPhone landscape) can't
+    /// fit the fixed one-page column either — the transport ended up under the home
+    /// indicator — so it gets the same scrolling column and pinned transport as the
+    /// accessibility sizes. Only the column's layout follows this; the toolbar's label
+    /// sizing still keys off `usesAccessibilityLayout`, and Driving Mode and the folded
+    /// layout are separate views, unaffected.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    var usesScrollingColumnLayout: Bool {
+        Self.usesScrollingColumn(isAccessibilitySize: usesAccessibilityLayout,
+                                 verticalSizeClass: verticalSizeClass)
+    }
+
+    /// Pure, for tests.
+    nonisolated static func usesScrollingColumn(isAccessibilitySize: Bool,
+                                                verticalSizeClass: UserInterfaceSizeClass?) -> Bool {
+        isAccessibilitySize || verticalSizeClass == .compact
+    }
     @State var showSpeedPicker = false
     @State var shareSession: ShareSession?
     @State var showBookDetails = false
@@ -394,7 +412,7 @@ struct PlayerView: View {
                         // stays put at the top of the screen. `.all` is the modifier's
                         // own default, so the fixed layout is bit-for-bit unaffected.
                         .simultaneousGesture(dismissDrag,
-                                             including: usesAccessibilityLayout ? .subviews : .all)
+                                             including: usesScrollingColumnLayout ? .subviews : .all)
 
                     // Book Info — likewise draggable to dismiss. `.simultaneousGesture`
                     // (not `.gesture`) here and above so a drag starting on the cover
@@ -406,7 +424,7 @@ struct PlayerView: View {
                         // H1: same scoping as the artwork above — off at accessibility
                         // sizes so it can't be recognised simultaneously with the scroll.
                         .simultaneousGesture(dismissDrag,
-                                             including: usesAccessibilityLayout ? .subviews : .all)
+                                             including: usesScrollingColumnLayout ? .subviews : .all)
 
                     // Batch 458: "Clip 2 of 5" with Next clip and Stop while a mixtape plays.
                     // Renders nothing otherwise, so the fixed layout is unchanged.
@@ -439,7 +457,7 @@ struct PlayerView: View {
                     // scrolled off the bottom of the screen —
                     // exactly the failure `AccessibilityScrollColumn` (above) allows once the
                     // artwork/title/progress cluster above genuinely doesn't fit one screen.
-                    if !usesAccessibilityLayout {
+                    if !usesScrollingColumnLayout {   // Batch 490 (G1)
                         controlsView(in: geometry)
                             .padding(.top, 22)
                     }
@@ -482,7 +500,7 @@ struct PlayerView: View {
                 // H1 (REVIEW_2026-09-04_UI.md Pass 3): a no-op — literally `content` —
                 // at every size below `.accessibility1`. See the modifier's own comment.
                 .modifier(AccessibilityScrollColumn(
-                    enabled: usesAccessibilityLayout,
+                    enabled: usesScrollingColumnLayout,   // Batch 490 (G1)
                     minHeight: geometry.size.height))
                 // SB-3 (REVIEW_2026-09-14_DESIGN.md): pins the transport row (play/pause +
                 // skip glyphs) above the home indicator at accessibility sizes, where the
@@ -493,7 +511,7 @@ struct PlayerView: View {
                 // literally `content` — below `.accessibility3`, so nothing here changes the
                 // default layout `AccessibilityScrollColumn` already leaves untouched.
                 .modifier(PinnedAccessibilityTransport(
-                    enabled: usesAccessibilityLayout,
+                    enabled: usesScrollingColumnLayout,   // Batch 490 (G1)
                     controls: { pinnedTransportBar(in: geometry) }))
                 // iPhone Duo (§4): read here, from the `GeometryReader` that positions the
                 // column, so the fold's frame and the panes share one coordinate space
@@ -649,6 +667,14 @@ struct PlayerView: View {
         // the *second* open — the first is for getting oriented).
         .onAppear {
             CassetteFlipTip.playerOpenCount += 1
+        }
+        // Batch 490 (REVIEW 2026-11-11): a Driving Mode request from outside the player
+        // (`pendingDrivingModeRequest`) opens it the normal way, whether it arrives while
+        // the player is up or was already waiting when the player appeared.
+        .onChange(of: playerViewModel.pendingDrivingModeRequest, initial: true) { _, requested in
+            guard requested else { return }
+            playerViewModel.pendingDrivingModeRequest = false
+            openDrivingMode()
         }
         // Donates real elapsed minutes to `DrivingModeTip` — a `.task` rather than a
         // manually-managed `Timer` so it's automatically cancelled the instant this

@@ -59,12 +59,23 @@ struct StandaloneNowPlayingView: View {
     /// Critique 2026-10-06 (harden): one bookmark store for the tool row's Bookmark
     /// button and the Bookmarks sheet, so a bookmark just added is in the list.
     @State private var bookmarks = StandaloneBookmarkStore(api: WatchAudiobookshelfAPI.shared, queue: WatchPendingBookmarkQueue.shared)
+    /// Batch 490 (REVIEW 2026-11-11 W5): a different book the engine loaded while this
+    /// screen was up (started from another screen, Siri, a hand-off). The screen follows
+    /// it instead of sitting on "Starting…" for the book it was opened with.
+    @State private var followed: FollowedBook?
+
+    private struct FollowedBook: Equatable {
+        let itemId: String
+        let title: String
+        let author: String
+    }
 
     private var engine: StandaloneAudioEngine { watchStore.standalone }
+    private var shownItemId: String { followed?.itemId ?? itemId }
 
     var body: some View {
         StandaloneNowPlayingPage(
-            itemId: itemId, title: title, author: author,
+            itemId: shownItemId, title: followed?.title ?? title, author: followed?.author ?? author,
             coverData: resolvedCoverData,
             isAwaitingConfirmation: pendingReplace != nil,
             bookmarks: bookmarks,
@@ -105,12 +116,23 @@ struct StandaloneNowPlayingView: View {
                 pendingReplace = PendingReplace(currentTitle: currentTitle, place: .watch)
             }
         }
-        .task(id: itemId) {
-            if let coverData {
+        .task(id: shownItemId) {
+            if let followed {
+                // Batch 490 (W5): the followed book's own cover, not the one passed in.
+                resolvedCoverData = nil
+                resolvedCoverData = await WatchCoverLoader.shared.loadCoverData(itemId: followed.itemId, width: 240)
+            } else if let coverData {
                 resolvedCoverData = coverData
             } else {
                 resolvedCoverData = await WatchCoverLoader.shared.loadCoverData(itemId: coverItemId ?? itemId, width: 240)
             }
+        }
+        .onChange(of: engine.currentItemId) { previous, loaded in
+            guard StandaloneNowPlayingFollow.shouldFollow(
+                shownItemId: shownItemId, previousLoadedItemId: previous, newLoadedItemId: loaded,
+                isLoaded: engine.isLoaded, isConfirming: pendingReplace != nil),
+                  let loaded else { return }
+            followed = loaded == itemId ? nil : FollowedBook(itemId: loaded, title: engine.itemTitle, author: engine.itemAuthor)
         }
         .confirmationDialog(
             "Play \u{201C}\(title)\u{201D}?",
@@ -193,6 +215,9 @@ private struct StandaloneNowPlayingPage: View {
             elapsed: engine.currentTime,
             duration: engine.duration,
             isPlaying: engine.isPlaying,
+            // Batch 490 (REVIEW 2026-11-11 F29): the ring while a stream stalls; never
+            // for a download (`StandaloneAudioEngine.isBuffering`).
+            isBuffering: engine.isBuffering,
             // The engine's own 15/30 (its skip commands and the remote-command
             // router's `preferredIntervals` use the same constants), so the glyph and
             // the VoiceOver label state what a tap actually does.
@@ -220,6 +245,7 @@ private struct StandaloneNowPlayingPage: View {
             setSpeed: { engine.setPlaybackRate($0) },
             addBookmark: { report in addBookmark(report: report) },
             setSleepTimer: { engine.setSleepTimer($0) },
+            extendSleepTimer: { engine.extendSleepTimer() },
             seekToChapter: { engine.seek(to: $0.start) },
             seekToBookmark: { engine.seek(to: $0.time) },
             loadBookmarks: {
@@ -240,9 +266,9 @@ private struct StandaloneNowPlayingPage: View {
         Task {
             // Review 6 Low (dropped bookmark): a bookmark the server refused isn't "saved offline".
             switch await bookmarks.addOutcome(itemId: itemId, time: time, chapterTitle: chapter) {
-            case .sent:
-                WatchHaptics.success()
-                report(.saved)
+            // Batch 490 (REVIEW 2026-11-11 W8): no `WatchHaptics.success()` here; the
+            // outcome UI plays it, and both together buzzed twice.
+            case .sent: report(.saved)
             case .queued: report(.savedOffline)
             case .dropped: report(.failed)
             }

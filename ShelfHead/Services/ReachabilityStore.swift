@@ -95,7 +95,7 @@ final class ReachabilityStore {
         /// valid to show.
         let resolvedURL: String?
         /// Audiobookshelf's advertised sign-in methods (e.g. `["local", "openid"]`), read
-        /// from the follow-up `GET /status` call `fetchAuthMethods` makes below — only
+        /// from the follow-up `GET /status` call `fetchServerStatus` makes below — only
         /// attempted for `.reachable`/`.reachableInsecure`. `nil` for every other outcome
         /// (no second call is made), for a server too old to report the field, or for any
         /// failure along the way (timeout, non-2xx, malformed JSON) — `/ping`'s outcome
@@ -118,16 +118,24 @@ final class ReachabilityStore {
         /// True whenever the http fallback was attempted, whether it worked or not — so a
         /// failure the user sees after it doesn't offer a "Use http://" that was already tried.
         let triedPlainHTTP: Bool
+        /// Batch 490 (REVIEW 2026-11-11 F8): everything else `GET /status` said (version,
+        /// set-up state, the admin's login message and SSO button text). `nil` exactly
+        /// when `authMethods` would be: no `/status` call, or it failed. Defaulted, so
+        /// existing call sites and tests keep compiling.
+        let serverStatus: ServerStatusInfo?
 
         init(outcome: Outcome, resolvedURL: String?, authMethods: [String]? = nil,
              failure: ServerConnectionFailure? = nil, usedPlainHTTPFallback: Bool = false,
-             triedPlainHTTP: Bool = false) {
+             triedPlainHTTP: Bool = false, serverStatus: ServerStatusInfo? = nil) {
             self.outcome = outcome
             self.resolvedURL = resolvedURL
-            self.authMethods = authMethods
+            // Batch 490 (REVIEW 2026-11-11 F8): a caller that only passes `serverStatus`
+            // still gets `authMethods` from it.
+            self.authMethods = authMethods ?? serverStatus?.authMethods
             self.failure = failure
             self.usedPlainHTTPFallback = usedPlainHTTPFallback
             self.triedPlainHTTP = triedPlainHTTP || usedPlainHTTPFallback
+            self.serverStatus = serverStatus
         }
     }
 
@@ -191,7 +199,8 @@ final class ReachabilityStore {
             // through unchanged rather than assume.
             return ConnectionTestResult(outcome: fallback.outcome, resolvedURL: fallbackURL,
                                         authMethods: fallback.authMethods,
-                                        usedPlainHTTPFallback: true)
+                                        usedPlainHTTPFallback: true,
+                                        serverStatus: fallback.serverStatus)
         case .notAudiobookshelf, .unreachable, .invalidURL:
             // Something other than Audiobookshelf on the http side is no better an answer
             // than the https failure, so only a real pass adopts the fallback. Otherwise
@@ -260,10 +269,13 @@ final class ReachabilityStore {
             }
             let outcome: ConnectionTestResult.Outcome = isInsecureRisk ? .reachableInsecure : .reachable
             // Only bother once `/ping` has already confirmed this looks like a real
-            // Audiobookshelf server — see `fetchAuthMethods` for why this is a follow-up
+            // Audiobookshelf server — see `fetchServerStatus` for why this is a follow-up
             // call rather than folded into `/ping` itself.
-            let authMethods = await fetchAuthMethods(cleanURL: cleanURL, headers: headersToApply)
-            return ConnectionTestResult(outcome: outcome, resolvedURL: cleanURL, authMethods: authMethods)
+            // Batch 490 (REVIEW 2026-11-11 F8): the same one `/status` call, now read for
+            // more than `authMethods`.
+            let status = await fetchServerStatus(cleanURL: cleanURL, headers: headersToApply)
+            return ConnectionTestResult(outcome: outcome, resolvedURL: cleanURL,
+                                        authMethods: status?.authMethods, serverStatus: status)
         } catch {
             // Critique 2026-10-06 (harden): was a bare `.unreachable` for every error,
             // which is why the form could only ever say "Can't reach this server".
@@ -289,7 +301,11 @@ final class ReachabilityStore {
     /// Any failure — timeout, non-2xx, malformed JSON, an older server without the field
     /// — yields `nil`, never an error surfaced anywhere; the caller's outcome is already
     /// final by the time this runs.
-    private static func fetchAuthMethods(cleanURL: String, headers: [String: String]) async -> [String]? {
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 F8): renamed from `fetchAuthMethods` and widened to
+    /// the whole `ServerStatusInfo` (`parseServerStatus`). Same request, same call site,
+    /// no new `URLSession` use.
+    private static func fetchServerStatus(cleanURL: String, headers: [String: String]) async -> ServerStatusInfo? {
         guard let statusURL = URL(string: "\(cleanURL)/status") else { return nil }
         var request = URLRequest(url: statusURL)
         request.timeoutInterval = 8
@@ -299,7 +315,27 @@ final class ReachabilityStore {
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             return nil
         }
-        return parseAuthMethods(from: data)
+        return parseServerStatus(from: data)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F8): pure parse of the whole `GET /status` body.
+    /// Audiobookshelf's `Server.js` answers `{ app, serverVersion, isInit, language,
+    /// authMethods, authFormData }`, where `authFormData` carries
+    /// `authLoginCustomMessage` (HTML-sanitised, may be null) and, only when OpenID is
+    /// active, `authOpenIDButtonText`. Every field is optional and type-checked on its
+    /// own, so one odd value never loses the rest. `nil` only when the body isn't a JSON
+    /// object at all.
+    nonisolated static func parseServerStatus(from data: Data) -> ServerStatusInfo? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let form = object["authFormData"] as? [String: Any]
+        return ServerStatusInfo(
+            authMethods: parseAuthMethods(from: data),
+            serverVersion: ServerStatusInfo.cleanedLine(object["serverVersion"] as? String, maxLength: 40),
+            isInitialized: object["isInit"] as? Bool,
+            loginMessage: ServerStatusInfo.plainLoginMessage(form?["authLoginCustomMessage"] as? String),
+            openIDButtonText: ServerStatusInfo.cleanedLine(form?["authOpenIDButtonText"] as? String, maxLength: 40))
     }
 
     /// Pure parse of Audiobookshelf's `GET /status` body down to just `authMethods`,
@@ -358,6 +394,78 @@ final class ReachabilityStore {
         } catch {
             status = .serverUnreachable
         }
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F8): what Audiobookshelf's unauthenticated `GET /status`
+/// says about itself, beyond `authMethods`. Every field is optional: an older server, or
+/// one that sent an unexpected type, just leaves that field `nil`. Pinned by
+/// `QuickWinsSignInTests`.
+nonisolated struct ServerStatusInfo: Equatable, Sendable {
+    /// `authMethods`, e.g. `["local", "openid"]` (`ReachabilityStore.parseAuthMethods`).
+    let authMethods: [String]?
+    /// `serverVersion`, e.g. "2.17.2".
+    let serverVersion: String?
+    /// `isInit`: `false` means no root user exists yet, so nobody can sign in until setup
+    /// is finished in a browser. `nil` when the server didn't say.
+    let isInitialized: Bool?
+    /// `authFormData.authLoginCustomMessage`, reduced to plain text and capped
+    /// (`plainLoginMessage`). `nil` when unset or empty.
+    let loginMessage: String?
+    /// `authFormData.authOpenIDButtonText`, only when the admin changed it from
+    /// Audiobookshelf's default (`serverDefaultOpenIDButtonText`).
+    let openIDButtonText: String?
+
+    init(authMethods: [String]? = nil, serverVersion: String? = nil, isInitialized: Bool? = nil,
+         loginMessage: String? = nil, openIDButtonText: String? = nil) {
+        self.authMethods = authMethods
+        self.serverVersion = serverVersion
+        self.isInitialized = isInitialized
+        self.loginMessage = loginMessage
+        // The server default is generic English and the app's own label says the same
+        // thing in the user's language, so only a customised label is kept.
+        if let openIDButtonText,
+           openIDButtonText.caseInsensitiveCompare(Self.serverDefaultOpenIDButtonText) != .orderedSame {
+            self.openIDButtonText = openIDButtonText
+        } else {
+            self.openIDButtonText = nil
+        }
+    }
+
+    /// `ServerSettings.js`'s default for `authOpenIDButtonText`.
+    static let serverDefaultOpenIDButtonText = "Login with OpenId"
+
+    /// Longest login message shown, in characters, before it is cut with an ellipsis.
+    static let loginMessageMaxLength = 280
+
+    /// The server stores the login message as sanitised HTML (the web client renders it
+    /// with `v-html`). The app shows it as one quiet line of plain text: tags removed
+    /// (line-breaking ones become spaces), the common entities decoded, whitespace
+    /// collapsed, and capped at `loginMessageMaxLength`. `nil` when nothing is left.
+    static func plainLoginMessage(_ raw: String?) -> String? {
+        guard var text = raw else { return nil }
+        text = text.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+        let entities: [(String, String)] = [
+            ("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+            ("&#39;", "\u{2019}"), ("&#x27;", "\u{2019}"), ("&apos;", "\u{2019}"), ("&amp;", "&")
+        ]
+        for (entity, replacement) in entities {
+            text = text.replacingOccurrences(of: entity, with: replacement, options: .caseInsensitive)
+        }
+        return cleanedLine(text, maxLength: loginMessageMaxLength)
+    }
+
+    /// Whitespace and control characters collapsed to single spaces, trimmed, and capped
+    /// at `maxLength` characters (with an ellipsis). `nil` for `nil` or nothing left.
+    static func cleanedLine(_ raw: String?, maxLength: Int) -> String? {
+        guard let raw else { return nil }
+        let pieces = raw.components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.controlCharacters))
+            .filter { !$0.isEmpty }
+        let joined = pieces.joined(separator: " ")
+        guard !joined.isEmpty else { return nil }
+        guard joined.count > maxLength, maxLength > 1 else { return joined }
+        let cut = joined.prefix(maxLength - 1).trimmingCharacters(in: .whitespaces)
+        return cut + "\u{2026}"
     }
 }
 

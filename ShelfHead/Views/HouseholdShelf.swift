@@ -43,8 +43,25 @@ struct HouseholdShelf: View {
                                           inboxCount: recs.count) {
             let myFingerprint = ServerFingerprint.fingerprint(forServerURL: AuthStore.shared.serverURL)
             VStack(alignment: .leading, spacing: 12) {
-                RetroSectionHeader(title: "Household")
-                    .padding(.horizontal, Space.pageH)
+                // Batch 490 (REVIEW 2026-11-11 A3): the header leads to Settings › Household, where
+                // sharing and the inbox are managed (same route an accepted invite takes).
+                HStack(alignment: .firstTextBaseline) {
+                    RetroSectionHeader(title: "Household")
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptics.selection()
+                        NotificationCenter.default.post(name: .shelfheadOpenHousehold, object: nil)
+                    } label: {
+                        Text("Manage")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.shelfAmberText)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Household settings"))
+                }
+                .padding(.horizontal, Space.pageH)
                 VStack(spacing: 0) {
                     ForEach(listening) { entry in
                         if let member = snapshot.members[entry.memberId] {
@@ -60,7 +77,9 @@ struct HouseholdShelf: View {
                             HouseholdShelfRow(member: member, kind: .recommendation, itemId: rec.libraryItemId,
                                               title: rec.title, author: rec.author,
                                               note: rec.note.isEmpty ? nil : rec.note,
-                                              sameServer: HouseholdShelfLogic.isSameServer(rec.serverFingerprint, mine: myFingerprint))
+                                              sameServer: HouseholdShelfLogic.isSameServer(rec.serverFingerprint, mine: myFingerprint),
+                                              // Batch 490 (REVIEW 2026-11-11 A3): the same dismiss as Settings › Household.
+                                              onDismiss: { inbox.dismiss(rec.id) })
                             if rec.id != recs.last?.id { Divider().background(Color.shelfSurface) }
                         }
                     }
@@ -90,23 +109,45 @@ private struct HouseholdShelfRow: View {
     let author: String
     let note: String?
     let sameServer: Bool
+    /// Batch 490 (REVIEW 2026-11-11 A3): recommendation rows only — hides it on this device.
+    var onDismiss: (() -> Void)? = nil
 
     var body: some View {
-        if sameServer {
-            NavigationLink(destination: HouseholdBookDestination(itemId: itemId)) {
-                content(showChevron: true)
-            }
-            .buttonStyle(.plain)
+        if let onDismiss {
+            row
+                .contextMenu {
+                    Button(role: .destructive) {
+                        onDismiss()
+                    } label: {
+                        Label("Dismiss", systemImage: "xmark")
+                    }
+                }
+                .accessibilityActions {
+                    Button("Dismiss") { onDismiss() }
+                }
         } else {
-            content(showChevron: false)
-                .opacity(0.65)
-                .accessibilityHint(Text("On another server"))
+            row
         }
+    }
+
+    @ViewBuilder private var row: some View {
+            if sameServer {
+                NavigationLink(destination: HouseholdBookDestination(itemId: itemId)) {
+                    content(showChevron: true)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Batch 490 (REVIEW 2026-11-11 A3): only the avatar dims (see `content`); the text
+                // stays at full contrast so it's still readable.
+                content(showChevron: false)
+                    .accessibilityHint(Text("On another server"))
+            }
     }
 
     private func content(showChevron: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             HouseholdAvatarView(symbol: member.avatarSymbol, colorIndex: member.avatarColorIndex, size: 36)
+                .opacity(sameServer ? 1 : 0.65)
             VStack(alignment: .leading, spacing: 3) {
                 caption
                     .foregroundStyle(Color.shelfMuted)
@@ -167,6 +208,8 @@ struct HouseholdBookDestination: View {
     @Environment(LibraryViewModel.self) private var libraryViewModel
     @State private var item: LibraryItem?
     @State private var failed = false
+    /// Batch 490 (REVIEW 2026-11-11 A3): bumped by Retry to run the load again.
+    @State private var attempt = 0
 
     var body: some View {
         Group {
@@ -176,17 +219,30 @@ struct HouseholdBookDestination: View {
                 ZStack {
                     Color.shelfBackground.ignoresSafeArea()
                     if failed {
-                        Typo.supporting(Text("Couldn't open this book."))
-                            .foregroundStyle(Color.shelfMuted)
+                        // Batch 490 (REVIEW 2026-11-11 A3): the shared empty state with a way forward,
+                        // instead of a bare caption.
+                        EmptyStateView(
+                            icon: "book.closed",
+                            title: LocalizedStringResource("Couldn\u{2019}t open this book"),
+                            subtitle: LocalizedStringResource("It may have been removed, or your server can\u{2019}t be reached."),
+                            actionTitle: LocalizedStringResource("Retry", comment: "Button: try loading again")
+                        ) {
+                            Haptics.selection()
+                            failed = false
+                            attempt += 1
+                        }
                     } else {
                         ProgressView()
+                            .shelfSpinner()
+                            .accessibilityLabel("Loading")
                     }
                 }
             }
         }
-        .task {
+        .task(id: attempt) {
             guard item == nil else { return }
-            if let loaded = await libraryViewModel.getItemDetail(itemId: itemId) {
+            if let loaded = await libraryViewModel.getItemDetail(itemId: itemId)
+                ?? DownloadManager.shared.libraryItem(for: itemId) {
                 item = loaded
             } else {
                 failed = true

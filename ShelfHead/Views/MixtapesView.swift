@@ -7,6 +7,7 @@ struct MixtapesView: View {
     @State private var store = MixtapeStore.shared
     @State private var showNew = false
     @State private var newTitle = ""
+    @State private var pendingDelete: Mixtape?
 
     var body: some View {
         ZStack {
@@ -29,10 +30,12 @@ struct MixtapesView: View {
                             .frame(minHeight: 44, alignment: .leading)
                         }
                         .listRowBackground(Color.shelfCard)
-                    }
-                    .onDelete { offsets in
-                        let ids = offsets.map { store.mixtapes[$0].id }
-                        ids.forEach { store.delete($0) }
+                        // Batch 490 (REVIEW 2026-11-11 L10): was `.onDelete`, where one full swipe
+                        // deleted a whole mixtape with no way back. Now a tap on Delete, then a
+                        // confirmation.
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { pendingDelete = tape } label: { Label("Delete", systemImage: "trash") }
+                        }
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -41,9 +44,10 @@ struct MixtapesView: View {
         .navigationTitle("Mixtapes")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { newTitle = ""; showNew = true } label: { Image(systemName: "plus") }
+                // Batch 490 (REVIEW 2026-11-11 V1): a titled `Label`, not a bare image, so the
+                // title reaches VoiceOver and the iPhone Duo side bar.
+                Button { newTitle = ""; showNew = true } label: { Label("New Mixtape", systemImage: "plus") }
                     .monochromeToolbarItem()
-                    .accessibilityLabel("New Mixtape")
             }
         }
         .alert("New Mixtape", isPresented: $showNew) {
@@ -51,6 +55,18 @@ struct MixtapesView: View {
             Button("Create") { store.create(title: newTitle) }
             Button("Cancel", role: .cancel) {}
         }
+        .systemChromeTint()   // Batch 490 (REVIEW 2026-11-11 V3)
+        .confirmationDialog("Delete this mixtape?",
+                            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                            titleVisibility: .visible, presenting: pendingDelete) { tape in
+            Button("Delete Mixtape", role: .destructive) {
+                store.delete(tape.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { tape in
+            Text("“\(tape.title)” and its clips are removed. The books themselves aren’t touched.")
+        }
+        .systemChromeTint()
     }
 }
 
@@ -79,9 +95,11 @@ struct MixtapeDetailView: View {
                             Label("Play Mixtape", systemImage: "play.fill")
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color.shelfAmber)
-                        .foregroundStyle(Color.onAccent)
+                        // Batch 490 (REVIEW 2026-11-11 V2): was `.borderedProminent` with an amber
+                        // tint; the house primary draws contrast-picked ink on the accent.
+                        .shelfButtonStyle()
+                        .buttonStyle(.plain)
+                        .opacity(tape.clips.isEmpty ? 0.5 : 1)
                         .disabled(tape.clips.isEmpty)
                         .listRowBackground(Color.clear)
                     }
@@ -92,9 +110,15 @@ struct MixtapeDetailView: View {
                                 mixtapePlayer.play(tape, from: offset, using: playerViewModel)
                             } label: { MixtapeClipRow(clip: clip, number: offset + 1) }
                                 .listRowBackground(Color.shelfCard)
+                                // Batch 490 (REVIEW 2026-11-11 L10): was `.onDelete`; a full swipe no
+                                // longer removes a clip, Delete has to be tapped.
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        store.removeClips(mixtapeId, at: IndexSet(integer: offset))
+                                    } label: { Label("Delete", systemImage: "trash") }
+                                }
                         }
                         .onMove { store.move(mixtapeId, from: $0, to: $1) }
-                        .onDelete { store.removeClips(mixtapeId, at: $0) }
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -106,9 +130,12 @@ struct MixtapeDetailView: View {
                         Menu {
                             Button("Rename", systemImage: "pencil") { draftTitle = tape.title; showRename = true }
                             EditButton()
-                        } label: { Image(systemName: "ellipsis.circle") }
+                        } label: {
+                            // Batch 490 (REVIEW 2026-11-11 V1, V8): a titled `Label`, and plain
+                            // `ellipsis` (`ellipsis.circle` drew a circle inside the glass circle).
+                            Label("More", systemImage: "ellipsis")
+                        }
                             .monochromeToolbarItem()
-                            .accessibilityLabel("More")
                     }
                 }
                 .alert("Rename Mixtape", isPresented: $showRename) {
@@ -116,6 +143,7 @@ struct MixtapeDetailView: View {
                     Button("Save") { store.rename(mixtapeId, to: draftTitle) }
                     Button("Cancel", role: .cancel) {}
                 }
+                .systemChromeTint()   // Batch 490 (REVIEW 2026-11-11 V3)
                 .sheet(isPresented: $showingShareSheet) {
                     if let link = try? MixtapeLink.encode(tape, serverURL: AuthStore.shared.serverURL) {
                         ActivityView(items: [String(localized: "A mixtape from ShelfHead. You need to be on the same Audiobookshelf server."), link.url])
@@ -129,11 +157,11 @@ struct MixtapeDetailView: View {
     private func shareButton(for tape: Mixtape) -> some View {
         if (try? MixtapeLink.encode(tape, serverURL: AuthStore.shared.serverURL)) != nil {
             // Batch 464: a share sheet without SharePlay (`ActivityView`), not `ShareLink`.
+            // Batch 490 (REVIEW 2026-11-11 V1): a titled `Label`, not a bare image.
             Button { showingShareSheet = true } label: {
-                Image(systemName: "square.and.arrow.up")
+                Label("Share Mixtape", systemImage: "square.and.arrow.up")
             }
             .monochromeToolbarItem()
-            .accessibilityLabel("Share Mixtape")
         }
     }
 }
@@ -215,9 +243,11 @@ struct MixtapeImportView: View {
             .navigationTitle("Mixtape")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }.monochromeToolbarItem()
+                // Batch 490 (REVIEW 2026-11-11 V1): the system Close button, as other sheets.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }.monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
             }
         }
         .systemChromeTint()

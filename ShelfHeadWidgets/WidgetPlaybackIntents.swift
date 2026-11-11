@@ -207,6 +207,64 @@ struct SleepTimerExtendIntent: LiveActivityIntent {
     }
 }
 
+// MARK: - Control Center skip and bookmark intents (Batch 490, REVIEW 2026-11-11 F17)
+
+/// Decision for the Control Center skip buttons. The Home Screen widget's skip path
+/// deliberately resumes playback when the app has to be relaunched (`PlaybackCoordinator
+/// .skipAction(... allowColdStart: true)`), which is right for a widget's play/skip tile
+/// but would start sound from a Control Centre skip the listener may have pressed while
+/// nothing was playing. So the controls only post while the snapshot says a book is
+/// playing and fresh (same 90s rule as the Play/Pause control); otherwise they do nothing.
+enum ControlSkipGuard {
+    static func shouldPostSkip(snapshot: SharedPlayback.Snapshot?, now: Date = Date()) -> Bool {
+        guard let snapshot else { return false }
+        return snapshot.isPlaying && now.timeIntervalSince(snapshot.updatedAt) <= 90
+    }
+}
+
+/// Control Center "Skip Back". Reuses the existing `com.shelfhead.skipBackward` channel.
+@available(iOS 18.0, *)
+struct SkipBackControlIntent: AudioPlaybackIntent {
+    static var title: LocalizedStringResource = "Skip Back"
+    static var description = IntentDescription("Skip back in the current book.")
+    static var isDiscoverable: Bool { false }
+
+    func perform() async throws -> some IntentResult {
+        guard ControlSkipGuard.shouldPostSkip(snapshot: SharedPlayback.read()) else { return .result() }
+        await postDarwinAndAwaitHandling("com.shelfhead.skipBackward")
+        return .result()
+    }
+}
+
+/// Control Center "Skip Forward". Reuses the existing `com.shelfhead.skipForward` channel.
+@available(iOS 18.0, *)
+struct SkipForwardControlIntent: AudioPlaybackIntent {
+    static var title: LocalizedStringResource = "Skip Forward"
+    static var description = IntentDescription("Skip forward in the current book.")
+    static var isDiscoverable: Bool { false }
+
+    func perform() async throws -> some IntentResult {
+        guard ControlSkipGuard.shouldPostSkip(snapshot: SharedPlayback.read()) else { return .result() }
+        await postDarwinAndAwaitHandling("com.shelfhead.skipForward")
+        return .result()
+    }
+}
+
+/// Control Center "Add Bookmark". Posts `com.shelfhead.addBookmark`; the app adds a bookmark
+/// at the current position only if a book is loaded (never starts playback).
+@available(iOS 18.0, *)
+struct AddBookmarkControlIntent: AudioPlaybackIntent {
+    static var title: LocalizedStringResource = "Add Bookmark"
+    static var description = IntentDescription("Bookmark the current position in your book.")
+    static var isDiscoverable: Bool { false }
+
+    func perform() async throws -> some IntentResult {
+        guard SharedPlayback.read() != nil else { return .result() }
+        await postDarwinAndAwaitHandling("com.shelfhead.addBookmark")
+        return .result()
+    }
+}
+
 /// Control Center's "Open Now Playing" button. This one legitimately foregrounds the
 /// app, so plain `AppIntent` + `openAppWhenRun` (not `AudioPlaybackIntent`) is correct.
 @available(iOS 18.0, *)

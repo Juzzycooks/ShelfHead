@@ -133,6 +133,9 @@ extension PlayerView {
             }
             .accessibilityLabel(playerViewModel.isPlaying ? "Pause" : "Play")
             .accessibilityValue(playerViewModel.isTransportWaiting ? "Loading" : "")
+            // Batch 490 (REVIEW 2026-11-11 A1): as Driving Mode's Play already does —
+            // VoiceOver stays quiet once Play starts audio instead of talking over it.
+            .accessibilityAddTraits(playerViewModel.isPlaying ? [] : .startsMediaSession)
 
             transportButton(SkipLabels.symbolName(backward: false, seconds: skipForwardInterval),
                              label: .verbatim(SkipLabels.accessibilityLabel(backward: false, seconds: skipForwardInterval)),

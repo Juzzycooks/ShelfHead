@@ -305,6 +305,51 @@ extension View {
     }
 }
 
+// MARK: - Always-On (Batch 490, REVIEW 2026-11-11 W14)
+
+extension WatchTheme {
+    /// The Always-On Rule (DESIGN.md): a screen's one amber action drops to Worn Taupe
+    /// with the wrist down. Nothing amber stays lit.
+    static func prominentTint(isLuminanceReduced: Bool) -> Color {
+        isLuminanceReduced ? secondaryText : accent
+    }
+
+    /// The Always-On Rule's cover opacity: 60% with the wrist down.
+    nonisolated static func coverOpacity(isLuminanceReduced: Bool) -> Double {
+        isLuminanceReduced ? 0.6 : 1
+    }
+}
+
+private struct WatchProminentTintModifier: ViewModifier {
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    func body(content: Content) -> some View {
+        content.tint(WatchTheme.prominentTint(isLuminanceReduced: isLuminanceReduced))
+    }
+}
+
+private struct WatchAlwaysOnDimModifier: ViewModifier {
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    func body(content: Content) -> some View {
+        content.opacity(WatchTheme.coverOpacity(isLuminanceReduced: isLuminanceReduced))
+    }
+}
+
+extension View {
+    /// Batch 490 (REVIEW 2026-11-11 W14): `.tint(WatchTheme.accent)` for a screen's one
+    /// prominent action, dropping to Worn Taupe when luminance is reduced.
+    func watchProminentTint() -> some View {
+        modifier(WatchProminentTintModifier())
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W14): dims a cover to 60% when luminance is reduced.
+    /// Not for the Shelf's sleeves or Now Playing's cover, which already do this.
+    func watchAlwaysOnDimmed() -> some View {
+        modifier(WatchAlwaysOnDimModifier())
+    }
+}
+
 /// UI polish pass round 2 (29 August 2026): centralizes the Watch app's haptic
 /// feedback. Before this, `WatchConnectivityStore.playHaptic(success:)` was the
 /// ONLY haptic call site anywhere in the target (see that file's own WATCH-4 doc
@@ -370,6 +415,7 @@ struct WatchRow<Trailing: View>: View {
     // genuinely is main-actor-isolated) sidesteps that, exactly like `menuRow` did.
     var tintColor: Color? = nil
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(systemImage: String, title: LocalizedStringResource, subtitle: LocalizedStringResource? = nil,
          tintColor: Color? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
@@ -414,7 +460,10 @@ struct WatchRow<Trailing: View>: View {
                     Text(subtitle)
                         .font(WatchMetrics.subtitleFont())
                         .foregroundStyle(WatchTheme.secondaryText)
-                        .lineLimit(1)
+                        // Batch 490 (REVIEW 2026-11-11 W14): one line cut explanatory
+                        // subtitles ("Session expired — tap to reconnect"). Two lines,
+                        // three at accessibility sizes.
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                 }
             }
             Spacer(minLength: 0)
@@ -820,6 +869,8 @@ struct WatchBookRow<Cover: View, Detail: View, Trailing: View>: View {
         HStack(spacing: 8) {
             cover()
                 .frame(width: Self.coverSide, height: Self.coverSide)
+                // Batch 490 (REVIEW 2026-11-11 W14): the Always-On Rule for every list's covers.
+                .watchAlwaysOnDimmed()
             VStack(alignment: .leading, spacing: WatchMetrics.titleSubtitleSpacing) {
                 Text(verbatim: title)
                     .font(WatchMetrics.contentRowTitleFont(weight: .medium, rounded: true))

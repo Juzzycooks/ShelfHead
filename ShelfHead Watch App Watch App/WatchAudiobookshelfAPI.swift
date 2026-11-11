@@ -1036,8 +1036,15 @@ struct WatchLibraryItem: Codable, Identifiable {
     let libraryId: String?
     let mediaType: String?
     let media: WatchMedia?
-    let addedAt: Int?
-    let updatedAt: Int?
+    /// Batch 490: epoch milliseconds. `Int64`, not `Int`: on older Apple Watch hardware
+    /// (arm64_32: Series 8 and earlier, SE, the first Ultra) `Int` is 32 bits, a
+    /// millisecond timestamp (about 1.7e12) doesn't fit, and `JSONDecoder` then throws for
+    /// the whole item, so every book was dropped from the lossy array and the library came
+    /// back empty. The simulator and newer Watches are arm64 (64-bit `Int`), which is why
+    /// no test or device run here showed it. Same for `WatchMediaProgress.lastUpdate` and
+    /// `WatchAuthSession`'s dates below.
+    let addedAt: Int64?
+    let updatedAt: Int64?
     let mediaProgress: WatchMediaProgress?
     /// Critique 2026-10-06 (harden): the item's size on the server in bytes (Audiobookshelf
     /// sends `size` on library items, minified or not). Optional, and a `Double` because
@@ -1120,7 +1127,8 @@ struct WatchMediaProgress: Codable, Identifiable {
     let progress: Double?
     let currentTime: Double?
     let isFinished: Bool?
-    let lastUpdate: Int?
+    /// Epoch milliseconds; `Int64` for 32-bit Watch hardware (see `WatchLibraryItem.addedAt`).
+    let lastUpdate: Int64?
 }
 
 struct WatchPlaybackSessionRequest: Codable {
@@ -1222,9 +1230,10 @@ struct WatchAuthSession: Decodable, Identifiable {
     let ipAddress: String?
     let userAgent: String?
     /// Epoch milliseconds, matching Audiobookshelf's other `*At` fields elsewhere
-    /// in this file/the main app's models.
-    let createdAt: Int?
-    let updatedAt: Int?
+    /// in this file/the main app's models. `Int64` for 32-bit Watch hardware (see
+    /// `WatchLibraryItem.addedAt`): as `Int` the whole sessions list failed to decode there.
+    let createdAt: Int64?
+    let updatedAt: Int64?
     /// True for the session backing *this specific request* (the server compares
     /// against the caller's own `x-refresh-token`/cookie) — used to label "This
     /// device" in the revocation list rather than let a user accidentally revoke

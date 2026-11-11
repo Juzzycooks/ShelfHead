@@ -28,6 +28,49 @@ nonisolated enum KidAvatar {
     static let colorHexes = ["E5604D", "F2A23C", "E8C547", "5DAE6B", "3FA7A0", "4C8DDB", "8A6FD1", "D96FA8"]
     static let adultSymbol = "person.crop.circle.fill"
 
+    /// Batch 490 (REVIEW 2026-11-11 A2): what VoiceOver says for each picture, which used to
+    /// be the raw symbol name ("teddybear.fill"). Every entry of `symbols` needs one
+    /// (pinned by `QuickWinsSettingsTests`).
+    static var symbolNames: [String: String] {
+        [
+            "teddybear.fill": String(localized: "Teddy bear", comment: "Kids avatar picture name, read by VoiceOver"),
+            "star.fill": String(localized: "Star", comment: "Avatar picture name, read by VoiceOver"),
+            "moon.stars.fill": String(localized: "Moon and stars", comment: "Avatar picture name, read by VoiceOver"),
+            "pawprint.fill": String(localized: "Paw print", comment: "Avatar picture name, read by VoiceOver"),
+            "rocket.fill": String(localized: "Rocket", comment: "Kids avatar picture name, read by VoiceOver"),
+            "fish.fill": String(localized: "Fish", comment: "Kids avatar picture name, read by VoiceOver"),
+            "tortoise.fill": String(localized: "Tortoise", comment: "Kids avatar picture name, read by VoiceOver"),
+            "bird.fill": String(localized: "Bird", comment: "Kids avatar picture name, read by VoiceOver"),
+            "leaf.fill": String(localized: "Leaf", comment: "Avatar picture name, read by VoiceOver"),
+            "sparkles": String(localized: "Sparkles", comment: "Kids avatar picture name, read by VoiceOver"),
+            "crown.fill": String(localized: "Crown", comment: "Kids avatar picture name, read by VoiceOver"),
+            "balloon.fill": String(localized: "Balloon", comment: "Kids avatar picture name, read by VoiceOver"),
+        ]
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 A2): one name per `colorHexes` entry, in the same order
+    /// (was "Colour 1"…"Colour 8").
+    static var colorNames: [String] {
+        [
+            String(localized: "Red", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Orange", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Yellow", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Green", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Teal", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Blue", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Purple", comment: "Kids avatar colour name, read by VoiceOver"),
+            String(localized: "Pink", comment: "Kids avatar colour name, read by VoiceOver"),
+        ]
+    }
+
+    static func name(forSymbol symbol: String) -> String {
+        symbolNames[symbol] ?? String(localized: "Picture", comment: "Avatar picture with no name, read by VoiceOver")
+    }
+
+    static func name(forColorIndex index: Int) -> String {
+        colorNames[clampedColorIndex(index)]
+    }
+
     /// A stable colour for an account that has no stored choice (an adult), from its id.
     static func defaultColorIndex(for accountId: String) -> Int {
         accountId.utf8.reduce(0) { ($0 &+ Int($1)) % colorHexes.count } % colorHexes.count

@@ -49,6 +49,156 @@
         }
       }
     },
+    "A reminder stays on screen when your session ends, single sign-on errors name the server setting to change, and the sign-in page shows your server’s version." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "会话结束后屏幕上会保留一条提醒，单点登录出错时会指出需要修改的服务器设置，登录页面还会显示服务器版本。"
+          }
+        }
+      }
+    },
+    "Double Tap plays and pauses. Choose a storage limit, download on Wi-Fi only, add 15 minutes to a sleep timer, and skip chapters from your headphones." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "互点两下即可播放或暂停。可以选择存储空间上限、仅在 Wi-Fi 下下载、将睡眠定时器延长 15 分钟，还能用耳机切换章节。"
+          }
+        }
+      }
+    },
+    "Driving Mode keeps the screen on, the player works in landscape, Up Next is in the player’s menu, and the chapter list shows what you’ve played." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "驾驶模式会保持屏幕常亮，播放器支持横屏，“接下来播放”加入了播放器菜单，章节列表会标出已听过的章节。"
+          }
+        }
+      }
+    },
+    "Library search now matches authors and narrators, shows up to 50 books instead of 12, and remembers your recent searches." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书库搜索现在也会匹配作者和朗读者，最多显示 50 本书（原来是 12 本），并会记住你最近的搜索。"
+          }
+        }
+      }
+    },
+    "Lists page both ways, Home follows the shelves you chose on iPhone, and keyboard search appears where the system supports it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "列表可以前后翻页，主页会沿用你在 iPhone 上选择的书架，键盘搜索会在系统支持时出现。"
+          }
+        }
+      }
+    },
+    "PDFs gain Contents and Go to Page. EPUBs gain Sepia and Black pages and relaxed line spacing." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "PDF 新增目录和跳转到指定页面。EPUB 新增棕褐色和黑色页面，以及宽松行距。"
+          }
+        }
+      }
+    },
+    "Player" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "播放器"
+          }
+        }
+      }
+    },
+    "Reading" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "阅读"
+          }
+        }
+      }
+    },
+    "Search finds more" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "搜索范围更广"
+          }
+        }
+      }
+    },
+    "See your most listened books and your library’s totals, set a books-this-year goal, and export your listening history." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "查看收听最多的书和书库总览，设定今年的读书目标，并导出收听历史。"
+          }
+        }
+      }
+    },
+    "Set any length up to three hours, add one more chapter to an end-of-chapter timer, and jump back to where you were when you set it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "可设置最长三小时的任意时长，为“本章结束”定时器再加一章，还能跳回设置定时器时的位置。"
+          }
+        }
+      }
+    },
+    "Shortcuts and links" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "快捷操作与链接"
+          }
+        }
+      }
+    },
+    "Tidy Continue Listening" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "整理“继续收听”"
+          }
+        }
+      }
+    },
+    "Touch and hold a book you’ve stopped listening to and remove it from Continue Listening. You can do the same for a series, and undo either." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "长按一本不再收听的书，即可将它从“继续收听”中移除。系列也可以这样移除，两者都能撤销。"
+          }
+        }
+      }
+    },
+    "Touch and hold the app icon for Resume, Downloads and Search. New Control Centre controls skip back, skip forward and add a bookmark." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "长按 App 图标可使用“继续播放”“下载”和“搜索”。控制中心新增了后退、前进和添加书签控制。"
+          }
+        }
+      }
+    },
     "·" : {
 
     },
@@ -92,6 +242,18 @@
         }
       }
     },
+    "“%@” and its clips are removed. The books themselves aren’t touched." : {
+      "comment" : "A confirmation dialog for deleting a mixtape. The first",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "“%@”及其片段将被移除。书籍本身不受影响。"
+          }
+        }
+      }
+    },
     "“%@” has different progress here than on the server — this device is at %@, the server is at %@. Which one should win?" : {
       "localizations" : {
         "en" : {
@@ -126,6 +288,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "“%@”将从此设备中删除。你的进度会保留。"
+          }
+        }
+      }
+    },
+    "“%@” won’t show on Release Radar." : {
+      "comment" : "Toast after hiding a Release Radar book; %@ is the book title. An Undo button follows.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "“%@”将不再显示在新书雷达中。"
           }
         }
       }
@@ -245,7 +418,7 @@
       }
     },
     "%@ · %@" : {
-      "comment" : "A bookmark moment. First %@ is the time within the chapter, second the chapter title\nCollection/playlist header; first %@ is a count phrase like '6 books', second %@ is the total duration like '42h 10m'\nDuration and file size separated by a dot; %1$@ is a duration, %2$@ a size\nLibrary count line; first %@ is the count phrase, second %@ is the sort description\nPrimary button label: %1$@ is a verb (Pause or Resume), %2$@ is a chapter title or time-left text\nProgress summary: %1$@ is a percentage like 42%, %2$@ is time left text",
+      "comment" : "A bookmark moment. First %@ is the time within the chapter, second the chapter title\nCollection/playlist header; first %@ is a count phrase like '6 books', second %@ is the total duration like '42h 10m'\nDefault bookmark title. The first %@ is the chapter title, the second the time in the book, e.g. 1:02:03\nDuration and file size separated by a dot; %1$@ is a duration, %2$@ a size\nLibrary count line; first %@ is the count phrase, second %@ is the sort description\nPrimary button label: %1$@ is a verb (Pause or Resume), %2$@ is a chapter title or time-left text\nProgress summary: %1$@ is a percentage like 42%, %2$@ is time left text",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -547,6 +720,18 @@
         }
       }
     },
+    "%@ authors in the library" : {
+      "comment" : "Text for the \"Authors\" column in the \"Your library\" section.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书库中有 %@ 位作者"
+          }
+        }
+      }
+    },
     "%@ book" : {
       "comment" : "Library count line lead, one book; %@ is the formatted count",
       "localizations" : {
@@ -576,7 +761,7 @@
       }
     },
     "%@ books" : {
-      "comment" : "Library count line lead, several books; %@ is the formatted count\nPassport milestone stamp: %@ is a count such as 25",
+      "comment" : "Library count line lead, several books; %@ is the formatted count\nLibrary search: an author's or narrator's book count; %@ is a number such as 12\nPassport milestone stamp: %@ is a count such as 25",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -599,6 +784,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "%1$@ 本书 · %2$@"
+          }
+        }
+      }
+    },
+    "%@ books in the library" : {
+      "comment" : "A description of the number of books in the library. The argument is the number of books.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书库中有 %@ 本书"
           }
         }
       }
@@ -822,7 +1019,7 @@
       }
     },
     "%@ left" : {
-      "comment" : "Mini player line (short form). %@ is the time left in the chapter\nVoiceOver: %@ is a spoken duration such as 2 hours 5 minutes",
+      "comment" : "Chapter list: time left in the current chapter, e.g. 12:04 left\nMini player line (short form). %@ is the time left in the chapter\nVoiceOver: %@ is a spoken duration such as 2 hours 5 minutes",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1058,6 +1255,17 @@
         }
       }
     },
+    "%@ upcoming books found · on Home" : {
+      "comment" : "Release Radar settings: a check found books, shown on the Home shelf. %@ is the number.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "发现 %@ 本即将发布的书 · 见首页"
+          }
+        }
+      }
+    },
     "%@ used" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1096,6 +1304,23 @@
         }
       }
     },
+    "%@, %@ listened" : {
+      "comment" : "VoiceOver, Most listened row: %1$@ is the title, %2$@ a spoken duration",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@ listened"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "%1$@，已收听 %2$@"
+          }
+        }
+      }
+    },
     "%@, %@ remaining" : {
       "comment" : "VoiceOver value of the scrubber. First %@ is the spoken elapsed time, second %@ the spoken time remaining",
       "localizations" : {
@@ -1109,6 +1334,23 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "%1$@，剩余 %2$@"
+          }
+        }
+      }
+    },
+    "%@, %@, %@ listened" : {
+      "comment" : "VoiceOver, Most listened row: %1$@ is the title, %2$@ the author, %3$@ a spoken duration",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@, %3$@ listened"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "%1$@，%2$@，已收听 %3$@"
           }
         }
       }
@@ -1188,6 +1430,34 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "%@，未选中"
+          }
+        }
+      }
+    },
+    "%@, page %@" : {
+      "comment" : "Contents row; first %@ is a chapter title, second the page number",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, page %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "%1$@，第 %2$@ 页"
+          }
+        }
+      }
+    },
+    "%@, played" : {
+      "comment" : "VoiceOver value for a chapter-list row already listened past. %@ is the chapter's length",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "%@，已播放"
           }
         }
       }
@@ -1357,17 +1627,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "其中 %lld 本正在收听中，它们的位置将被替换。"
-          }
-        }
-      }
-    },
-    "%lld audiobooks" : {
-      "comment" : "CarPlay Setup row detail. %lld is the number of downloaded audiobooks.",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "%lld 本有声书"
           }
         }
       }
@@ -1883,6 +2142,23 @@
         }
       }
     },
+    "%lld of %lld books this year" : {
+      "comment" : "Books goal progress; %1$lld books finished this year, %2$lld the goal",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld books this year"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "今年 %1$lld / %2$lld 本书"
+          }
+        }
+      }
+    },
     "%lld of %lld finished" : {
       "comment" : "Series progress text; first %lld is books finished, second %lld is the total",
       "localizations" : {
@@ -2270,6 +2546,16 @@
         }
       }
     },
+    "+1 chapter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "+1 章"
+          }
+        }
+      }
+    },
     "+15 min" : {
       "comment" : "A button to extend the sleep timer by 15 minutes.",
       "isCommentAutoGenerated" : true,
@@ -2425,6 +2711,18 @@
         }
       }
     },
+    "1 author in the library" : {
+      "comment" : "Text describing the number of authors in the library.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书库中有 1 位作者"
+          }
+        }
+      }
+    },
     "1 backup · %@" : {
       "comment" : "Backups summary. %@ is the total size, e.g. '12 MB'.",
       "localizations" : {
@@ -2437,7 +2735,7 @@
       }
     },
     "1 book" : {
-      "comment" : "Count phrase for exactly one book in a collection\nCount phrase for exactly one book in a series\nCount phrase for exactly one book under an author or narrator\nCount phrase for exactly one book, embedded in select-mode sentences\nResult count line in the Library filter sheet for exactly one book\nVoiceOver count phrase for exactly one book",
+      "comment" : "Count phrase for exactly one book in a collection\nCount phrase for exactly one book in a series\nCount phrase for exactly one book under an author or narrator\nCount phrase for exactly one book, embedded in select-mode sentences\nLibrary search: an author or narrator with one book\nResult count line in the Library filter sheet for exactly one book\nVoiceOver count phrase for exactly one book",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2499,6 +2797,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "已听完 1 本书"
+          }
+        }
+      }
+    },
+    "1 book in the library" : {
+      "comment" : "Voiceover text for the number of books in the library.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书库中有 1 本书"
           }
         }
       }
@@ -2693,6 +3003,17 @@
         }
       }
     },
+    "1 upcoming book found · on Home" : {
+      "comment" : "Release Radar settings: a check found one book, shown on the Home shelf",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "发现 1 本即将发布的书 · 见首页"
+          }
+        }
+      }
+    },
     "1.25× speed, quieter haptics, Wi-Fi-only downloads" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2816,6 +3137,16 @@
         }
       }
     },
+    "A short catch-up on what you’ve heard so far, or on the last few minutes. In the player’s ⋯ menu; needs a transcript and Apple Intelligence." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "简要回顾你目前听过的内容，或最近几分钟的内容。在播放器的 ⋯ 菜单中；需要转写稿和 Apple Intelligence。"
+          }
+        }
+      }
+    },
     "A soft synthesised backing track, written into the video file. Off unless you turn it on." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2832,6 +3163,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "指定的一本书"
+          }
+        }
+      }
+    },
+    "a thriller I haven’t started" : {
+      "comment" : "Ask search example suggestion",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "一本我还没开始听的惊悚小说"
           }
         }
       }
@@ -2957,6 +3299,16 @@
         }
       }
     },
+    "About the Book" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "关于这本书"
+          }
+        }
+      }
+    },
     "About the same as last week (%@)" : {
       "comment" : "%@ is last week’s listening time, like 3h 2m",
       "localizations" : {
@@ -2987,6 +3339,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "与上周的 %@ 差不多"
+          }
+        }
+      }
+    },
+    "Accent" : {
+      "comment" : "Household avatar colour name (the app's accent colour), read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "强调色"
           }
         }
       }
@@ -3137,6 +3500,28 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "将 %@ 加入待播列表"
+          }
+        }
+      }
+    },
+    "Add 1 chapter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "增加 1 章"
+          }
+        }
+      }
+    },
+    "Add 1 Chapter" : {
+      "comment" : "A button that adds one chapter to the sleep timer.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "增加 1 章"
           }
         }
       }
@@ -3306,6 +3691,18 @@
         }
       }
     },
+    "Add books on your server, then check again." : {
+      "comment" : "Text below the \"Add books\" button in the \"This library is empty\" view.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "请先在服务器上添加书籍，然后再检查一次。"
+          }
+        }
+      }
+    },
     "Add books to this collection on your server, then pull to refresh." : {
       "comment" : "Text describing the action to take to refresh the collection.",
       "isCommentAutoGenerated" : true,
@@ -3358,6 +3755,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "添加音乐"
+          }
+        }
+      }
+    },
+    "Add Playback, Resume Last Book, Sleep Timer or Open Now Playing to Control Centre, the Lock Screen or the Action button." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "将“播放”“继续上一本书”“睡眠定时器”或“打开正在播放”添加到控制中心、锁定屏幕或操作按钮。"
           }
         }
       }
@@ -3881,6 +4288,28 @@
         }
       }
     },
+    "Apple Watch" : {
+      "comment" : "Text describing the Apple Watch features added in this release.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Apple Watch"
+          }
+        }
+      }
+    },
+    "Apple Watch app" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Apple Watch 应用"
+          }
+        }
+      }
+    },
     "Applies to this book · remembered next time" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3945,6 +4374,16 @@
         }
       }
     },
+    "Around iOS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "iOS 系统中"
+          }
+        }
+      }
+    },
     "Ascending" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3971,6 +4410,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "提出问题"
+          }
+        }
+      }
+    },
+    "Ask a question about the story so far and jump to the passage the answer came from. No spoilers: it only uses what you’ve heard." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "针对目前的剧情提问，并跳转到答案所在的段落。不会剧透：只会用到你已听过的内容。"
           }
         }
       }
@@ -4021,6 +4470,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "问问这本书"
+          }
+        }
+      }
+    },
+    "ask the book, question, ask, apple intelligence" : {
+      "comment" : "Settings search keywords for 'Ask the Book', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "问问这本书、问题、提问、询问、Apple Intelligence"
           }
         }
       }
@@ -4159,6 +4619,17 @@
         }
       }
     },
+    "Audiobookshelf %@" : {
+      "comment" : "Sign-in page server summary: the server's Audiobookshelf version; %@ is the version number",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Audiobookshelf %@"
+          }
+        }
+      }
+    },
     "Authentication" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4253,7 +4724,7 @@
       }
     },
     "Authors" : {
-      "comment" : "Library browse scope",
+      "comment" : "Library browse scope\nStats figure label: number of authors in the library",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -4380,6 +4851,17 @@
         }
       }
     },
+    "Autoplay is off. Tap a book to start it." : {
+      "comment" : "Up Next queue footer when Autoplay Next is off",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "自动播放已关闭。轻点一本书即可开始播放。"
+          }
+        }
+      }
+    },
     "Autoplay next" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4474,6 +4956,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "备份"
+          }
+        }
+      }
+    },
+    "Balloon" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "气球"
           }
         }
       }
@@ -4630,8 +5123,31 @@
         }
       }
     },
+    "Bird" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "小鸟"
+          }
+        }
+      }
+    },
+    "Black" : {
+      "comment" : "A colour scheme for the EPUB reader.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "黑色"
+          }
+        }
+      }
+    },
     "Blue" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -4652,6 +5168,7 @@
       }
     },
     "Book" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -4867,6 +5384,18 @@
         }
       }
     },
+    "Bookmark the current position in your book." : {
+      "comment" : "Text displayed in a control that adds a bookmark to the current playback position.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "为这本书的当前位置添加书签。"
+          }
+        }
+      }
+    },
     "Bookmark this moment" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4985,7 +5514,7 @@
       }
     },
     "Books" : {
-      "comment" : "Library browse scope",
+      "comment" : "Library browse scope\nStats figure label: number of books in the library",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -5048,6 +5577,62 @@
         }
       }
     },
+    "Books goal hit: %lld of %lld books finished this year." : {
+      "comment" : "VoiceOver; %1$lld books finished this year, %2$lld the goal",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Books goal hit: %1$lld of %2$lld books finished this year."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已达成书籍目标：今年已听完 %1$lld 本，目标 %2$lld 本。"
+          }
+        }
+      }
+    },
+    "Books goal off." : {
+      "comment" : "VoiceOver; the books-this-year goal is switched off",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书籍目标已关闭。"
+          }
+        }
+      }
+    },
+    "Books goal: %lld books this year." : {
+      "comment" : "VoiceOver; %lld is the books-this-year goal",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书籍目标：今年 %lld 本书。"
+          }
+        }
+      }
+    },
+    "Books goal: %lld of %lld books finished this year." : {
+      "comment" : "VoiceOver; %1$lld books finished this year, %2$lld the goal",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Books goal: %1$lld of %2$lld books finished this year."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "书籍目标：今年已听完 %1$lld 本，目标 %2$lld 本。"
+          }
+        }
+      }
+    },
     "Books in a series you've started, but haven't opened" : {
       "comment" : "Smart filter description",
       "localizations" : {
@@ -5076,6 +5661,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "收听的书籍"
+          }
+        }
+      }
+    },
+    "Books this year" : {
+      "comment" : "The title of a section that displays the user's reading goals for the year.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "今年的书"
           }
         }
       }
@@ -5227,13 +5824,13 @@
         }
       }
     },
-    "cache, storage, clear" : {
-      "comment" : "Settings search keywords for 'Clear image cache', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+    "cache, storage, clear, covers, artwork, images" : {
+      "comment" : "Settings search keywords for 'Clear cover cache', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "缓存、存储空间、清除、清理、图片缓存"
+            "value" : "缓存、存储空间、清除、封面、插图、图片"
           }
         }
       }
@@ -5341,6 +5938,17 @@
         }
       }
     },
+    "Can’t reach your server. Check that it’s running and try again." : {
+      "comment" : "Upload screen error when the server doesn't answer",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法连接到服务器。请检查服务器是否正在运行，然后重试。"
+          }
+        }
+      }
+    },
     "Can’t reach your server. Check your connection and try again." : {
       "comment" : "Library error alert text when the server doesn't answer",
       "localizations" : {
@@ -5433,12 +6041,35 @@
         }
       }
     },
+    "captions, subtitles, read while listening, lyrics" : {
+      "comment" : "Settings search keywords for 'Live captions', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "字幕、实时字幕、边听边读、歌词、文字"
+          }
+        }
+      }
+    },
     "Card preview" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "卡片预览"
+          }
+        }
+      }
+    },
+    "CarPlay" : {
+      "comment" : "Text describing the CarPlay feature.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "CarPlay"
           }
         }
       }
@@ -5459,6 +6090,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "磁带墙"
+          }
+        }
+      }
+    },
+    "cassette wall, finished books, shelf, trophy" : {
+      "comment" : "Settings search keywords for 'Cassette Wall', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "磁带墙、已听完的书、书架、奖杯"
           }
         }
       }
@@ -5495,12 +6137,14 @@
         }
       }
     },
-    "Change daily goal" : {
+    "Change goals" : {
+      "comment" : "A label for the menu that lets the user change their daily and books-this-year goals.",
+      "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "更改每日目标"
+            "value" : "更改目标"
           }
         }
       }
@@ -5759,6 +6403,17 @@
         }
       }
     },
+    "charging, charger, power, plugged in, battery" : {
+      "comment" : "Settings search keywords for 'Auto-download only while charging', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "充电、充电器、电源、插电、电池"
+          }
+        }
+      }
+    },
     "Check Again" : {
       "comment" : "Text for a button that triggers a retry action.",
       "isCommentAutoGenerated" : true,
@@ -5932,6 +6587,26 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "正在检查语音支持…"
+          }
+        }
+      }
+    },
+    "Checking your library…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "正在检查你的书库…"
+          }
+        }
+      }
+    },
+    "Checking your series…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "正在检查你的系列…"
           }
         }
       }
@@ -6124,24 +6799,24 @@
         }
       }
     },
+    "Clear cover cache" : {
+      "comment" : "Text displayed in a button that clears the cache of downloaded book covers.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "清除封面缓存"
+          }
+        }
+      }
+    },
     "Clear Filter" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "清除筛选"
-          }
-        }
-      }
-    },
-    "Clear image cache" : {
-      "comment" : "Text for a button that clears the image cache.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "清除图片缓存"
           }
         }
       }
@@ -6154,6 +6829,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "清除最近更改？"
+          }
+        }
+      }
+    },
+    "Clear recent searches" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "清除最近搜索"
           }
         }
       }
@@ -6245,6 +6930,17 @@
         }
       }
     },
+    "clip, quote, mixtape, favourite moments, favorite moments, highlight" : {
+      "comment" : "Settings search keywords for 'Quote clips and Mixtapes', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "片段、剪辑、语录、混音带、喜欢的瞬间、精彩片段、高亮"
+          }
+        }
+      }
+    },
     "Clip…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6315,16 +7011,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "你在服务器上创建的合集会显示在这里"
-          }
-        }
-      }
-    },
-    "Colour %lld" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "颜色 %lld"
           }
         }
       }
@@ -6595,6 +7281,16 @@
         }
       }
     },
+    "Control Centre controls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "控制中心控制项"
+          }
+        }
+      }
+    },
     "Control Centre sleep timer" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6615,14 +7311,13 @@
         }
       }
     },
-    "Control playback, browse chapters, and see bookmarks from your wrist." : {
-      "comment" : "Description of a feature of the Watch app.",
-      "isCommentAutoGenerated" : true,
+    "control centre, control center, controls, action button, lock screen controls" : {
+      "comment" : "Settings search keywords for 'Control Centre controls', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "在手腕上控制播放、浏览章节并查看书签。"
+            "value" : "控制中心、控制项、操作按钮、锁定屏幕控制、锁定屏幕"
           }
         }
       }
@@ -6637,12 +7332,32 @@
         }
       }
     },
+    "Copied sign-in address" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已拷贝登录地址"
+          }
+        }
+      }
+    },
     "Copy" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "拷贝"
+          }
+        }
+      }
+    },
+    "Copy sign-in address" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "拷贝登录地址"
           }
         }
       }
@@ -6674,6 +7389,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "无法检查已下载的文件。请重试。"
+          }
+        }
+      }
+    },
+    "Couldn’t check your library, so no books are marked yet. Check your connection, then try again." : {
+      "comment" : "A message that appears when the user can't check their library.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法检查你的书库，因此尚未标记任何书籍。请检查网络连接，然后重试。"
           }
         }
       }
@@ -6753,17 +7480,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "无法下载“%1$@”。%2$@"
-          }
-        }
-      }
-    },
-    "Couldn't download this file: %@" : {
-      "comment" : "%@ is a system error description",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "无法下载此文件：%@"
           }
         }
       }
@@ -6855,6 +7571,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "暂时无法加载更多书籍。"
+          }
+        }
+      }
+    },
+    "Couldn’t load more sessions." : {
+      "comment" : "A message displayed when the user can't load more sessions.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法加载更多收听时段。"
           }
         }
       }
@@ -6964,6 +7692,18 @@
         }
       }
     },
+    "Couldn’t load your finished books" : {
+      "comment" : "Title of an empty state view when the app fails to load the user's finished books.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法加载你已听完的书"
+          }
+        }
+      }
+    },
     "Couldn’t load your libraries. Check your connection and try again." : {
       "localizations" : {
         "zh-Hans" : {
@@ -7008,12 +7748,36 @@
         }
       }
     },
+    "Couldn’t open that book. It may have been removed, or your server can’t be reached." : {
+      "comment" : "Error message when trying to open a book that is not available locally or on the server.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法打开这本书。它可能已被移除，或无法连接到服务器。"
+          }
+        }
+      }
+    },
     "Couldn’t open that file. Choose a ShelfHead export and try again." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "无法打开该文件。请选择一个 ShelfHead 导出文件后重试。"
+          }
+        }
+      }
+    },
+    "Couldn’t open that link. It may have been removed, or your server can’t be reached." : {
+      "comment" : "Error message when a link can't be opened.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法打开该链接。它可能已被移除，或无法连接到服务器。"
           }
         }
       }
@@ -7026,16 +7790,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "无法打开这本书"
-          }
-        }
-      }
-    },
-    "Couldn't open this book." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "无法打开这本书。"
           }
         }
       }
@@ -7157,6 +7911,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "无法连接到服务器，因此未做任何更改。请在联网后重试。"
+          }
+        }
+      }
+    },
+    "Couldn’t reach your server, so your Home shelves haven’t changed. Try again in a moment." : {
+      "comment" : "Toast when hiding a book from Continue Listening or a series from Next in Series, or undoing that, failed",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法连接到服务器，因此首页书架没有变化。请稍后重试。"
           }
         }
       }
@@ -7509,6 +8274,17 @@
         }
       }
     },
+    "Couldn’t send that to %@. Check that your server can send email, then try again." : {
+      "comment" : "Toast when emailing an ebook to an e-reader fails; %@ is the device name",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法发送到 %@。请检查服务器是否能发送电子邮件，然后重试。"
+          }
+        }
+      }
+    },
     "Couldn't set the reminder. Try again." : {
       "comment" : "Release radar: scheduling the local notification failed",
       "localizations" : {
@@ -7719,6 +8495,18 @@
         }
       }
     },
+    "Counts the books you finish this calendar year." : {
+      "comment" : "A description of the Books this year goal.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "统计你在本日历年内听完的书。"
+          }
+        }
+      }
+    },
     "Cover art" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7752,6 +8540,17 @@
         }
       }
     },
+    "Cream" : {
+      "comment" : "Household avatar colour name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "奶油色"
+          }
+        }
+      }
+    },
     "Create" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7778,6 +8577,28 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "创建并添加"
+          }
+        }
+      }
+    },
+    "Crown" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "皇冠"
+          }
+        }
+      }
+    },
+    "Cup and saucer" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "茶杯和茶碟"
           }
         }
       }
@@ -7824,6 +8645,16 @@
         }
       }
     },
+    "Current server" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "当前服务器"
+          }
+        }
+      }
+    },
     "Current streak, %@" : {
       "comment" : "VoiceOver; %@ is a number of days",
       "localizations" : {
@@ -7846,6 +8677,18 @@
         }
       }
     },
+    "Custom (%lld)…" : {
+      "comment" : "A label that shows the number of books in the user's goal for the year, with an ellipsis.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "自定 (%lld)…"
+          }
+        }
+      }
+    },
     "Custom HTTP headers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7862,6 +8705,30 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "自定义 HTTP 标头"
+          }
+        }
+      }
+    },
+    "Custom Sleep Timer" : {
+      "comment" : "The title of a sheet that lets the user set a custom sleep timer.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "自定睡眠定时器"
+          }
+        }
+      }
+    },
+    "Custom…" : {
+      "comment" : "A button that displays a sheet for setting a custom sleep timer.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "自定…"
           }
         }
       }
@@ -7894,6 +8761,38 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "每日目标已关闭"
+          }
+        }
+      }
+    },
+    "Daily goal off." : {
+      "comment" : "VoiceOver; the daily listening goal is switched off",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "每日目标已关闭。"
+          }
+        }
+      }
+    },
+    "Daily goal: %lld minutes." : {
+      "comment" : "VoiceOver; %lld is the daily listening goal in minutes",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "每日目标：%lld 分钟。"
+          }
+        }
+      }
+    },
+    "Daily listening goal" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "每日收听目标"
           }
         }
       }
@@ -8048,6 +8947,16 @@
         }
       }
     },
+    "Deck skins" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "播放机外观"
+          }
+        }
+      }
+    },
     "deck, skin, walkman, boombox, reel, 8-track, cassette, button sounds, click" : {
       "comment" : "Settings search keywords for 'Deck skin', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
       "localizations" : {
@@ -8055,6 +8964,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "播放机, 外观, 随身听, 手提音响, 开盘, 8 轨, 卡带, 按键声音, 咔嗒"
+          }
+        }
+      }
+    },
+    "Deep accent" : {
+      "comment" : "Household avatar colour name (a darker accent), read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "深强调色"
           }
         }
       }
@@ -8145,12 +9065,36 @@
         }
       }
     },
+    "Delete Mixtape" : {
+      "comment" : "The text on a destructive button that deletes a mixtape.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "删除混音带"
+          }
+        }
+      }
+    },
     "Delete this household?" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "要删除此家庭吗？"
+          }
+        }
+      }
+    },
+    "Delete this mixtape?" : {
+      "comment" : "The title of a confirmation dialog that lets the user delete a mixtape.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "删除此混音带？"
           }
         }
       }
@@ -9118,6 +10062,17 @@
         }
       }
     },
+    "Earlier…" : {
+      "comment" : "CarPlay list row that goes back to the previous page of items.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "更早…"
+          }
+        }
+      }
+    },
     "Edit Bookmark" : {
       "localizations" : {
         "zh-Hans" : {
@@ -9309,6 +10264,17 @@
         }
       }
     },
+    "Enter a page number from 1 to %@." : {
+      "comment" : "Go to Page alert; %@ is the PDF's page count, already formatted",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "请输入 1 到 %@ 之间的页码。"
+          }
+        }
+      }
+    },
     "Enter a valid server address first." : {
       "comment" : "Error message when the user hasn't entered a valid server address.",
       "isCommentAutoGenerated" : true,
@@ -9369,6 +10335,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "这个书库中的每本书都已开始收听。"
+          }
+        }
+      }
+    },
+    "Every book you’ve finished, as a wall of tapes. Under Stats › More." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "你听完的每一本书，都会以磁带墙的形式呈现。位于“统计”›“更多”。"
           }
         }
       }
@@ -9517,6 +10493,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "导出已听完的书（CSV）"
+          }
+        }
+      }
+    },
+    "Export listening history" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "导出收听历史"
           }
         }
       }
@@ -9778,18 +10764,6 @@
         }
       }
     },
-    "Features" : {
-      "comment" : "Section header title for the list of features.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "功能"
-          }
-        }
-      }
-    },
     "Features & Tips" : {
       "localizations" : {
         "zh-Hans" : {
@@ -9801,8 +10775,7 @@
       }
     },
     "Files" : {
-      "comment" : "Section title for the list of files to be uploaded.",
-      "isCommentAutoGenerated" : true,
+      "comment" : "Book detail metadata label: number of audio files",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9842,6 +10815,16 @@
         }
       }
     },
+    "Find a line you heard and jump to it, with Search in Book… in the player’s ⋯ menu. Needs a transcript." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "通过播放器 ⋯ 菜单中的“在书中搜索…”，找到你听过的某句话并跳转过去。需要转写稿。"
+          }
+        }
+      }
+    },
     "Find in Audiobook" : {
       "comment" : "Title of the \"Find in Audiobook\" intent.",
       "isCommentAutoGenerated" : true,
@@ -9864,7 +10847,7 @@
         }
       }
     },
-    "Fine-scrub" : {
+    "Fine scrubbing" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9961,7 +10944,7 @@
       }
     },
     "First mentioned at %@" : {
-      "comment" : "Button on an X-Ray entry. %@ is a time like 1:12:40; it jumps to where the name first came up",
+      "comment" : "Button on an X-Ray entry. %@ is a moment like 12:40 · Chapter 3 (a plain time like 1:12:40 when the book has no chapters); it jumps to where the name first came up",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9979,6 +10962,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "首个有记录数据的一周"
+          }
+        }
+      }
+    },
+    "Fish" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "鱼"
           }
         }
       }
@@ -10003,6 +10997,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "已修复。已从服务器刷新这本书。"
+          }
+        }
+      }
+    },
+    "Flame" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "火焰"
           }
         }
       }
@@ -10056,6 +11061,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "跟随朗读"
+          }
+        }
+      }
+    },
+    "Follow the book’s EPUB as it plays, with the sentence being read highlighted. For books with an EPUB and a transcript." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "播放时同步显示这本书的 EPUB，并高亮正在朗读的句子。适用于同时有 EPUB 和转写稿的书。"
           }
         }
       }
@@ -10241,6 +11256,17 @@
         }
       }
     },
+    "funny and short" : {
+      "comment" : "Ask search example suggestion",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "轻松搞笑的短篇"
+          }
+        }
+      }
+    },
     "Genre" : {
       "comment" : "Passport stamp kind, used in VoiceOver",
       "localizations" : {
@@ -10276,6 +11302,16 @@
         }
       }
     },
+    "Go" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "前往"
+          }
+        }
+      }
+    },
     "Go Back" : {
       "localizations" : {
         "zh-Hans" : {
@@ -10307,6 +11343,26 @@
         }
       }
     },
+    "Go to Page" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "前往页码"
+          }
+        }
+      }
+    },
+    "Go to Page…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "前往页码…"
+          }
+        }
+      }
+    },
     "Goal" : {
       "localizations" : {
         "zh-Hans" : {
@@ -10334,6 +11390,34 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "已达成目标 · 今天 %lld 分钟"
+          }
+        }
+      }
+    },
+    "Goal hit · %lld of %lld books this year" : {
+      "comment" : "Books goal reached; %1$lld books finished this year, %2$lld the goal",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Goal hit · %1$lld of %2$lld books this year"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "目标已达成 · 今年 %1$lld / %2$lld 本书"
+          }
+        }
+      }
+    },
+    "goal, listening goal, minutes a day, streak, ring" : {
+      "comment" : "Settings search keywords for 'Daily listening goal', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "目标、收听目标、每天分钟数、连续天数、圆环"
           }
         }
       }
@@ -10384,7 +11468,7 @@
       }
     },
     "Green" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -10410,6 +11494,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "网格密度"
+          }
+        }
+      }
+    },
+    "Guitars" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "吉他"
           }
         }
       }
@@ -10606,6 +11701,17 @@
         }
       }
     },
+    "Headphones" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "耳机"
+          }
+        }
+      }
+    },
     "Healthy" : {
       "localizations" : {
         "zh-Hans" : {
@@ -10623,6 +11729,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "听到“%@”"
+          }
+        }
+      }
+    },
+    "Heart" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "爱心"
           }
         }
       }
@@ -10678,6 +11795,29 @@
         }
       }
     },
+    "Hides this book from Release Radar" : {
+      "comment" : "A hint for the \"Not Interested\" button in the Release Radar detail sheet.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在新书雷达中隐藏这本书"
+          }
+        }
+      }
+    },
+    "Highlight" : {
+      "comment" : "Household avatar colour name (the app's emphasis colour), read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "高亮色"
+          }
+        }
+      }
+    },
     "History" : {
       "comment" : "Stats section header",
       "localizations" : {
@@ -10699,9 +11839,7 @@
         }
       }
     },
-    "Home Screen widget" : {
-      "comment" : "Text describing the ShelfHead widget, a Home Screen widget.",
-      "isCommentAutoGenerated" : true,
+    "Home Screen widgets" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -10751,6 +11889,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "家庭功能无法连接 iCloud。请重试。"
+          }
+        }
+      }
+    },
+    "Household settings" : {
+      "comment" : "The accessibility label for the button that opens the household settings.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "家庭设置"
           }
         }
       }
@@ -11122,6 +12272,17 @@
         }
       }
     },
+    "In Audiobookshelf, go to Settings › Authentication and add %@ to Allowed Mobile Redirect URIs." : {
+      "comment" : "SSO setup sentence, used in the SSO help text and error; %@ is the redirect URI the admin must allow",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在 Audiobookshelf 中，前往“设置”›“身份验证”，并将 %@ 添加到“允许的移动端重定向 URI”。"
+          }
+        }
+      }
+    },
     "in progress" : {
       "comment" : "Ask results: why a book matched, it has been started",
       "localizations" : {
@@ -11151,6 +12312,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "收听中"
+          }
+        }
+      }
+    },
+    "In the Player" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在播放器中"
           }
         }
       }
@@ -11298,6 +12469,18 @@
         }
       }
     },
+    "It may have been removed, or your server can’t be reached." : {
+      "comment" : "Error message when a book can't be opened.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "它可能已被移除，或无法连接到服务器。"
+          }
+        }
+      }
+    },
     "It may not use https, or iOS doesn’t trust its certificate. You can try plain http, but it isn’t encrypted." : {
       "comment" : "Next step to take if a server doesn't use https, and iOS doesn't trust the server's certificate.",
       "isCommentAutoGenerated" : true,
@@ -11440,6 +12623,16 @@
         }
       }
     },
+    "Just for Fun" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "趣味功能"
+          }
+        }
+      }
+    },
     "Just one more chapter." : {
       "comment" : "Share card default tagline",
       "localizations" : {
@@ -11519,6 +12712,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "保留本设备"
+          }
+        }
+      }
+    },
+    "Keep Uploading" : {
+      "comment" : "The label of a button that keeps uploading after confirming to stop.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "继续上传"
           }
         }
       }
@@ -11759,6 +12964,17 @@
         }
       }
     },
+    "Leaf" : {
+      "comment" : "Avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "叶子"
+          }
+        }
+      }
+    },
     "Leave" : {
       "localizations" : {
         "zh-Hans" : {
@@ -11908,6 +13124,18 @@
         }
       }
     },
+    "Licence" : {
+      "comment" : "A heading for the licence of a",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "许可证"
+          }
+        }
+      }
+    },
     "Light" : {
       "comment" : "Appearance option: light mode",
       "localizations" : {
@@ -11915,6 +13143,29 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "浅色"
+          }
+        }
+      }
+    },
+    "Lightning bolt" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "闪电"
+          }
+        }
+      }
+    },
+    "Line Spacing" : {
+      "comment" : "A label for the line spacing in the EPUB reader.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "行距"
           }
         }
       }
@@ -12027,6 +13278,27 @@
         }
       }
     },
+    "Listening by month" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "按月收听"
+          }
+        }
+      }
+    },
+    "Listening by month, %@." : {
+      "comment" : "VoiceOver; %@ is a year such as 2026",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "按月收听，%@。"
+          }
+        }
+      }
+    },
     "Listening for chapter breaks…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12056,6 +13328,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "收听热力图，最近一周"
+          }
+        }
+      }
+    },
+    "Listening history" : {
+      "comment" : "The name of the file that can be shared as a CSV.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "收听历史"
           }
         }
       }
@@ -12150,6 +13434,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "实时活动, 锁定屏幕, 灵动岛, 睡眠定时器, 下载进度, live activities, dynamic island"
+          }
+        }
+      }
+    },
+    "Live captions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "实时字幕"
           }
         }
       }
@@ -12257,6 +13551,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "正在加载合集…"
+          }
+        }
+      }
+    },
+    "Loading more sessions…" : {
+      "comment" : "The text that appears when the user is loading more sessions.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "正在加载更多收听时段…"
           }
         }
       }
@@ -12559,18 +13865,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "管理"
-          }
-        }
-      }
-    },
-    "Manage your account on the phone" : {
-      "comment" : "Section header for the Manage your account section in the Setup tab.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "请在 iPhone 上管理你的账户"
           }
         }
       }
@@ -12882,6 +14176,18 @@
         }
       }
     },
+    "Match App" : {
+      "comment" : "A label for the \"Match App\" option in the EPUB reader's",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "跟随应用"
+          }
+        }
+      }
+    },
     "Match the book" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12956,6 +14262,16 @@
         }
       }
     },
+    "Message from the server: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "服务器消息：%@"
+          }
+        }
+      }
+    },
     "Milestone" : {
       "comment" : "Passport stamp kind, used in VoiceOver",
       "localizations" : {
@@ -13020,23 +14336,14 @@
         }
       }
     },
-    "Minutes by Month" : {
+    "Minutes listened each day, as a CSV file" : {
+      "comment" : "A description of the CSV file that can be downloaded from the",
+      "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "按月统计的分钟数"
-          }
-        }
-      }
-    },
-    "Minutes listened by month, %@." : {
-      "comment" : "VoiceOver; %@ is a year such as 2026",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "%@ 年按月统计的收听分钟数。"
+            "value" : "每天的收听分钟数，以 CSV 文件导出"
           }
         }
       }
@@ -13124,6 +14431,17 @@
         }
       }
     },
+    "Moon and stars" : {
+      "comment" : "Avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "月亮和星星"
+          }
+        }
+      }
+    },
     "More" : {
       "comment" : "Chip text of the Library menu that holds the Collections and Playlists scopes\nStats section header for extra links",
       "localizations" : {
@@ -13204,6 +14522,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "早晨"
+          }
+        }
+      }
+    },
+    "Most listened" : {
+      "comment" : "Stats section header: the books listened to for longest",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "收听最多"
           }
         }
       }
@@ -13454,6 +14783,18 @@
         }
       }
     },
+    "Needs iOS 18 or later." : {
+      "comment" : "Note explaining that the feature needs iOS 18 or later.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "需要 iOS 18 或更高版本。"
+          }
+        }
+      }
+    },
     "Needs iOS 26 or later" : {
       "localizations" : {
         "zh-Hans" : {
@@ -13660,16 +15001,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "夜晚"
-          }
-        }
-      }
-    },
-    "Night owl mode" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "夜猫子模式"
           }
         }
       }
@@ -14512,6 +15843,18 @@
         }
       }
     },
+    "Normal" : {
+      "comment" : "A line spacing option.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "标准"
+          }
+        }
+      }
+    },
     "Not enough free space for these downloads." : {
       "comment" : "Message shown when the download is refused because there is not enough free space.",
       "isCommentAutoGenerated" : true,
@@ -14542,6 +15885,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "存储空间不足。请释放空间后重试。"
+          }
+        }
+      }
+    },
+    "Not Interested" : {
+      "comment" : "A button that marks a book as not interested in the",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "不感兴趣"
           }
         }
       }
@@ -14794,6 +16149,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "没有匹配项"
+          }
+        }
+      }
+    },
+    "Nothing new in your series yet" : {
+      "comment" : "Release Radar settings: a check found no books",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "你的系列暂无新书"
           }
         }
       }
@@ -15066,7 +16432,7 @@
       }
     },
     "Off" : {
-      "comment" : "Chapter skip option: disabled\nDaily goal is switched off\nDiagnostics value for a disabled setting.\nListening profile name: no profile active\nShake action: do nothing\nSleep timer option: no timer\nSleep timer option: timer disabled\nVoiceOver value of the sleep timer button when no timer is set",
+      "comment" : "Chapter skip option: disabled\nDiagnostics value for a disabled setting.\nListening profile name: no profile active\nShake action: do nothing\nSleep timer option: no timer\nSleep timer option: timer disabled\nVoiceOver value of the sleep timer button when no timer is set",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -15205,6 +16571,18 @@
         }
       }
     },
+    "On GitHub. You can attach the exported diagnostics; they’re redacted." : {
+      "comment" : "Text for a link in the About section that opens in Safari.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在 GitHub 上。你可以附上导出的诊断信息，其中的敏感内容已被隐去。"
+          }
+        }
+      }
+    },
     "On Other Servers" : {
       "comment" : "Home shelf title: books on the user's other saved servers",
       "localizations" : {
@@ -15266,6 +16644,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "设备端生成，用于搜索和字幕"
+          }
+        }
+      }
+    },
+    "One of the files couldn’t be read. Remove it, add it again and try once more." : {
+      "comment" : "Upload screen error when a picked file can't be read or copied",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "其中一个文件无法读取。请移除后重新添加，然后再试一次。"
           }
         }
       }
@@ -15542,6 +16931,18 @@
         }
       }
     },
+    "Open Server Settings" : {
+      "comment" : "Button title to open the server settings.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "打开服务器设置"
+          }
+        }
+      }
+    },
     "Open Settings" : {
       "comment" : "Face ID / passcode prompt reason",
       "localizations" : {
@@ -15579,6 +16980,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "打开 ShelfHead 以登录"
+          }
+        }
+      }
+    },
+    "Open source under the MIT Licence" : {
+      "comment" : "Licence text for the ShelfHead app.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "基于 MIT 许可证开源"
           }
         }
       }
@@ -15644,6 +17057,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "打开书籍详情"
+          }
+        }
+      }
+    },
+    "Opens in Safari" : {
+      "comment" : "Opens in Safari.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在 Safari 中打开"
           }
         }
       }
@@ -15809,6 +17234,30 @@
         }
       }
     },
+    "Opens this author’s books" : {
+      "comment" : "A hint for a user who is using a screen reader to describe a",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "打开此作者的书籍"
+          }
+        }
+      }
+    },
+    "Opens this narrator’s books" : {
+      "comment" : "A hint for a user who is using a screen reader to describe a",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "打开此演播者的书籍"
+          }
+        }
+      }
+    },
     "Opens your downloads" : {
       "localizations" : {
         "zh-Hans" : {
@@ -15851,7 +17300,7 @@
       }
     },
     "Orange" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -15950,6 +17399,16 @@
         }
       }
     },
+    "Page" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "页"
+          }
+        }
+      }
+    },
     "Page %lld of %lld" : {
       "localizations" : {
         "en" : {
@@ -15966,6 +17425,18 @@
         }
       }
     },
+    "Page Colour" : {
+      "comment" : "A label for the page colour of the EPUB reader.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "页面颜色"
+          }
+        }
+      }
+    },
     "Passcode" : {
       "comment" : "Device passcode as the unlock method",
       "localizations" : {
@@ -15973,6 +17444,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "设备密码"
+          }
+        }
+      }
+    },
+    "passport, stamps, genres, narrators, decades" : {
+      "comment" : "Settings search keywords for 'Listening Passport', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "护照、收听护照、印章、体裁、演播者、年代"
           }
         }
       }
@@ -16090,6 +17572,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "已暂停"
+          }
+        }
+      }
+    },
+    "Paw print" : {
+      "comment" : "Avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "爪印"
           }
         }
       }
@@ -16230,6 +17723,7 @@
       }
     },
     "Picture" : {
+      "comment" : "Avatar picture with no name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -16240,7 +17734,7 @@
       }
     },
     "Pink" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -16408,6 +17902,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "播放有声书"
+          }
+        }
+      }
+    },
+    "Play downloaded books from your Watch, with or without your iPhone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无论是否带着 iPhone，都可以在手表上播放已下载的书。"
           }
         }
       }
@@ -16806,6 +18310,29 @@
         }
       }
     },
+    "Plays when this book ends" : {
+      "comment" : "Up Next queue footer when Autoplay Next is on",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "本书结束后播放"
+          }
+        }
+      }
+    },
+    "Pocket Cassette" : {
+      "comment" : "Displayed name for the Pocket Cassette skin.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "随身听"
+          }
+        }
+      }
+    },
     "Positions waiting to sync" : {
       "localizations" : {
         "zh-Hans" : {
@@ -16992,6 +18519,27 @@
         }
       }
     },
+    "Previously On and I Zoned Out" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "前情回顾和我走神了"
+          }
+        }
+      }
+    },
+    "previously on, zoned out, catch up, summary, recap, what happened" : {
+      "comment" : "Settings search keywords for 'Previously On and I Zoned Out', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "前情回顾、走神、补课、摘要、回顾、发生了什么"
+          }
+        }
+      }
+    },
     "Previously On…" : {
       "comment" : "Now Playing title while the narrator's recap montage plays",
       "localizations" : {
@@ -17013,12 +18561,36 @@
         }
       }
     },
+    "Privacy Policy" : {
+      "comment" : "A heading for the privacy policy of",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "隐私政策"
+          }
+        }
+      }
+    },
     "Privacy:" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "隐私："
+          }
+        }
+      }
+    },
+    "Profile Picker" : {
+      "comment" : "Section header title for the profile picker settings.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "用户选择器"
           }
         }
       }
@@ -17067,7 +18639,7 @@
       }
     },
     "Purple" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -17159,6 +18731,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "引文"
+          }
+        }
+      }
+    },
+    "Quote clips and Mixtapes" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "语录片段和混音带"
           }
         }
       }
@@ -17277,6 +18859,27 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "边听边读"
+          }
+        }
+      }
+    },
+    "Read along with the narrator in place of the cover, with Show Captions in the player’s ⋯ menu. Needs a transcript." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在封面处边听边读，通过播放器 ⋯ 菜单中的“显示字幕”开启。需要转写稿。"
+          }
+        }
+      }
+    },
+    "read along, epub, ebook, follow the text, highlight words" : {
+      "comment" : "Settings search keywords for 'Read Along', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "边听边读、EPUB、电子书、跟读文字、高亮文字"
           }
         }
       }
@@ -17406,6 +19009,16 @@
         }
       }
     },
+    "Recent searches" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "最近搜索"
+          }
+        }
+      }
+    },
     "Recent sessions" : {
       "localizations" : {
         "zh-Hans" : {
@@ -17531,7 +19144,7 @@
       }
     },
     "Red" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -17547,6 +19160,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "开盘机"
+          }
+        }
+      }
+    },
+    "Relaxed" : {
+      "comment" : "A line spacing option in the EPUB reader.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "宽松"
           }
         }
       }
@@ -17847,6 +19472,30 @@
         }
       }
     },
+    "Remove from Continue Listening" : {
+      "comment" : "A button that removes a book from the \"Continue Listening\" list.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "从“继续收听”中移除"
+          }
+        }
+      }
+    },
+    "Remove from Next in Series" : {
+      "comment" : "A button that removes a series from the \"Next in Series\" shelf.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "从“系列下一本”中移除"
+          }
+        }
+      }
+    },
     "Remove from this iPhone" : {
       "localizations" : {
         "zh-Hans" : {
@@ -17883,6 +19532,28 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "要移除此下载吗？"
+          }
+        }
+      }
+    },
+    "Removed %@ from Continue Listening" : {
+      "comment" : "Undo toast; %@ is the quoted book title, or 'this book'. 'Continue Listening' is a Home shelf name",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已将 %@ 从“继续收听”中移除"
+          }
+        }
+      }
+    },
+    "Removed %@ from Next in Series" : {
+      "comment" : "Undo toast; %@ is the quoted series name, or 'this series'. 'Next in Series' is a Home shelf name",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已将 %@ 从“系列下一本”中移除"
           }
         }
       }
@@ -18019,6 +19690,18 @@
         }
       }
     },
+    "Report a Problem" : {
+      "comment" : "A button label that opens a",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "报告问题"
+          }
+        }
+      }
+    },
     "Require %@ to open ShelfHead" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18137,6 +19820,16 @@
         }
       }
     },
+    "Restyle the player’s tape deck." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "更换播放器磁带机的外观。"
+          }
+        }
+      }
+    },
     "Result" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18249,6 +19942,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "继续播放你最近收听的有声书。"
+          }
+        }
+      }
+    },
+    "Resume, play a book by name, find a line, skip, or set a sleep timer by voice or in a shortcut." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "通过语音或快捷指令，继续播放、按名称播放一本书、查找某句话、跳过或设置睡眠定时器。"
           }
         }
       }
@@ -18457,6 +20160,17 @@
         }
       }
     },
+    "Returns to where you were when you set the sleep timer" : {
+      "comment" : "VoiceOver hint on the Jump back chip offered after a sleep timer stopped playback",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "回到你设置睡眠定时器时所在的位置"
+          }
+        }
+      }
+    },
     "Reverse Proxy Headers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18491,12 +20205,23 @@
       }
     },
     "Rewind to %@" : {
-      "comment" : "Button on the I Zoned Out sheet. %@ is a time like 12:40",
+      "comment" : "Button on the I Zoned Out sheet. %@ is a moment like 12:40 · Chapter 3 (a plain time like 1:12:40 when the book has no chapters)",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "倒回到 %@"
+          }
+        }
+      }
+    },
+    "Rocket" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "火箭"
           }
         }
       }
@@ -18511,12 +20236,33 @@
         }
       }
     },
+    "Sailboat" : {
+      "comment" : "Household avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "帆船"
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "存储"
+          }
+        }
+      }
+    },
+    "Save a favourite moment with Clip… in the player’s ⋯ menu. Mixtapes collect them, under Stats › More." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "通过播放器 ⋯ 菜单中的“剪辑片段…”保存你喜欢的瞬间。混音带会把它们收集起来，位于“统计”›“更多”。"
           }
         }
       }
@@ -18732,6 +20478,17 @@
         }
       }
     },
+    "scrub, scrubber, precise, slow scrub, seek bar" : {
+      "comment" : "Settings search keywords for 'Fine scrubbing', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "拖动、拖动条、精确、慢速拖动、进度条"
+          }
+        }
+      }
+    },
     "Search" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18807,12 +20564,33 @@
         }
       }
     },
+    "search in book, find a line, transcript search, quote" : {
+      "comment" : "Settings search keywords for 'Search inside a book', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在书中搜索、查找某句话、转写稿搜索、语录"
+          }
+        }
+      }
+    },
     "Search in Book…" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "在书中搜索…"
+          }
+        }
+      }
+    },
+    "Search inside a book" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在书中搜索"
           }
         }
       }
@@ -18941,6 +20719,17 @@
         }
       }
     },
+    "Second accent" : {
+      "comment" : "Household avatar colour name (the app's second accent colour), read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "第二强调色"
+          }
+        }
+      }
+    },
     "Section" : {
       "localizations" : {
         "zh-Hans" : {
@@ -18981,22 +20770,14 @@
         }
       }
     },
-    "See all %lld sessions" : {
+    "See all sessions" : {
+      "comment" : "A button that opens a list of all the user's sessions.",
+      "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "查看全部 %lld 个收听时段"
-          }
-        }
-      }
-    },
-    "See all recent sessions" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "查看全部最近收听时段"
+            "value" : "查看所有收听时段"
           }
         }
       }
@@ -19064,6 +20845,28 @@
         }
       }
     },
+    "Send to E-reader" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "发送到电子书阅读器"
+          }
+        }
+      }
+    },
+    "Send to E-reader…" : {
+      "comment" : "A button that sends a book to an e-reader.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "发送到电子书阅读器…"
+          }
+        }
+      }
+    },
     "Sends audiobook or ebook files from this device to your server" : {
       "comment" : "VoiceOver hint for the Library toolbar Upload Books button",
       "localizations" : {
@@ -19071,6 +20874,29 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "将本设备上的有声书或电子书文件发送到你的服务器"
+          }
+        }
+      }
+    },
+    "Sent to %@." : {
+      "comment" : "Toast after emailing an ebook to an e-reader; %@ is the device name",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已发送到 %@。"
+          }
+        }
+      }
+    },
+    "Sepia" : {
+      "comment" : "A name for a page colour theme.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "棕褐色"
           }
         }
       }
@@ -19376,6 +21202,16 @@
         }
       }
     },
+    "Session ended" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "会话已结束"
+          }
+        }
+      }
+    },
     "Session expired · sign in again" : {
       "localizations" : {
         "zh-Hans" : {
@@ -19447,6 +21283,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "设定目标"
+          }
+        }
+      }
+    },
+    "Set a goal from the ⋯ button on the Stats tab’s top card, and keep your streak going." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在“统计”标签页顶部卡片的 ⋯ 按钮中设定目标，保持你的连续天数。"
           }
         }
       }
@@ -19626,6 +21472,16 @@
         }
       }
     },
+    "Share recommendations and run book clubs with family and friends over iCloud." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "通过 iCloud 与家人和朋友分享推荐、组织读书会。"
+          }
+        }
+      }
+    },
     "Share Video" : {
       "localizations" : {
         "zh-Hans" : {
@@ -19698,12 +21554,24 @@
         }
       }
     },
-    "SharePlay · %lld people" : {
+    "SharePlay · %@ people" : {
+      "comment" : "SharePlay banner. %@ is the number of people listening, always 2 or more",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "同播共享 · %lld 人"
+            "value" : "SharePlay · %@ 人"
+          }
+        }
+      }
+    },
+    "SharePlay · Waiting for others" : {
+      "comment" : "SharePlay banner while you're the only one in the session",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "SharePlay · 正在等待其他人"
           }
         }
       }
@@ -19751,12 +21619,14 @@
         }
       }
     },
-    "ShelfHead asks Audible’s public catalogue about series names in your library. Nothing else is sent." : {
+    "ShelfHead asks Audible’s public catalogue about series names in your library. Nothing else is sent. Shows as a shelf on Home." : {
+      "comment" : "Text describing the purpose of the Release Radar feature.",
+      "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "ShelfHead 会向 Audible 的公开目录查询你资料库中的系列名称。不会发送其他任何内容。"
+            "value" : "ShelfHead 会向 Audible 的公开目录查询你书库中的系列名称，不会发送其他任何内容。结果会作为书架显示在首页。"
           }
         }
       }
@@ -19853,6 +21723,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "短篇（< 2 小时）"
+          }
+        }
+      }
+    },
+    "shortcuts, shortcut, automation, siri phrase" : {
+      "comment" : "Settings search keywords for 'Siri and Shortcuts', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "快捷指令、捷径、自动化、Siri 短语"
           }
         }
       }
@@ -20122,12 +22003,36 @@
         }
       }
     },
+    "Sign in again" : {
+      "comment" : "A button title that opens a sign-in prompt.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "重新登录"
+          }
+        }
+      }
+    },
     "Sign In Again" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "重新登录"
+          }
+        }
+      }
+    },
+    "Sign in again to refresh your shelves." : {
+      "comment" : "A description of the error that can occur when the user is",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "重新登录以刷新你的书架。"
           }
         }
       }
@@ -20149,18 +22054,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "请以 %@ 的身份登录。"
-          }
-        }
-      }
-    },
-    "Sign in on your phone to get started" : {
-      "comment" : "Text to display in the subtitle of the empty state when the app is not configured.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "请先在 iPhone 上登录以开始使用"
           }
         }
       }
@@ -20220,6 +22113,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "登录 ShelfHead 即可查看这本书"
+          }
+        }
+      }
+    },
+    "Sign in to ShelfHead to see your library" : {
+      "comment" : "CarPlay Home empty state when no account is signed in. States the condition only.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "登录 ShelfHead 以查看你的书库"
           }
         }
       }
@@ -20415,6 +22319,28 @@
         }
       }
     },
+    "Signed out of %@" : {
+      "comment" : "Banner pill when the server ended the session; %@ is the server host",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已退出 %@"
+          }
+        }
+      }
+    },
+    "Signed out of your server" : {
+      "comment" : "Banner pill when the server ended the session and the host is unknown",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "已退出你的服务器"
+          }
+        }
+      }
+    },
     "Signed out, but %@ couldn’t be removed from the Keychain. Unlock your device and use Remove All Servers from This Device in Settings next time you’re signed in." : {
       "comment" : "Sign-out warning; %@ is a list of items joined with 'and' (e.g. 'the saved password for host and this device's sign-in details')",
       "localizations" : {
@@ -20526,6 +22452,16 @@
         }
       }
     },
+    "Siri and Shortcuts" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Siri 与快捷指令"
+          }
+        }
+      }
+    },
     "Siri is restricted on this iPhone by Screen Time or device management." : {
       "localizations" : {
         "zh-Hans" : {
@@ -20548,7 +22484,7 @@
       }
     },
     "Size" : {
-      "comment" : "Sort option: file size",
+      "comment" : "Book detail metadata label: size of the book on the server\nSort option: file size",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -20558,14 +22494,24 @@
         }
       }
     },
-    "Skip" : {
-      "comment" : "A button that skips rating and dismisses the sheet.",
-      "isCommentAutoGenerated" : true,
+    "Size on disk" : {
+      "comment" : "Stats figure label: total file size of the library on the server",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "跳过"
+            "value" : "占用空间"
+          }
+        }
+      }
+    },
+    "Size on disk, %@" : {
+      "comment" : "VoiceOver; %@ is a file size",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "占用空间，%@"
           }
         }
       }
@@ -20621,6 +22567,18 @@
         }
       }
     },
+    "Skip back in the book that is playing." : {
+      "comment" : "Text displayed in a control that skips back in the book that is playing.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在正在播放的书中后退。"
+          }
+        }
+      }
+    },
     "Skip back in the current audiobook." : {
       "localizations" : {
         "zh-Hans" : {
@@ -20668,6 +22626,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "前进 %lld 秒"
+          }
+        }
+      }
+    },
+    "Skip forward in the book that is playing." : {
+      "comment" : "Text displayed in a control that skips forward in the book that is playing.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "在正在播放的书中前进。"
           }
         }
       }
@@ -20879,6 +22849,30 @@
         }
       }
     },
+    "Sleep timer set for %lld minutes." : {
+      "comment" : "Text for a dialog that appears when the sleep timer is set for 2 minutes or more. The argument is the number of minutes.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "睡眠定时器已设为 %lld 分钟。"
+          }
+        }
+      }
+    },
+    "Sleep timer set for 1 minute." : {
+      "comment" : "Confirmation dialog for the sleep timer set to 1 minute.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "睡眠定时器已设为 1 分钟。"
+          }
+        }
+      }
+    },
     "Sleep timer, shake to extend" : {
       "localizations" : {
         "zh-Hans" : {
@@ -21081,6 +23075,17 @@
         }
       }
     },
+    "something cosy under 8 hours" : {
+      "comment" : "Ask search example suggestion",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "8 小时以内的温馨小品"
+          }
+        }
+      }
+    },
     "Something went wrong" : {
       "comment" : "A generic error title.",
       "isCommentAutoGenerated" : true,
@@ -21135,6 +23140,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "出了点问题。请重试。"
+          }
+        }
+      }
+    },
+    "Something went wrong. Try again in a moment." : {
+      "comment" : "Upload screen error for an unexpected failure",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "出了点问题。请稍后重试。"
           }
         }
       }
@@ -21208,6 +23224,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "声音"
+          }
+        }
+      }
+    },
+    "Sparkles" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "闪光"
           }
         }
       }
@@ -21396,6 +23423,16 @@
         }
       }
     },
+    "Stamps for the genres, narrators and decades you’ve finished. Under Stats › More." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "为你听完的体裁、演播者和年代盖上印章。位于“统计”›“更多”。"
+          }
+        }
+      }
+    },
     "Standalone" : {
       "comment" : "Subtitle of a book that does not belong to a series and has no known duration",
       "localizations" : {
@@ -21419,7 +23456,7 @@
       }
     },
     "Star" : {
-      "comment" : "VoiceOver label of the star toggle on an author or narrator page (verb)",
+      "comment" : "Avatar picture name, read by VoiceOver\nVoiceOver label of the star toggle on an author or narrator page (verb)",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -21793,6 +23830,30 @@
         }
       }
     },
+    "Stop Upload" : {
+      "comment" : "The title of a button that stops uploading.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "停止上传"
+          }
+        }
+      }
+    },
+    "Stop uploading?" : {
+      "comment" : "The title of a confirmation dialog that asks whether to stop uploading.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "停止上传？"
+          }
+        }
+      }
+    },
     "Stopped %@" : {
       "comment" : "Toast with Undo after playback is stopped. %@ is the book title",
       "localizations" : {
@@ -21812,6 +23873,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "在附近的章节分隔处停止。"
+          }
+        }
+      }
+    },
+    "Stops the sleep timer one chapter later" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "让睡眠定时器晚一章停止"
           }
         }
       }
@@ -22374,13 +24445,35 @@
         }
       }
     },
+    "Taupe" : {
+      "comment" : "Household avatar colour name (the muted brown-grey), read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "灰褐色"
+          }
+        }
+      }
+    },
     "Teal" : {
-      "comment" : "Accent colour name",
+      "comment" : "Accent colour name\nKids avatar colour name, read by VoiceOver",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "青色"
+          }
+        }
+      }
+    },
+    "Teddy bear" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "泰迪熊"
           }
         }
       }
@@ -22504,6 +24597,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "该内容已不在你的服务器上。它可能已被移动或删除。"
+          }
+        }
+      }
+    },
+    "That mixtape link couldn’t be read. Ask for it to be shared again." : {
+      "comment" : "Error message when a mixtape link can't be read.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法读取该混音带链接。请让对方重新分享。"
           }
         }
       }
@@ -22803,8 +24908,9 @@
         }
       }
     },
-    "The file says book %@ in this series. Audiobookshelf can’t take a number while uploading; set it on the book afterwards." : {
+    "The file says book %@ in this series. Audiobookshelf can't take a number while uploading; set it on the book afterwards." : {
       "comment" : "A note in the upload form explaining that the suggested book number is not suitable for audiobooks.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
@@ -22815,9 +24921,8 @@
         }
       }
     },
-    "The file says book %@ in this series. Audiobookshelf can't take a number while uploading; set it on the book afterwards." : {
+    "The file says book %@ in this series. Audiobookshelf can’t take a number while uploading; set it on the book afterwards." : {
       "comment" : "A note in the upload form explaining that the suggested book number is not suitable for audiobooks.",
-      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "zh-Hans" : {
@@ -22978,6 +25083,16 @@
         }
       }
     },
+    "The people, places and terms you’ve met so far, each with a jump back to where they came up. Only uses what you’ve already heard." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "列出你目前遇到的人物、地点和术语，并可跳回它们出现的位置。只会用到你已听过的内容。"
+          }
+        }
+      }
+    },
     "The recap couldn't be prepared: %@" : {
       "comment" : "Previously On… montage error; %@ is the system's reason",
       "localizations" : {
@@ -23065,29 +25180,6 @@
         }
       }
     },
-    "The server couldn't provide this file (HTTP %lld)." : {
-      "comment" : "%lld is an HTTP status code",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "服务器无法提供此文件（HTTP %lld）。"
-          }
-        }
-      }
-    },
-    "The server couldn't provide this file." : {
-      "comment" : "A message shown when the system can't open a file.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "服务器无法提供此文件。"
-          }
-        }
-      }
-    },
     "The server couldn't save the files. Check its disk space and permissions." : {
       "comment" : "Error message when the server can't save the uploaded files.",
       "isCommentAutoGenerated" : true,
@@ -23141,6 +25233,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "服务器没有按预期启动登录流程。请确认已在 Audiobookshelf 的“身份验证”设置中启用 OIDC/SSO。"
+          }
+        }
+      }
+    },
+    "The server ended this session. Opens Sign In Again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "服务器已结束此会话。将打开“重新登录”。"
           }
         }
       }
@@ -23436,16 +25538,6 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "此账户无权上传到该资料库。"
-          }
-        }
-      }
-    },
-    "This account needs its password. Sign in from Settings." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "此账户需要密码。请在设置中登录。"
           }
         }
       }
@@ -23797,6 +25889,18 @@
         }
       }
     },
+    "This file couldn’t be opened. Try again, or check the file on your server." : {
+      "comment" : "A message shown when the ebook file can't be opened.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "无法打开此文件。请重试，或检查服务器上的文件。"
+          }
+        }
+      }
+    },
     "This format isn't supported in ShelfHead's reader yet — PDF and EPUB are currently readable in-app." : {
       "localizations" : {
         "zh-Hans" : {
@@ -23867,6 +25971,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "这台 iPhone 已离线"
+          }
+        }
+      }
+    },
+    "This iPhone is out of space, so the upload couldn’t be prepared. Free some space and try again." : {
+      "comment" : "Upload screen error when the temporary upload file can't be written for lack of space",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "这台 iPhone 的存储空间不足，无法准备上传。请释放一些空间后重试。"
           }
         }
       }
@@ -23967,6 +26082,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "这个书库还没有系列"
+          }
+        }
+      }
+    },
+    "This library is empty" : {
+      "comment" : "Title of a warning banner when a library has no books.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "这个书库是空的"
           }
         }
       }
@@ -24099,6 +26226,17 @@
         }
       }
     },
+    "this series" : {
+      "comment" : "Stands in for the series name inside the Undo toast when the name is empty",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "此系列"
+          }
+        }
+      }
+    },
     "This series isn't in the library's series list." : {
       "comment" : "Text displayed in a message when a series isn't in the library's series list.",
       "extractionState" : "stale",
@@ -24175,6 +26313,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "此服务器没有可上传的资料库文件夹。"
+          }
+        }
+      }
+    },
+    "This server hasn’t been set up yet. Finish setup in a browser, then try again." : {
+      "comment" : "Sign-in page warning when the Audiobookshelf server has no root user yet",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "此服务器尚未完成设置。请在浏览器中完成设置，然后重试。"
           }
         }
       }
@@ -24533,6 +26682,39 @@
         }
       }
     },
+    "Tortoise" : {
+      "comment" : "Kids avatar picture name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "乌龟"
+          }
+        }
+      }
+    },
+    "Total length" : {
+      "comment" : "Stats figure label: combined running time of the library",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "总时长"
+          }
+        }
+      }
+    },
+    "Total length, %@" : {
+      "comment" : "VoiceOver; %@ is a spoken duration",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "总时长，%@"
+          }
+        }
+      }
+    },
     "Total listened" : {
       "localizations" : {
         "zh-Hans" : {
@@ -24825,6 +27007,17 @@
         }
       }
     },
+    "translate, translation, captions, subtitles, foreign language" : {
+      "comment" : "Settings search keywords for 'Translate captions', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "翻译、字幕、外语、实时翻译"
+          }
+        }
+      }
+    },
     "Translation unavailable" : {
       "comment" : "Captions: shown when translating the lines failed",
       "localizations" : {
@@ -24918,6 +27111,16 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "重试"
+          }
+        }
+      }
+    },
+    "Try asking" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "试着问问"
           }
         }
       }
@@ -25827,6 +28030,18 @@
         }
       }
     },
+    "Version %@" : {
+      "comment" : "The title of the section that lists the changes in the current version of the app. The argument is the string “7.5”.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "版本 %@"
+          }
+        }
+      }
+    },
     "View Book Details" : {
       "localizations" : {
         "zh-Hans" : {
@@ -25978,16 +28193,6 @@
         }
       }
     },
-    "Walkman" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "随身听"
-          }
-        }
-      }
-    },
     "Want to Read" : {
       "comment" : "The label for the \"Want to Read\" section in the Reading Sites settings.",
       "isCommentAutoGenerated" : true,
@@ -26000,14 +28205,13 @@
         }
       }
     },
-    "Watch app" : {
-      "comment" : "Description of a feature that lets the user control the player from their wrist.",
-      "isCommentAutoGenerated" : true,
+    "watch, apple watch, wrist" : {
+      "comment" : "Settings search keywords for 'Apple Watch app', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
-            "value" : "Apple Watch 应用"
+            "value" : "手表、Apple Watch、手腕"
           }
         }
       }
@@ -26034,22 +28238,24 @@
         }
       }
     },
-    "What Just Happened" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "刚才发生了什么"
-          }
-        }
-      }
-    },
     "What shaking your phone does during playback." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "播放期间摇动 iPhone 时执行的操作。"
+          }
+        }
+      }
+    },
+    "What’s New" : {
+      "comment" : "The title of a sheet that displays a list of changes in a new version of the app.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "新功能"
           }
         }
       }
@@ -26198,6 +28404,17 @@
         }
       }
     },
+    "widget, widgets, home screen, lock screen widget" : {
+      "comment" : "Settings search keywords for 'Home Screen widgets', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "小组件、主屏幕、锁定屏幕小组件、组件"
+          }
+        }
+      }
+    },
     "wifi, cellular, download on wifi" : {
       "comment" : "Settings search keywords for 'Wi-Fi only downloads', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
       "localizations" : {
@@ -26327,6 +28544,17 @@
         }
       }
     },
+    "x-ray, xray, characters, who is, places, people" : {
+      "comment" : "Settings search keywords for 'X-Ray', comma-separated. Translate each term and add common synonyms; keep commas between terms.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "X-Ray、人物、角色、地点、谁是、人名"
+          }
+        }
+      }
+    },
     "Year" : {
       "comment" : "Book detail metadata label: year published\nShare card style preset chip label\nShare card theme name (segmented/picker label)",
       "localizations" : {
@@ -26345,6 +28573,17 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "年度回顾"
+          }
+        }
+      }
+    },
+    "Yellow" : {
+      "comment" : "Kids avatar colour name, read by VoiceOver",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "黄色"
           }
         }
       }
@@ -26634,13 +28873,24 @@
       }
     },
     "You’re offline. Connect to the internet and try again." : {
-      "comment" : "Plain copy for a failed session list when the user is offline.",
-      "isCommentAutoGenerated" : true,
+      "comment" : "Upload screen error when the device has no network",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "你已离线。请连接互联网后重试。"
+          }
+        }
+      }
+    },
+    "You’re offline. Connect to the internet to open this book." : {
+      "comment" : "A message shown when a user tries to open an ebook while offline.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "你已离线。请连接互联网后再打开这本书。"
           }
         }
       }
@@ -26890,6 +29140,17 @@
         }
       }
     },
+    "Your library" : {
+      "comment" : "Stats section header: totals for the selected library",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "你的书库"
+          }
+        }
+      }
+    },
     "Your listening personality" : {
       "comment" : "Share card caption fallback",
       "localizations" : {
@@ -26991,18 +29252,6 @@
         }
       }
     },
-    "Your personalised shelves will appear once you start listening" : {
-      "comment" : "Text displayed in a description of the empty state view.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "machine_translated",
-            "value" : "开始收听后，这里会显示为你定制的书架"
-          }
-        }
-      }
-    },
     "Your Picture" : {
       "localizations" : {
         "zh-Hans" : {
@@ -27078,6 +29327,18 @@
         }
       }
     },
+    "Your server couldn’t send this file. Try again in a moment." : {
+      "comment" : "A message shown when the server can't send a file.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "服务器无法发送此文件。请稍后重试。"
+          }
+        }
+      }
+    },
     "Your server didn't accept your sign-in. Sign in again in Settings, then try again." : {
       "comment" : "Playback start error for a 401",
       "localizations" : {
@@ -27121,6 +29382,27 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "服务器未能创建备份。请稍后重试，或检查服务器的可用磁盘空间。"
+          }
+        }
+      }
+    },
+    "Your server doesn’t allow this app’s sign-in address yet. %@ Then try again." : {
+      "comment" : "SSO error when the server refused the redirect URI; %@ is the setup sentence naming the setting and the URI",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "服务器尚未允许此应用的登录地址。%@ 然后重试。"
+          }
+        }
+      }
+    },
+    "Your server emails the ebook to the device you choose." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "服务器会把电子书通过电子邮件发送到你选择的设备。"
           }
         }
       }
@@ -27241,6 +29523,18 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "你在 %@ 上的会话已结束。请重新登录以继续同步。已下载的内容仍可播放。"
+          }
+        }
+      }
+    },
+    "Your session on this server ended." : {
+      "comment" : "A message displayed when the user's session on a server ends.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "你在此服务器上的会话已结束。"
           }
         }
       }

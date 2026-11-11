@@ -76,21 +76,26 @@ final class AuthorizedFetchRoutingTests: XCTestCase {
         XCTAssertTrue(message.lowercased().contains("find"), message)
     }
 
-    func testServerAndHTTPErrorsIncludeTheStatusCode() {
-        XCTAssertTrue(EbookReaderView.downloadFailureMessage(for: APIError.serverError(503)).contains("503"))
-        XCTAssertTrue(EbookReaderView.downloadFailureMessage(for: APIError.httpError(418)).contains("418"))
+    // Batch 490 (REVIEW 2026-11-11 E6): the three tests below changed with the copy. The
+    // reader no longer shows an HTTP status code or a raw system error description.
+    func testServerAndHTTPErrorsDoNotShowTheStatusCode() {
+        let server = EbookReaderView.downloadFailureMessage(for: APIError.serverError(503))
+        let http = EbookReaderView.downloadFailureMessage(for: APIError.httpError(418))
+        XCTAssertFalse(server.contains("503"), server)
+        XCTAssertFalse(http.contains("418"), http)
+        XCTAssertFalse(server.contains("HTTP"), server)
+        XCTAssertEqual(server, "Your server couldn’t send this file. Try again in a moment.")
     }
 
-    func testGenericServerFailureKeepsTheOldWording() {
+    func testGenericServerFailureUsesTheServerWording() {
         XCTAssertEqual(EbookReaderView.downloadFailureMessage(for: APIError.invalidResponse),
-                       "The server couldn't provide this file.")
+                       "Your server couldn’t send this file. Try again in a moment.")
     }
 
-    func testNonAPIErrorKeepsTheTransportWording() {
-        // A dropped connection, or the temp-file write for the Quick Look path failing —
-        // both used to land in this branch and still do, verbatim.
+    func testNonAPIErrorMapsToOfflineWithoutTheSystemText() {
         let underlying = URLError(.notConnectedToInternet)
         let message = EbookReaderView.downloadFailureMessage(for: underlying)
-        XCTAssertEqual(message, "Couldn't download this file: \(underlying.localizedDescription)")
+        XCTAssertEqual(message, "You’re offline. Connect to the internet to open this book.")
+        XCTAssertFalse(message.contains(underlying.localizedDescription), message)
     }
 }

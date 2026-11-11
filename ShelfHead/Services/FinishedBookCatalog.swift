@@ -44,6 +44,20 @@ nonisolated enum FinishedBookCatalogMerge {
     }
 }
 
+/// Batch 490 (REVIEW 2026-11-11 E2): which body the Cassette Wall and the Listening Passport
+/// show. An empty catalog after a failed refresh is a failure (offline, server down), not a
+/// brand-new listener, so it gets the failure copy and Retry instead of "No finished books
+/// yet". Cached books on screen win over a failed refresh. Pure so it's unit-tested.
+nonisolated enum FinishedCatalogDisplayState: Equatable {
+    case loading, failed, empty, content
+
+    static func resolve(isEmpty: Bool, isRefreshing: Bool, hasLoaded: Bool, lastRefreshFailed: Bool) -> FinishedCatalogDisplayState {
+        guard isEmpty else { return .content }
+        if isRefreshing || !hasLoaded { return .loading }
+        return lastRefreshFailed ? .failed : .empty
+    }
+}
+
 /// Batch 459: every book the signed-in account has finished, with metadata, cached on disk
 /// per account (`Application Support/ShelfHead/FinishedBooks/<scopeKey>.json`, same scope key
 /// as `TranscriptStore`). Refreshed incrementally: `/api/me` supplies what is finished and

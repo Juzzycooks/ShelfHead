@@ -78,6 +78,9 @@ struct LibraryView: View {
     /// every keystroke so rapid typing doesn't leave a pile of sleeping tasks (each
     /// individually harmless thanks to `search()`'s own generation guard, but avoidable).
     @State private var searchTask: Task<Void, Never>?
+    /// Batch 490 (REVIEW 2026-11-11 L7): this account's last few submitted Titles searches,
+    /// offered as search suggestions while the field is empty (`RecentLibrarySearches`).
+    @State private var recentSearches: [String] = []
     /// Batch 445: Library search has two scopes in Books: the server search ("Titles") and "Ask", which
     /// answers a sentence like "a short unplayed mystery" from the whole library on device.
     @State private var searchScope: LibrarySearchScope = .titles
@@ -587,8 +590,21 @@ struct LibraryView: View {
                     Text("Ask").tag(LibrarySearchScope.ask)
                 }
             }
+            // Batch 490 (REVIEW 2026-11-11 L7): suggestions while the field is empty — recent
+            // Titles searches (with Clear), or three example sentences in Ask (HIG Searching).
+            .searchSuggestions { searchSuggestionRows }
             // Ask is a sentence, so it runs on Search (return), not per keystroke.
-            .onSubmit(of: .search) { runAskIfNeeded() }
+            .onSubmit(of: .search) {
+                runAskIfNeeded()
+                // Batch 490 (REVIEW 2026-11-11 L7): remember a submitted Titles search.
+                if browseMode == .books, searchScope == .titles {
+                    recentSearches = RecentLibrarySearches.record(searchText)
+                }
+            }
+            .task(id: libraryViewModel.selectedLibrary?.id) {
+                // Batch 490 (REVIEW 2026-11-11 L7): per account, so reload after a switch.
+                recentSearches = RecentLibrarySearches.load()
+            }
             .onChange(of: searchScope) { _, scope in
                 searchTask?.cancel()
                 moodSearch.reset()
@@ -612,6 +628,13 @@ struct LibraryView: View {
             .onChange(of: searchText) { _, newValue in
                 // Plan §11: no select mode in search; starting a search leaves it.
                 if !newValue.isEmpty { exitSelectMode() }
+                // Batch 490 (REVIEW 2026-11-11 L7): picking an Ask example fills the field;
+                // run it at once rather than waiting for a Search tap.
+                if browseMode == .books, searchScope == .ask,
+                   RecentLibrarySearches.askExamples.contains(newValue) {
+                    runAskIfNeeded()
+                    return
+                }
                 // Only the server book-search is debounced here; other modes filter locally.
                 guard browseMode == .books, searchScope == .titles else { return }
                 searchTask?.cancel()
@@ -650,6 +673,9 @@ struct LibraryView: View {
             // remount on the legacy tab shell), which `onChange` alone never sees.
             .onChange(of: libraryViewModel.requestedBrowseMode) { _, _ in consumeRequestedBrowseMode() }
             .onAppear { consumeRequestedBrowseMode() }
+            // Batch 490 (REVIEW 2026-11-11 F14): `shelfhead://search?q=` fills the search field.
+            .onChange(of: libraryViewModel.requestedSearchText) { _, _ in consumeRequestedSearchText() }
+            .onAppear { consumeRequestedSearchText() }
             .onChange(of: availableModes) { _, modes in
                 // If the current mode turns out not to exist, fall back to Books.
                 if !modes.contains(browseMode) { browseMode = .books }
@@ -1002,6 +1028,16 @@ struct LibraryView: View {
         guard let mode = libraryViewModel.requestedBrowseMode else { return }
         browseMode = mode
         libraryViewModel.requestedBrowseMode = nil
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F14): a search link's text goes into the Titles search.
+    /// Setting `searchText` runs the existing debounced server search through its `onChange`.
+    private func consumeRequestedSearchText() {
+        guard let text = libraryViewModel.requestedSearchText else { return }
+        libraryViewModel.requestedSearchText = nil
+        guard !text.isEmpty else { return }
+        searchScope = .titles
+        searchText = text
     }
 
     /// "B-side" shuffle — picks a random book you haven't started at all (no
@@ -1664,7 +1700,10 @@ struct LibraryView: View {
                 // now offers the same Play/Resume action as `DownloadsView`'s
                 // list, and the long-press menu matches the grid's. (The system
                 // suspends swipe actions in edit mode.)
-                .swipeActions(edge: .leading) {
+                // Batch 490 (REVIEW 2026-11-11 L4): no full swipe — a long swipe used to
+                // replace the loaded book with no chance to stop; now it takes a tap, and
+                // `quickPlayOrPause` offers "Jump back" when it replaces one.
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
                     leadingPlayAction(for: item)
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -2148,10 +2187,14 @@ struct LibraryView: View {
     private var searchResultsView: some View {
         // Critique 2026-10-05 (Library): rows are plain (cover, text, divider) like the list
         // layout's rows instead of each sitting in its own card (Fewer Containers).
-        LazyVStack(spacing: 0) {
-            if libraryViewModel.isSearching {
+        // Batch 490 (REVIEW 2026-11-11 L7): the previous results stay on screen while the
+        // next keystroke's request runs; the spinner only shows when there's nothing yet.
+        let hasAnyResult = !libraryViewModel.searchResults.isEmpty
+            || !libraryViewModel.searchAuthors.isEmpty || !libraryViewModel.searchNarrators.isEmpty
+        return LazyVStack(spacing: 0) {
+            if libraryViewModel.isSearching && !hasAnyResult {
                 LoadingView("Searching\u{2026}")
-            } else if libraryViewModel.searchResults.isEmpty {
+            } else if !hasAnyResult {
                 searchEmptyState
             } else {
                 searchStatusNote
@@ -2165,24 +2208,86 @@ struct LibraryView: View {
                     // search is exactly where "found it, queue it" is the intent.
                     .bookContextMenu(item)
                     Divider().overlay(Color.shelfMuted.opacity(0.2))
-                    // L5 (REVIEW_2026-08-20_UI_SECURITY.md): NOT wired to pagination.
-                    // Checked `AudiobookshelfAPI.search(libraryId:query:)`
-                    // (AudiobookshelfAPI.swift) before assuming — its request is
-                    // `GET /api/libraries/{id}/search?q=...` with no `page`/`limit`
-                    // query item, and `LibraryViewModel.search()` (~line 742) has no
-                    // paging state (`searchGeneration`/`searchQuery` only — no
-                    // `currentPage` equivalent, unlike `loadItems()`'s real
-                    // `currentPage`/`hasMoreItems`). The server endpoint this client
-                    // calls returns whatever it returns in one shot; there's no cursor
-                    // to page through. A client-side page size here would just hide
-                    // results the server already sent, which is worse than showing all
-                    // of them — reported as a real gap rather than faked.
+                    // Batch 490 (REVIEW 2026-11-11 L1): the old note here said the search
+                    // endpoint couldn't be limited or paged. It takes `limit` (ABS's
+                    // `LibraryController.search`: `req.query.limit || 12`), so the request now
+                    // asks for `AudiobookshelfAPI.searchResultLimit` (50). It still has no
+                    // page cursor, so there's no "load more" here.
                 }
+                searchPeopleSection(title: "Authors", people: libraryViewModel.searchAuthors, isAuthor: true)
+                searchPeopleSection(title: "Narrators", people: libraryViewModel.searchNarrators, isAuthor: false)
             }
         }
         .padding(.horizontal, Space.pageH)
         .padding(.vertical, 12)
         .padding(.bottom, bottomInset)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L1): the author or narrator matches of an online search,
+    /// under the book list. Each row opens that person's books, as Library's Authors and
+    /// Narrators modes do. Hidden when the group is empty (and always for a podcast library).
+    @ViewBuilder
+    private func searchPeopleSection(title: LocalizedStringResource, people: [AudiobookshelfAPI.SearchGroups.Person], isAuthor: Bool) -> some View {
+        if !people.isEmpty {
+            RetroSectionHeader(title: title)
+                .padding(.top, Space.l)
+                .padding(.bottom, 4)
+            ForEach(people, id: \.self) { person in
+                if isAuthor, let id = person.id {
+                    LibraryRouteLink(.author(NamedEntity(id: id, name: person.name)), bottomInset: bottomInset) {
+                        SearchPersonRow(person: person, isAuthor: true)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    LibraryRouteLink(.narrator(person.name), bottomInset: bottomInset) {
+                        SearchPersonRow(person: person, isAuthor: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Divider().overlay(Color.shelfMuted.opacity(0.2))
+            }
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 L7): the rows under an empty search field. Books only (the
+    /// other modes filter their own list as you type). Each row fills the field through
+    /// `searchCompletion`; Clear has none, so it isn't a completion, just a button.
+    @ViewBuilder
+    private var searchSuggestionRows: some View {
+        if browseMode == .books, searchText.isEmpty {
+            if searchScope == .ask {
+                Section("Try asking") {
+                    ForEach(RecentLibrarySearches.askExamples, id: \.self) { example in
+                        Label {
+                            Text(verbatim: example)
+                        } icon: {
+                            Image(systemName: "sparkles")
+                        }
+                        .searchCompletion(example)
+                    }
+                }
+            } else if !recentSearches.isEmpty {
+                Section {
+                    ForEach(recentSearches, id: \.self) { query in
+                        Label {
+                            Text(verbatim: query)
+                        } icon: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        .searchCompletion(query)
+                    }
+                    Button {
+                        recentSearches = RecentLibrarySearches.clear()
+                    } label: {
+                        Text("Clear")
+                            .foregroundStyle(Color.shelfAmberText)
+                    }
+                    .accessibilityLabel(Text("Clear recent searches"))
+                } header: {
+                    Text("Recent searches")
+                }
+            }
+        }
     }
 
     /// Batch 445: starts an Ask search for the current text. Local: only the snapshot fetch touches the server.
@@ -2229,6 +2334,15 @@ struct LibraryView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.bottom, 4)
                     }
+                }
+                // Batch 490 (REVIEW 2026-11-11 E6): Ask reads at most `snapshotCap` books;
+                // say so rather than imply the whole library was checked. Same string as
+                // the smart-filter note.
+                if moodSearch.snapshotIsPartial {
+                    Typo.fine(Text("Checked the first \(MoodSearchViewModel.snapshotCap) books only"))
+                        .foregroundStyle(Color.shelfMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 4)
                 }
                 ForEach(moodSearch.matches) { match in
                     bookLink(match.item) {
@@ -2998,6 +3112,53 @@ struct SearchResultRow: View {
     }
 }
 
+/// Batch 490 (REVIEW 2026-11-11 L1): one author or narrator match in Library search. Same
+/// plain-row shape as `SearchResultRow`, with a symbol where the cover would be; one
+/// VoiceOver element that reads as a link.
+struct SearchPersonRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let person: AudiobookshelfAPI.SearchGroups.Person
+    let isAuthor: Bool
+
+    /// "1 book" / "12 books"; nil when the server sent no count. Pure.
+    nonisolated static func bookCountText(_ count: Int?) -> String? {
+        guard let count, count > 0 else { return nil }
+        return count == 1
+            ? String(localized: "1 book", comment: "Library search: an author or narrator with one book")
+            : String(localized: "\(count.formatted()) books", comment: "Library search: an author's or narrator's book count; %@ is a number such as 12")
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: isAuthor ? "person.fill" : "mic.fill")
+                .font(.title3)
+                .foregroundStyle(Color.shelfMuted)
+                .frame(width: 56, height: 44)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Typo.rowTitle(Text(verbatim: person.name))
+                    .foregroundStyle(Color.shelfCream)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                if let count = Self.bookCountText(person.numBooks) {
+                    Typo.fine(Text(verbatim: count))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.shelfMuted)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: [person.name, Self.bookCountText(person.numBooks)].compactMap { $0 }.joined(separator: ", ")))
+        .accessibilityHint(isAuthor ? Text("Opens this author’s books") : Text("Opens this narrator’s books"))
+    }
+}
+
 /// One tile in `LibraryView`'s grid.
 ///
 /// Item 10 (REVIEW-2026-09-09.md): exists purely to own the per-item download reads. It
@@ -3719,4 +3880,50 @@ struct LibrarySelectionBar: View {
 enum LibrarySearchScope: Hashable {
     case titles
     case ask
+}
+
+/// Batch 490 (REVIEW 2026-11-11 L7): the last few Titles searches the listener submitted,
+/// per account (server + user), in `UserDefaults` under `keyPrefix` + the account's scope key.
+/// Never sent anywhere. Cleared with the Clear suggestion row.
+enum RecentLibrarySearches {
+    /// UserDefaults key prefix; the full key appends `TranscriptStore.currentScopeKey()`.
+    /// Default when absent: no recent searches.
+    static let keyPrefix = "libraryRecentSearches."
+    static let limit = 5
+
+    /// Three example sentences for the Ask scope's empty field (localised, so they match
+    /// what `MoodQueryParser` reads in the listener's language).
+    static var askExamples: [String] {
+        [String(localized: "something cosy under 8 hours", comment: "Ask search example suggestion"),
+         String(localized: "a thriller I haven’t started", comment: "Ask search example suggestion"),
+         String(localized: "funny and short", comment: "Ask search example suggestion")]
+    }
+
+    /// Puts `query` first, drops an earlier copy (case-insensitive) and blanks, and keeps at
+    /// most `limit`. Pure, pinned by `QuickWinsLibraryTests`.
+    nonisolated static func adding(_ query: String, to list: [String], limit: Int = 5) -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Array(list.prefix(limit)) }
+        let rest = list.filter { $0.compare(trimmed, options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame }
+        return Array(([trimmed] + rest).prefix(limit))
+    }
+
+    private static var key: String { keyPrefix + TranscriptStore.currentScopeKey() }
+
+    static func load() -> [String] {
+        Array((UserDefaults.standard.stringArray(forKey: key) ?? []).prefix(limit))
+    }
+
+    @discardableResult
+    static func record(_ query: String) -> [String] {
+        let updated = adding(query, to: load(), limit: limit)
+        UserDefaults.standard.set(updated, forKey: key)
+        return updated
+    }
+
+    @discardableResult
+    static func clear() -> [String] {
+        UserDefaults.standard.removeObject(forKey: key)
+        return []
+    }
 }

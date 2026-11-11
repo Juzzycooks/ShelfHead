@@ -49,11 +49,13 @@ final class WatchRemoteCommandRouter {
         case standalone
     }
 
-    /// The five commands this app actually registers. An enum rather than five
+    /// The commands this app registers (five, plus Batch 490's chapter pair). An enum rather than five
     /// near-identical closures so `dispatch(_:)` holds the whole mode-vs-command
     /// matrix in one readable place.
     private enum Command {
         case play, pause, toggle, skipForward, skipBackward
+        /// Batch 490 (REVIEW 2026-11-11 F29): chapter skip, standalone only.
+        case nextChapter, previousChapter
     }
 
     private var isActive = false
@@ -97,7 +99,38 @@ final class WatchRemoteCommandRouter {
         center.skipBackwardCommand.addTarget { [weak self] _ in
             self?.dispatch(.skipBackward) ?? .commandFailed
         }
+        // Batch 490 (REVIEW 2026-11-11 F29): next/previous chapter from the system Now
+        // Playing controls and AirPods, for a book playing on this Watch. `isEnabled`
+        // defaults to true (Apple docs, `MPRemoteCommand.isEnabled`), so both start off and
+        // `refreshChapterCommands()` turns them on only for a loaded book with chapters.
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            self?.dispatch(.nextChapter) ?? .commandFailed
+        }
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            self?.dispatch(.previousChapter) ?? .commandFailed
+        }
+        center.nextTrackCommand.isEnabled = false
+        center.previousTrackCommand.isEnabled = false
         applyPreferredIntervals(for: WatchStore.shared.mode)
+        refreshChapterCommands()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): chapter skip is on only while standalone owns
+    /// playback and the loaded book has chapters. Companion mode leaves it off (the phone
+    /// relay has no chapter-skip command). Written only on a change, since `publish` calls
+    /// this on every playback tick.
+    private func refreshChapterCommands() {
+        let enabled = Self.chapterCommandsEnabled(owner: currentOwner,
+                                                  standaloneCanSkipChapters: WatchStore.shared.standalone.canSkipChapters)
+        let center = MPRemoteCommandCenter.shared()
+        if center.nextTrackCommand.isEnabled != enabled { center.nextTrackCommand.isEnabled = enabled }
+        if center.previousTrackCommand.isEnabled != enabled { center.previousTrackCommand.isEnabled = enabled }
+    }
+
+    /// Pure, for the tests: see `refreshChapterCommands()`.
+    nonisolated static func chapterCommandsEnabled(owner: Owner, standaloneCanSkipChapters: Bool) -> Bool {
+        guard case .standalone = owner else { return false }
+        return standaloneCanSkipChapters
     }
 
     /// `preferredIntervals` is the one piece of remote-command configuration that
@@ -144,6 +177,9 @@ final class WatchRemoteCommandRouter {
                 store.forward()
             case .skipBackward:
                 store.rewind()
+            case .nextChapter, .previousChapter:
+                // Batch 490: disabled in companion mode (`refreshChapterCommands()`).
+                return .commandFailed
             }
             return .success
         case .standalone:
@@ -163,6 +199,10 @@ final class WatchRemoteCommandRouter {
                 engine.skipForward()
             case .skipBackward:
                 engine.skipBackward()
+            case .nextChapter:
+                return engine.skipToNextChapter() ? .success : .commandFailed
+            case .previousChapter:
+                return engine.skipToPreviousChapter() ? .success : .commandFailed
             }
             return .success
         }
@@ -175,6 +215,7 @@ final class WatchRemoteCommandRouter {
     /// (clearing) write, which is how a standalone teardown used to blank the
     /// companion glance.
     func publish(_ info: [String: Any]?, as owner: Owner) {
+        if isActive { refreshChapterCommands() }
         guard currentOwner == owner else { return }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
@@ -186,6 +227,7 @@ final class WatchRemoteCommandRouter {
     /// from its own state.
     func modeDidChange(to mode: WatchStore.Mode) {
         applyPreferredIntervals(for: mode)
+        if isActive { refreshChapterCommands() }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         switch Self.owner(for: mode) {
         case .companion:

@@ -398,12 +398,13 @@ enum ServerConnectionRules {
     /// Whether the server has told us it offers OpenID Connect.
     ///
     /// Audiobookshelf's `GET /status` returns an `authMethods` array (e.g.
-    /// `["local", "openid"]`). The connection test hits `/ping`, and
-    /// `ReachabilityStore.ConnectionTestResult` carries only an outcome and the resolved
-    /// URL — no auth methods — so nothing calls this with a non-nil argument yet (see
-    /// `ServerConnectionView.advertisedAuthMethods`). Kept pure and pinned here so
-    /// teaching `ReachabilityStore` to read `/status` is a one-line change at the call
-    /// site rather than a redesign of this form.
+    /// `["local", "openid"]`). The connection test follows a passing `/ping` with that
+    /// `/status` call and carries the list on `ConnectionTestResult.authMethods` (and the
+    /// rest of the answer on `serverStatus`), which is what
+    /// `ServerConnectionView.advertisedAuthMethods` passes in here. `nil` means the server
+    /// didn't say (no test yet, a failed test, or an older server).
+    /// Batch 490 (REVIEW 2026-11-11 F8): comment brought up to date; it still said
+    /// nothing called this with a real list.
     static func advertisesSingleSignOn(authMethods: [String]?) -> Bool {
         guard let authMethods else { return false }
         return authMethods.contains { $0.caseInsensitiveCompare("openid") == .orderedSame }
@@ -423,6 +424,57 @@ enum ServerConnectionRules {
     /// the neutral case stays collapsed and uncluttered as the feedback asked.
     static func otherSignInOptionsStartExpanded(authMethods: [String]?) -> Bool {
         advertisesSingleSignOn(authMethods: authMethods)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O6): which sign-in is in flight, so only that control
+    /// spins and the other is disabled.
+    enum SignInMethod: Equatable {
+        case password
+        case singleSignOn
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O6): whether the status row shows its own spinner and
+    /// "Connecting…". Not when the control that started the attempt is already spinning:
+    /// the Sign In button is always on the sign-in page, and the SSO button is while its
+    /// disclosure is open. Pinned by `QuickWinsSignInTests`.
+    static func statusRowShowsSpinner(connecting: SignInMethod?, page: Page, ssoOptionsExpanded: Bool) -> Bool {
+        guard let connecting else { return false }
+        guard page == .signIn else { return true }
+        switch connecting {
+        case .password: return false
+        case .singleSignOn: return !ssoOptionsExpanded
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F8): the server summary row's version line, from
+    /// `/status`'s `serverVersion`. `nil` when the server didn't say.
+    static func serverVersionLine(_ version: String?) -> String? {
+        guard let version, !version.isEmpty else { return nil }
+        return String(localized: "Audiobookshelf \(version)", comment: "Sign-in page server summary: the server's Audiobookshelf version; %@ is the version number")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F8): `/status` said `isInit: false` (no root user yet).
+    /// Only an explicit `false` counts; a server that didn't say is assumed set up.
+    static func serverNeedsSetup(_ status: ServerStatusInfo?) -> Bool {
+        status?.isInitialized == false
+    }
+
+    static var serverNeedsSetupMessage: String {
+        String(localized: "This server hasn\u{2019}t been set up yet. Finish setup in a browser, then try again.", comment: "Sign-in page warning when the Audiobookshelf server has no root user yet")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F8): the SSO button's title. The admin's own OpenID
+    /// button text when they set one (`ServerStatusInfo.openIDButtonText` already drops
+    /// Audiobookshelf's untouched default), otherwise the app's own label.
+    static func singleSignOnButtonTitle(serverText: String?) -> String {
+        if let serverText, !serverText.isEmpty { return serverText }
+        return String(localized: "Sign in with SSO")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O4): whether an error on the form is the
+    /// redirect-URI one, which gets a Copy button for the address to allow.
+    static func errorOffersRedirectURICopy(_ message: String?) -> Bool {
+        message == OIDCAuthService.redirectURINotAllowedMessage
     }
 
     /// Which error string the form should show. This view's own `localError` (the result
@@ -643,8 +695,13 @@ struct ServerConnectionView: View {
     @State private var username: String
     @State private var password = ""
     @State private var showPassword = false
-    @State private var isConnecting = false
+    /// Batch 490 (REVIEW 2026-11-11 O6): which sign-in is running (`nil` when none), so
+    /// only that control spins. `isConnecting` below is the old yes/no view of it.
+    @State private var connectingMethod: ServerConnectionRules.SignInMethod?
+    private var isConnecting: Bool { connectingMethod != nil }
     @State private var localError: String?
+    /// Batch 490 (REVIEW 2026-11-11 O4): brief "Copied" state for the redirect URI.
+    @State private var copiedRedirectURI = false
 
     /// "Remember password on this device" — the same setting as Account & Security's
     /// "Stay signed in (save password)" toggle (`SettingsKeys.storePassword`, default
@@ -814,6 +871,15 @@ struct ServerConnectionView: View {
     /// disclosure below reads its title and starting expansion state from this.
     private var advertisedAuthMethods: [String]? { testResult?.authMethods }
 
+    /// Batch 490 (REVIEW 2026-11-11 F8): the rest of what `/status` said.
+    private var serverStatus: ServerStatusInfo? { testResult?.serverStatus }
+
+    /// Batch 490 (REVIEW 2026-11-11 O6): see `ServerConnectionRules.statusRowShowsSpinner`.
+    private var showsStatusSpinner: Bool {
+        ServerConnectionRules.statusRowShowsSpinner(connecting: connectingMethod, page: resolvedPage,
+                                                    ssoOptionsExpanded: showOtherSignInOptions)
+    }
+
     /// The page actually on screen. See `ServerConnectionRules.resolvedPage`.
     private var resolvedPage: ServerConnectionRules.Page {
         ServerConnectionRules.resolvedPage(requested: page, showsCredentials: showsCredentials)
@@ -844,7 +910,7 @@ struct ServerConnectionView: View {
         .alert("Insecure Connection", isPresented: insecureConnectionAlertBinding) {
             Button("Cancel", role: .cancel) {
                 authViewModel.pendingInsecureConnection = nil
-                isConnecting = false
+                connectingMethod = nil
             }
             Button("Allow Insecure Connection", role: .destructive) {
                 acknowledgedInsecureConnection = true
@@ -929,8 +995,10 @@ struct ServerConnectionView: View {
                 if resolvedPage == .signIn {
                     ToolbarItem(placement: .topBarTrailing) {
                         // iPhone Duo (§2): Connect isn't a form Save, so a symbol, not the checkmark.
+                        // Batch 490 (REVIEW 2026-11-11 O2): titled "Sign In" like the in-form
+                        // button it duplicates, with a "go" symbol rather than `link`.
                         Button { connect() } label: {
-                            Label("Connect", systemImage: "link")
+                            Label("Sign In", systemImage: "arrow.right.circle")
                         }
                             .disabled(!isValid || isConnecting)
                             .monochromeToolbarItem()
@@ -998,7 +1066,7 @@ struct ServerConnectionView: View {
                 savedServersSection
             }
             serverSection
-            if displayedError != nil || isConnecting {
+            if displayedError != nil || showsStatusSpinner {   // Batch 490 (REVIEW 2026-11-11 O6)
                 statusSection
             }
             moreOptionsSection
@@ -1071,7 +1139,7 @@ struct ServerConnectionView: View {
                     signingInSavedAccountId = account.id
                     let result = await authViewModel.confirmInsecureConnectionAndSwitch(account)
                     signingInSavedAccountId = nil
-                    isConnecting = false
+                    connectingMethod = nil
                     showSavedServerOutcome(result.outcome, for: account)
                 }
             }
@@ -1149,7 +1217,7 @@ struct ServerConnectionView: View {
             }
             serverSummarySection
             credentialsSection
-            if displayedError != nil || isConnecting {
+            if displayedError != nil || showsStatusSpinner {   // Batch 490 (REVIEW 2026-11-11 O6)
                 statusSection
             }
         }
@@ -1171,13 +1239,9 @@ struct ServerConnectionView: View {
             VStack(spacing: 10) {
                 Image(systemName: "headphones.circle.fill")
                     .font(.system(size: cappedBrandGlyphSize))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.shelfAmber, Color.shelfAmber.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    // Batch 490 (REVIEW 2026-11-11 O6): solid accent text colour, as on the
+                    // launch splash, not a raw `shelfAmber` gradient.
+                    .foregroundStyle(Color.shelfAmberText)
                 Text("ShelfHead")
                     // HIG audit 2026-09-17 M6: fixed 32pt didn't grow with Dynamic
                     // Type; a text-style-relative rounded font (matching
@@ -1385,7 +1449,9 @@ struct ServerConnectionView: View {
                 icon: "checkmark.circle.fill",
                 text: ServerConnectionRules.reachableMessage(usedPlainHTTPFallback: result.usedPlainHTTPFallback),
                 resolved: result.resolvedURL,
-                iconColor: Color.shelfAccentText
+                // Batch 490 (REVIEW 2026-11-11 V6): teal means finished only; "reachable"
+                // is a cream checkmark.
+                iconColor: Color.shelfCream
             )
 
         case .reachableInsecure:
@@ -1613,8 +1679,11 @@ struct ServerConnectionView: View {
     /// anyway" says "Connection not verified" rather than showing a reassuring lock.
     private var serverSummarySection: some View {
         Section {
-            let label = ServerConnectionRules.serverSummaryAccessibilityLabel(
+            let versionLine = ServerConnectionRules.serverVersionLine(serverStatus?.serverVersion)
+            let baseLabel = ServerConnectionRules.serverSummaryAccessibilityLabel(
                 host: serverSummaryHost, style: serverSummaryStyle)
+            // Batch 490 (REVIEW 2026-11-11 F8): the version is read with the row.
+            let label = versionLine.map { "\(baseLabel), \($0)" } ?? baseLabel
             let summary = HStack(spacing: Space.m) {
                 Image(systemName: ServerConnectionRules.serverSummaryGlyph(for: serverSummaryStyle))
                     .font(.title3)
@@ -1630,6 +1699,11 @@ struct ServerConnectionView: View {
                     Typo.fine(Text(ServerConnectionRules.serverSummaryCaption(for: serverSummaryStyle)),
                               weight: serverSummaryStyle == .verified ? .regular : .semibold)
                         .foregroundStyle(serverSummaryStyle == .verified ? Color.shelfMuted : Color.shelfCream)
+                    // Batch 490 (REVIEW 2026-11-11 F8): "Audiobookshelf ‹version›".
+                    if let versionLine {
+                        Typo.fine(Text(versionLine))
+                            .foregroundStyle(Color.shelfMuted)
+                    }
                 }
             }
             // One VoiceOver stop for the status, with "Change server" left beside it as
@@ -1675,13 +1749,36 @@ struct ServerConnectionView: View {
                     .foregroundStyle(Color.shelfMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // Batch 490 (REVIEW 2026-11-11 F8): `/status` said nobody can sign in yet
+            // (`isInit: false`). Warning style: orange glyph, cream words.
+            if ServerConnectionRules.serverNeedsSetup(serverStatus) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.shelfOrange)
+                        .accessibilityHidden(true)
+                    Typo.supporting(Text(ServerConnectionRules.serverNeedsSetupMessage), weight: .semibold)
+                        .foregroundStyle(Color.shelfCream)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            // Batch 490 (REVIEW 2026-11-11 F8): the admin's custom login message, as one
+            // quiet line (markup stripped and length capped in `ServerStatusInfo`).
+            if let message = serverStatus?.loginMessage {
+                Typo.supporting(Text(verbatim: message))
+                    .foregroundStyle(Color.shelfMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(Text("Message from the server: \(message)"))
+            }
         }
         .listRowBackground(Color.shelfCard)
     }
 
     private var serverSummaryTint: Color {
         switch serverSummaryStyle {
-        case .verified: return Color.shelfAccentText
+        case .verified: return Color.shelfCream   // Batch 490 (REVIEW 2026-11-11 V6): was teal
         case .insecureAccepted, .unverified: return Color.shelfOrange
         }
     }
@@ -1756,28 +1853,30 @@ struct ServerConnectionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            // First run has no navigation bar to hang a Connect button off, so the
-            // primary action lives in the form. The sheet keeps its toolbar button.
-            if purpose == .firstRun {
-                Button {
-                    connect()
-                } label: {
-                    HStack {
-                        if isConnecting {
-                            ProgressView()
-                                .tint(Color.onAccent)
-                        } else {
-                            Text("Sign In")
-                                .fontWeight(.semibold)
-                        }
+            // Batch 490 (REVIEW 2026-11-11 O2): the full-width Sign In button for both
+            // purposes (it was first-run only, leaving the sheet with just a toolbar
+            // item that the iPhone Duo side bar moves away). The sheet keeps its toolbar
+            // item as well.
+            Button {
+                connect()
+            } label: {
+                HStack {
+                    // Batch 490 (REVIEW 2026-11-11 O6): spins only for a password sign-in.
+                    if connectingMethod == .password {
+                        ProgressView()
+                            .tint(Color.onAccent)
+                            .accessibilityLabel(Text("Signing in"))
+                    } else {
+                        Text("Sign In")
+                            .fontWeight(.semibold)
                     }
-                    .shelfButtonStyle()
                 }
-                .buttonStyle(.plain)
-                .disabled(!isValid || isConnecting)
-                .opacity(isValid ? 1 : 0.6)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .shelfButtonStyle()
             }
+            .buttonStyle(.plain)
+            .disabled(!isValid || isConnecting)
+            .opacity(isValid ? 1 : 0.6)
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 
             otherSignInOptionsDisclosure
         } header: {
@@ -1812,7 +1911,31 @@ struct ServerConnectionView: View {
                 }
                 .font(.callout)
                 .accessibilityElement(children: .combine)
-            } else if isConnecting {
+                // Batch 490 (REVIEW 2026-11-11 O4): the redirect-URI error names the
+                // address to allow; this puts it on the clipboard for the admin.
+                if ServerConnectionRules.errorOffersRedirectURICopy(displayedError) {
+                    HStack(spacing: Space.s) {
+                        Typo.code(Text(verbatim: OIDCAuthService.redirectURI))
+                            .foregroundStyle(Color.shelfCream)
+                            .textSelection(.enabled)
+                        Spacer(minLength: Space.s)
+                        Button {
+                            UIPasteboard.general.string = OIDCAuthService.redirectURI
+                            Haptics.selection()
+                            copiedRedirectURI = true
+                        } label: {
+                            Typo.secondaryAction(Label(copiedRedirectURI ? "Copied" : "Copy",
+                                                       systemImage: copiedRedirectURI ? "checkmark" : "doc.on.doc"))
+                                .foregroundStyle(Color.shelfAmberText)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(copiedRedirectURI ? Text("Copied sign-in address") : Text("Copy sign-in address"))
+                    }
+                    .onDisappear { copiedRedirectURI = false }
+                }
+            } else if showsStatusSpinner {   // Batch 490 (REVIEW 2026-11-11 O6)
                 HStack(spacing: Space.s) {
                     // LS-13 (docs/design-review.md, Round 3): brand-tinted, was
                     // falling back to the system tint.
@@ -1956,13 +2079,17 @@ struct ServerConnectionView: View {
             } label: {
                 HStack {
                     Spacer()
-                    if isConnecting {
+                    // Batch 490 (REVIEW 2026-11-11 O6): spins only for an SSO sign-in.
+                    if connectingMethod == .singleSignOn {
                         // LS-13 (docs/design-review.md, Round 3): brand-tinted, was
                         // falling back to the system tint.
                         ProgressView()
                             .shelfSpinner()
+                            .accessibilityLabel(Text("Signing in"))
                     } else {
-                        Label("Sign in with SSO", systemImage: "person.badge.key.fill")
+                        // Batch 490 (REVIEW 2026-11-11 F8): the admin's button text when set.
+                        Label(ServerConnectionRules.singleSignOnButtonTitle(serverText: serverStatus?.openIDButtonText),
+                              systemImage: "person.badge.key.fill")
                     }
                     Spacer()
                 }
@@ -1974,6 +2101,12 @@ struct ServerConnectionView: View {
             Typo.fine(Text("For a server with OpenID Connect / Single Sign-On configured (Settings → Authentication on the server). Tap this instead of filling in username and password — Audiobookshelf runs the whole exchange with your identity provider."))
                 .foregroundStyle(Color.shelfMuted)
                 .fixedSize(horizontal: false, vertical: true)
+            // Batch 490 (REVIEW 2026-11-11 O4): the same setup sentence the
+            // redirect-URI error uses, so an admin can allow the address up front.
+            Typo.fine(Text(OIDCAuthService.redirectURISetupInstruction))
+                .foregroundStyle(Color.shelfMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         } label: {
             Typo.secondaryAction(Text(ServerConnectionRules.otherSignInOptionsTitle(authMethods: advertisedAuthMethods)))
                 .foregroundStyle(Color.shelfAmberText)
@@ -2006,7 +2139,7 @@ struct ServerConnectionView: View {
                 // skips both button actions, so this is the only place left to reset
                 // `isConnecting` — otherwise the Connect/SSO button stays stuck showing
                 // its spinner with no in-flight Task left to ever clear it.
-                isConnecting = false
+                connectingMethod = nil
             } }
         )
     }
@@ -2088,7 +2221,7 @@ struct ServerConnectionView: View {
         // already confirmed.
         pendingRetry = { performConnect(endingCurrentSession: endingCurrentSession) }
         focusedField = nil
-        isConnecting = true
+        connectingMethod = .password   // Batch 490 (REVIEW 2026-11-11 O6)
         localError = nil
         Task {
             // Critique 2026-10-06 (harden): the tested address, which may be the http
@@ -2111,13 +2244,13 @@ struct ServerConnectionView: View {
                 // form doesn't flash back to idle while the alert is up.
                 return
             case .succeeded:
-                isConnecting = false
+                connectingMethod = nil
                 finishOnSuccess()
             case .failed(let message):
                 // UX-4: every failure lands on the form, never a silent dismissal. Moved
                 // onto this view either way, so first run doesn't end up showing the same
                 // string twice (once as `localError`, once as the view model's).
-                isConnecting = false
+                connectingMethod = nil
                 localError = message
                 authViewModel.errorMessage = nil
             }
@@ -2139,7 +2272,7 @@ struct ServerConnectionView: View {
     private func performSignInWithSSO(endingCurrentSession: Bool) {
         pendingRetry = { performSignInWithSSO(endingCurrentSession: endingCurrentSession) }
         focusedField = nil
-        isConnecting = true
+        connectingMethod = .singleSignOn   // Batch 490 (REVIEW 2026-11-11 O6)
         localError = nil
         Task {
             let address = ServerConnectionRules.signInAddress(typedURL: serverURL, resolvedURL: testResult?.resolvedURL)
@@ -2148,7 +2281,7 @@ struct ServerConnectionView: View {
                                                               acknowledgedInsecureConnection: acknowledgedInsecureConnection,
                                                               endingCurrentSession: endingCurrentSession)
             if authViewModel.pendingInsecureConnection != nil { return }
-            isConnecting = false
+            connectingMethod = nil
             if succeeded {
                 finishOnSuccess()
             } else if let message = authViewModel.errorMessage {

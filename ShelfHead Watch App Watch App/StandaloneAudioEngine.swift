@@ -117,6 +117,19 @@ final class StandaloneAudioEngine {
     private var lastStreamRecoveryAt: Date?
     private var isRecoveringStream = false
     private var currentItemObservation: NSKeyValueObservation?
+    /// Batch 490 (REVIEW 2026-11-11 F29): the player's `timeControlStatus`, so Now Playing
+    /// can show the buffering ring while a stream stalls.
+    private var timeControlStatusObservation: NSKeyValueObservation?
+    /// True while the player is `.waitingToPlayAtSpecifiedRate`.
+    private var playerIsWaitingToPlay = false
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): a streamed book is stalled on the network.
+    /// Never true for a local download (no session), whose brief waits after a seek
+    /// aren't worth a ring (`StandaloneBufferingDecision`).
+    var isBuffering: Bool {
+        StandaloneBufferingDecision.showsBuffering(isStreaming: currentSessionId != nil,
+                                                   isWaitingToPlay: playerIsWaitingToPlay)
+    }
 
     /// Set once per `play(...)` call, never mutated afterward — used to compute
     /// absolute position (`track.startOffset + player.currentTime()`) across track
@@ -803,6 +816,44 @@ final class StandaloneAudioEngine {
         player?.volume = 1
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 F29): the Sleep sheet's "Add 15 Minutes". Adds to a
+    /// running countdown; an end-of-chapter timer (or none) is left alone
+    /// (`StandaloneSleepTimer.extended(by:)`). Restores the volume in case the fade had
+    /// started.
+    func extendSleepTimer(by seconds: Double = WatchSleepExtend.seconds) {
+        guard let extended = sleepTimer?.extended(by: seconds) else { return }
+        sleepTimer = extended
+        player?.volume = 1
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): whether the system Now Playing controls (and
+    /// AirPods) can skip by chapter: a book is loaded and it has chapters.
+    var canSkipChapters: Bool { isLoaded && !chapters.isEmpty }
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): next chapter from `nextTrackCommand`. Same rule
+    /// as the phone (`WatchChapterNavigation.nextTarget`). Returns false when there's
+    /// nowhere to go.
+    @discardableResult
+    func skipToNextChapter() -> Bool {
+        guard canSkipChapters,
+              let target = WatchChapterNavigation.nextTarget(chapterStarts: chapters.map(\.start),
+                                                             bookEnd: duration > 0 ? duration : (chapters.last?.end ?? 0),
+                                                             currentTime: currentTime)
+        else { return false }
+        seek(to: target)
+        return true
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): previous chapter from `previousTrackCommand`:
+    /// restarts the chapter when more than 3 s in, otherwise the one before, as on the
+    /// phone (`WatchChapterNavigation.previousTarget`).
+    @discardableResult
+    func skipToPreviousChapter() -> Bool {
+        guard canSkipChapters else { return false }
+        seek(to: WatchChapterNavigation.previousTarget(chapterStarts: chapters.map(\.start), currentTime: currentTime))
+        return true
+    }
+
     /// Called once per playback second from the time observer: counts a minutes timer down,
     /// fades the last seconds out, and pauses when it fires.
     private func evaluateSleepTimer() {
@@ -1195,6 +1246,13 @@ final class StandaloneAudioEngine {
     /// alone — it's what the Shelf's current sleeve reads (`WatchShelfView`), and
     /// stopping a book doesn't stop it having been the last one played.
     private func resetPlaybackState() {
+        // Batch 490 (REVIEW 2026-11-11 W14): the complication kept its "playing" glyph
+        // after Stop or the end of a book, since nothing republished it. Taken before the
+        // reset so the position is still the book's, written after it.
+        let stoppedSnapshot = isLoaded
+            ? WatchComplicationSnapshot.stopped(title: itemTitle, author: itemAuthor,
+                                                currentTime: currentTime, duration: duration, at: Date())
+            : nil
         player?.pause()
         tearDownPlayer()
         isPlaying = false
@@ -1213,6 +1271,7 @@ final class StandaloneAudioEngine {
         routeIssue = nil
         speakerAccepted = false
         WatchRemoteCommandRouter.shared.publish(nil, as: .standalone)
+        if let stoppedSnapshot { WatchComplicationStore.publish(stoppedSnapshot) }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -1451,6 +1510,15 @@ final class StandaloneAudioEngine {
             }
         }
         observeItemStatus(player.currentItem)
+        // Batch 490 (REVIEW 2026-11-11 F29): the status is read here, on whatever thread
+        // KVO calls back on, and only the Bool crosses to the main actor.
+        timeControlStatusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+            Task { @MainActor [weak self] in
+                guard let self, self.playerIsWaitingToPlay != waiting else { return }
+                self.playerIsWaitingToPlay = waiting
+            }
+        }
         itemFailureObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main
         ) { [weak self] notification in
@@ -1586,6 +1654,9 @@ final class StandaloneAudioEngine {
         itemFailureObserver = nil
         itemStatusObservation?.invalidate()
         itemStatusObservation = nil
+        timeControlStatusObservation?.invalidate()
+        timeControlStatusObservation = nil
+        playerIsWaitingToPlay = false
         player?.removeAllItems()
     }
 

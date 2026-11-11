@@ -54,9 +54,11 @@ struct BookClubView: View {
             .navigationTitle(Text("Book Club"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                // Batch 490 (REVIEW 2026-11-11 V1): the system Close button, monochrome.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }.monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
             }
             .task {
                 if startComposing { postFocused = true }
@@ -131,11 +133,16 @@ struct BookClubView: View {
             if hasGoalDate {
                 DatePicker("Date", selection: $goalDate, in: Date()..., displayedComponents: .date)
             }
+            // Batch 490 (REVIEW 2026-11-11 L10): two buttons in one `List` row share the row's tap,
+            // so one tap could fire both (Cancel also saving). `.borderless` gives each its own
+            // hit area, the smaller of the two fixes the review offered (HIG audit H5 shape).
             HStack {
                 Button("Cancel") { editingGoal = false }
+                    .buttonStyle(.borderless)
                     .frame(minHeight: 44)
                 Spacer()
                 Button("Save Goal") { saveGoal() }
+                    .buttonStyle(.borderless)
                     .frame(minHeight: 44)
             }
         }

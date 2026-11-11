@@ -13,6 +13,27 @@ final class HouseholdSceneDelegate: NSObject, UIWindowSceneDelegate {
         if let metadata = connectionOptions.cloudKitShareMetadata {
             Task { @MainActor in HouseholdShareAcceptance.receive(metadata) }
         }
+        // Batch 490 (REVIEW 2026-11-11 F13): a Home Screen quick action that launched the app
+        // arrives here, not in `windowScene(_:performActionFor:completionHandler:)`
+        // (https://developer.apple.com/documentation/uikit/uiscene/connectionoptions/shortcutitem).
+        // Held until the main tabs are up, then routed like any `shelfhead://` link.
+        if let item = connectionOptions.shortcutItem,
+           let url = QuickActionRoute.url(forShortcutType: item.type) {
+            Task { @MainActor in IncomingLinkInbox.shared.hold(url) }
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F13): a quick action chosen while the app is already running
+    /// (https://developer.apple.com/documentation/uikit/uiwindowscenedelegate/windowscene(_:performactionfor:completionhandler:)).
+    /// Goes through the same inbox and deep-link path, so it waits behind App Lock too.
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        guard let url = QuickActionRoute.url(forShortcutType: shortcutItem.type) else {
+            completionHandler(false)
+            return
+        }
+        Task { @MainActor in IncomingLinkInbox.shared.hold(url) }
+        completionHandler(true)
     }
 
     func windowScene(_ windowScene: UIWindowScene, userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {

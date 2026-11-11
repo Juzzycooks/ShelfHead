@@ -326,6 +326,8 @@ struct TapeScrubber: View {
     // doesn't match where my finger goes" isn't structurally possible any more.
     @State private var isEditing = false
     @State private var isFineScrubbing = false
+    /// Batch 490 (REVIEW 2026-11-11 V8): the knob casts its shadow in Dark only.
+    @Environment(\.colorScheme) private var colorScheme
     /// Fine-scrub (precision mode) can't use direct mapping — the whole point is that
     /// physical finger movement should translate to a *smaller* value change. It's
     /// anchored instead: `anchorValue`/`anchorLocationX` capture where the knob and
@@ -482,7 +484,9 @@ struct TapeScrubber: View {
                 }
                 .frame(width: isEditing ? 18 : 14, height: isEditing ? 18 : 14)
                 .overlay(Circle().strokeBorder(Color.black.opacity(0.18), lineWidth: 1))
-                .shadow(color: .black.opacity(0.45), radius: isEditing ? 5 : 3, y: 1)
+                // Batch 490 (REVIEW 2026-11-11 V8): Paper Doesn't Cast — in Light the
+                // knob keeps only the hairline stroke above, no drop shadow.
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0), radius: isEditing ? 5 : 3, y: 1)
                 .position(x: geo.size.width * value, y: railY)
                 .shelfAnimation(.easeOut(duration: 0.12), value: isEditing)
                 .allowsHitTesting(false)
@@ -1348,8 +1352,11 @@ struct RetroTabBar: View {
                             // (same reasoning as the player toolbar's equal icon slots).
                             .overlay(alignment: .topTrailing) {
                                 if let count = item.badge, count > 0 {
+                                    // Batch 490 (REVIEW 2026-11-11 A5): scales with Dynamic
+                                    // Type like the tab label below (was a fixed 9pt); the
+                                    // bar's xLarge clamp still bounds it.
                                     Text(Self.badgeText(count))
-                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .scaledFont(9, weight: .bold, design: .rounded, relativeTo: .caption2)
                                         .monospacedDigit()
                                         .foregroundStyle(Color.onAccent)
                                         .padding(.horizontal, 4)

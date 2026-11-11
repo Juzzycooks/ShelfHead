@@ -54,8 +54,44 @@ struct SettingsView: View {
 
     /// Critique 2026-10-06 (clarify): filtered by live state — "Remove All Servers from
     /// This Device" is only offered when that row is shown (more than one saved server).
+    /// Batch 490 (REVIEW 2026-11-11 N3): also hides Upload, Library Doctor, the Household
+    /// sharing toggle and the transcript rows when the page they'd open doesn't show them.
     private var searchResults: [SettingsSearchEntry] {
-        SettingsSearchIndex.results(for: searchText, savedServerCount: authViewModel.accounts.count)
+        let user = authViewModel.currentUser
+        let state = SettingsSearchEntry.LiveState(
+            savedServerCount: authViewModel.accounts.count,
+            canUpload: user?.canUpload == true,
+            canUpdateLibrary: user?.canUpdateLibrary == true,
+            isInHousehold: HouseholdStore.shared.isInHousehold,
+            transcriptsSupported: TranscriptionCenter.shared.isSupportedOS)
+        return SettingsSearchIndex.results(for: searchText, state: state)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 N3): public pages for the About section.
+    private static let privacyPolicyURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/blob/main/ShelfHead/AppStore/PRIVACY.md")!
+    private static let issuesURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/issues")!
+    private static let licenceURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/blob/main/LICENSE")!
+    @State private var showsWhatsNew = false
+
+    /// One About row: muted glyph, cream title, optional muted subtitle (IC-3).
+    private func aboutRow(_ icon: String, _ title: LocalizedStringResource,
+                          subtitle: LocalizedStringResource? = nil) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundStyle(Color.shelfMuted)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(Color.shelfCream)
+                if let subtitle {
+                    Typo.supporting(Text(subtitle))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
     }
 
     /// D5 (design brief 2026-08-12): on iOS 26+, `ContentView`'s `modernTabs` puts
@@ -259,6 +295,16 @@ struct SettingsView: View {
 
             // Redacted diagnostics (app/OS/server versions + recent redacted
             // log lines). Never contains tokens, passwords, or audio.
+            // Batch 490 (REVIEW 2026-11-11 N3): this release's notes, on demand.
+            Button {
+                showsWhatsNew = true
+            } label: {
+                aboutRow("gift", "What’s New")
+            }
+            .sheet(isPresented: $showsWhatsNew) {
+                WhatsNewSheet()
+            }
+
             ShareLink(item: diagnosticsReport) {
                 HStack {
                     Image(systemName: "square.and.arrow.up")
@@ -270,6 +316,22 @@ struct SettingsView: View {
                 }
             }
             .accessibilityLabel("Export diagnostics")
+
+            // Batch 490 (REVIEW 2026-11-11 N3): where to report a problem, the privacy
+            // policy the App Store links to, and the licence. All open in Safari.
+            Link(destination: Self.issuesURL) {
+                aboutRow("exclamationmark.bubble", "Report a Problem",
+                         subtitle: "On GitHub. You can attach the exported diagnostics; they’re redacted.")
+            }
+            .accessibilityHint("Opens in Safari")
+            Link(destination: Self.privacyPolicyURL) {
+                aboutRow("hand.raised", "Privacy Policy")
+            }
+            .accessibilityHint("Opens in Safari")
+            Link(destination: Self.licenceURL) {
+                aboutRow("doc.text", "Licence", subtitle: "Open source under the MIT Licence")
+            }
+            .accessibilityHint("Opens in Safari")
 
             // ASO pass (AppStoreListing.md, 14 Sep 2026): only rendered once
             // `ReviewPromptManager.appStoreID` is filled in from App Store Connect —

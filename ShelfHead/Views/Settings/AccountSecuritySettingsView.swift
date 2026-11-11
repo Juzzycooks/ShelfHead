@@ -109,6 +109,33 @@ struct AccountSecuritySettingsView: View {
     var body: some View {
         SettingsAnchoredList(focusRow: focusRow) {
             Section {
+                // Batch 490 (REVIEW 2026-11-11 O1): while the server has ended this
+                // session (and after "Not Now"), say so here too, one tap from signing in.
+                if authViewModel.sessionNeedsSignIn {
+                    Button {
+                        Haptics.selection()
+                        authViewModel.reopenSessionExpiredPrompt()
+                    } label: {
+                        HStack(spacing: Space.s) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color.shelfOrange)
+                                .frame(width: 24)
+                                .accessibilityHidden(true)
+                            Text("Session ended")
+                                .foregroundStyle(Color.shelfCream)
+                            Spacer(minLength: Space.s)
+                            Typo.secondaryAction(Text("Sign In Again"))
+                                .foregroundStyle(Color.shelfAmberText)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authViewModel.sessionExpiredPrompt != nil || authViewModel.isReauthenticating)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint(Text("The server ended this session. Opens Sign In Again."))
+                }
+
                 HStack {
                     Image(systemName: "server.rack")
                         .foregroundStyle(Color.shelfAmberText)
@@ -209,10 +236,24 @@ struct AccountSecuritySettingsView: View {
                             } else if account.id == authViewModel.currentAccountId {
                                 Image(systemName: "checkmark")
                                     .foregroundStyle(Color.shelfAmberText)
+                                    // Batch 490 (REVIEW 2026-11-11 A5): the checkmark had no
+                                    // spoken meaning; the row now carries the value
+                                    // "Current server" (below), so the glyph itself is hidden.
+                                    .accessibilityHidden(true)
                             }
                         }
                     }
                     .disabled(flow.switchingAccountId != nil)
+                    // Batch 490 (REVIEW 2026-11-11 A5): Remove without the swipe (the swipe
+                    // stays); same confirmation alert via `accountToRemove`.
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            accountToRemove = account
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                    }
+                    .accessibilityValue(account.id == authViewModel.currentAccountId ? Text("Current server") : Text(verbatim: ""))
                 }
                 .onDelete { indexSet in
                     // L2: confirm before removing — see `accountToRemove` and the
@@ -336,6 +377,9 @@ struct AccountSecuritySettingsView: View {
                                     saveCurrentHeaders()
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
+                                        // Batch 490 (REVIEW 2026-11-11 A5): 44 pt target.
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.borderless)
                                 .accessibilityLabel("Remove header")

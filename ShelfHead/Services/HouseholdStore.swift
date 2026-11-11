@@ -34,6 +34,46 @@ nonisolated enum HouseholdAvatar {
     static let symbols = ["book.fill", "headphones", "moon.stars.fill", "leaf.fill", "flame.fill", "pawprint.fill",
                           "star.fill", "heart.fill", "bolt.fill", "cup.and.saucer.fill", "sailboat.fill", "guitars.fill"]
     static let colorCount = 6
+
+    /// Batch 490 (REVIEW 2026-11-11 A2): VoiceOver names for the pictures (was the raw
+    /// symbol name) and the colours (was "Colour 1"…"Colour 6"). The colours are app
+    /// tokens that follow the chosen accent, so they're named by role, not hue.
+    static var symbolNames: [String: String] {
+        [
+            "book.fill": String(localized: "Book", comment: "Household avatar picture name, read by VoiceOver"),
+            "headphones": String(localized: "Headphones", comment: "Household avatar picture name, read by VoiceOver"),
+            "moon.stars.fill": String(localized: "Moon and stars", comment: "Avatar picture name, read by VoiceOver"),
+            "leaf.fill": String(localized: "Leaf", comment: "Avatar picture name, read by VoiceOver"),
+            "flame.fill": String(localized: "Flame", comment: "Household avatar picture name, read by VoiceOver"),
+            "pawprint.fill": String(localized: "Paw print", comment: "Avatar picture name, read by VoiceOver"),
+            "star.fill": String(localized: "Star", comment: "Avatar picture name, read by VoiceOver"),
+            "heart.fill": String(localized: "Heart", comment: "Household avatar picture name, read by VoiceOver"),
+            "bolt.fill": String(localized: "Lightning bolt", comment: "Household avatar picture name, read by VoiceOver"),
+            "cup.and.saucer.fill": String(localized: "Cup and saucer", comment: "Household avatar picture name, read by VoiceOver"),
+            "sailboat.fill": String(localized: "Sailboat", comment: "Household avatar picture name, read by VoiceOver"),
+            "guitars.fill": String(localized: "Guitars", comment: "Household avatar picture name, read by VoiceOver"),
+        ]
+    }
+
+    /// One per colour index, in `HouseholdAvatarView.color(_:)`'s order.
+    static var colorNames: [String] {
+        [
+            String(localized: "Accent", comment: "Household avatar colour name (the app's accent colour), read by VoiceOver"),
+            String(localized: "Second accent", comment: "Household avatar colour name (the app's second accent colour), read by VoiceOver"),
+            String(localized: "Highlight", comment: "Household avatar colour name (the app's emphasis colour), read by VoiceOver"),
+            String(localized: "Deep accent", comment: "Household avatar colour name (a darker accent), read by VoiceOver"),
+            String(localized: "Taupe", comment: "Household avatar colour name (the muted brown-grey), read by VoiceOver"),
+            String(localized: "Cream", comment: "Household avatar colour name, read by VoiceOver"),
+        ]
+    }
+
+    static func name(forSymbol symbol: String) -> String {
+        symbolNames[symbol] ?? String(localized: "Picture", comment: "Avatar picture with no name, read by VoiceOver")
+    }
+
+    static func name(forColorIndex index: Int) -> String {
+        colorNames[clampedColor(index)]
+    }
     static func clampedColor(_ index: Int) -> Int { min(max(index, 0), colorCount - 1) }
 }
 

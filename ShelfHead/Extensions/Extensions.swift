@@ -64,7 +64,10 @@ extension PlayerViewModel {
         if isCurrentBook(item) {
             togglePlayPause()
         } else {
-            Task { await startPlayback(for: item) }
+            // Batch 490 (REVIEW 2026-11-11 L4): starting a different book replaces the one
+            // loaded, so offer the "Jump back" Undo toast like Book Detail's Play does.
+            // Pause/resume of the loaded book (above) never shows a toast.
+            Task { await startPlaybackOfferingUndo(for: item) }
         }
     }
 }
@@ -385,6 +388,18 @@ struct BookContextMenu: ViewModifier {
             } label: {
                 Label(finished ? "Mark as Not Finished" : "Mark as Finished",
                       systemImage: finished ? "circle" : "checkmark.circle")
+            }
+            // Batch 490 (REVIEW 2026-11-11 F1): ABS's "Remove from Continue Listening", only for
+            // a started, unfinished book. Not destructive: progress is kept, and the toast offers Undo.
+            if LibraryViewModel.shouldOfferRemoveFromContinueListening(
+                progress: libraryViewModel.progressFor(itemId: item.id) ?? item.mediaProgress,
+                isPodcast: item.isPodcast) {
+                Button {
+                    Haptics.selection()
+                    Task { await libraryViewModel.removeFromContinueListening(item) }
+                } label: {
+                    Label("Remove from Continue Listening", systemImage: "eye.slash")
+                }
             }
         } preview: {
             // UX-1: a square cover preview beside the menu, per the HIG's guidance for

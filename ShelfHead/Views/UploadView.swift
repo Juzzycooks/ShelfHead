@@ -12,6 +12,9 @@ struct UploadView: View {
     var bottomInset: CGFloat = 0
     /// Called when the user taps "Open Library" after a successful upload.
     var onOpenLibrary: ((String) -> Void)?
+    /// Batch 490 (REVIEW 2026-11-11 L5): set by `UploadSheet`. Shows the sheet's Close button
+    /// here, where the upload's state is, so Close can ask before cancelling a running upload.
+    var onClose: (() -> Void)?
 
     @Environment(PlayerViewModel.self) private var playerViewModel
     @Environment(AuthViewModel.self) private var authViewModel
@@ -20,6 +23,7 @@ struct UploadView: View {
     @State private var model = UploadViewModel()
     @State private var inbox = UploadInbox.shared
     @State private var showImporter = false
+    @State private var confirmingStop = false
 
     private var bottomClearance: CGFloat {
         bottomBarClearance(bottomInset: bottomInset, hasMiniPlayer: playerViewModel.currentBook != nil)
@@ -72,7 +76,31 @@ struct UploadView: View {
         // switch and killed a running upload. The view model's `deinit` (Review Medium 32) cancels the
         // upload, releases file access and deletes the temp body once the view is popped or the sheet
         // dismissed, which is when `@State` lets the model go.
+        // Batch 490 (REVIEW 2026-11-11 L5): leaving the screen ends the upload (the view model's
+        // `deinit` cancels it), so while one runs a swipe-down can't dismiss the sheet and Back is
+        // hidden (which also turns off the edge swipe). The progress screen's Cancel and the
+        // sheet's Close (which asks first) are the ways out. Precedent: YearInReviewVideoSheet.
+        .interactiveDismissDisabled(model.phase.isBusy)
+        .navigationBarBackButtonHidden(model.phase.isBusy)
+        .toolbar {
+            if let onClose {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton {
+                        if model.phase.isBusy { confirmingStop = true } else { onClose() }
+                    }
+                    .monochromeToolbarItem()
+                }
+                .shelfVisibilityPriority(.high)
+            }
+        }
         .tint(Color.shelfAmberText)
+        .confirmationDialog("Stop uploading?", isPresented: $confirmingStop, titleVisibility: .visible) {
+            Button("Stop Upload", role: .destructive) {
+                model.cancel()
+                onClose?()
+            }
+            Button("Keep Uploading", role: .cancel) {}
+        }
         .systemChromeTint()
         .reexpandsTabBarOnAppear()
     }
@@ -151,7 +179,8 @@ struct UploadView: View {
     private var fileRows: some View {
         ForEach(model.files) { entry in
             HStack(spacing: 10) {
-                Image(systemName: Self.icon(for: entry.url)).foregroundStyle(Color.shelfAmberText)
+                // Batch 490 (REVIEW 2026-11-11 V6): a file-type glyph is decoration, not an action.
+                Image(systemName: Self.icon(for: entry.url)).foregroundStyle(Color.shelfMuted)
                     .frame(width: 24).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: entry.name).foregroundStyle(Color.shelfCream).lineLimit(2)
@@ -192,7 +221,9 @@ struct UploadView: View {
 
     private var done: some View {
         VStack(spacing: 14) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: min(doneGlyphSize, 72))).foregroundStyle(Color.shelfAmberText)
+            // Batch 490 (REVIEW 2026-11-11 V6): was amber (decoration). Not teal either: teal is
+            // for a finished book only, and this is an "ok" state. Neutral ink.
+            Image(systemName: "checkmark.circle.fill").font(.system(size: min(doneGlyphSize, 72))).foregroundStyle(Color.shelfCream)
                 .accessibilityHidden(true)
             Text("Uploaded").font(.title3.weight(.semibold)).foregroundStyle(Color.shelfCream)
             Typo.supporting(Text(model.scanned
@@ -201,10 +232,15 @@ struct UploadView: View {
                 .foregroundStyle(Color.shelfMuted)
                 .multilineTextAlignment(.center)
             if model.isAdmin && !model.scanned {
+                // Batch 490 (REVIEW 2026-11-11 V2): was `.borderedProminent`, a white label on the
+                // accent (about 2:1). The house primary draws Amber Ink; it's the one primary here.
                 Button { Task { await model.scanLibrary() } } label: {
-                    if model.isScanning { ProgressView() } else { Text("Scan Library Now") }
+                    Group {
+                        if model.isScanning { ProgressView().tint(Color.onAccent) } else { Text("Scan Library Now") }
+                    }
+                    .shelfButtonStyle()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .frame(minHeight: 44)
                 .disabled(model.isScanning)
             }
@@ -242,10 +278,9 @@ struct UploadSheet: View {
 
     var body: some View {
         NavigationStack {
-            UploadView(onOpenLibrary: { id in dismiss(); onOpenLibrary?(id) })
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
-                }
+            // Batch 490 (REVIEW 2026-11-11 L5, V1): the Close button moved into `UploadView`
+            // (system Close via `SheetCloseButton`), which asks before stopping a running upload.
+            UploadView(onOpenLibrary: { id in dismiss(); onOpenLibrary?(id) }, onClose: { dismiss() })
         }
     }
 }

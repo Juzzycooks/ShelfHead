@@ -77,10 +77,15 @@ struct StandaloneDownloadsView: View {
                 emptyState
             } else {
                 if !inFlightItems.isEmpty {
-                    Section("In Progress") {
+                    Section {
                         ForEach(inFlightItems) { item in
                             inFlightRow(item)
                         }
+                    } header: {
+                        Text("In Progress")
+                    } footer: {
+                        // Batch 490 (REVIEW 2026-11-11 W12): what makes a Watch download quick.
+                        Text("Downloads carry on in the background. They\u{2019}re quickest on Wi\u{2011}Fi with the Watch on its charger.")
                     }
                 }
                 if !manager.downloads.isEmpty {
@@ -263,13 +268,22 @@ struct StandaloneDownloadsView: View {
     /// `downloadRow`, but not a `NavigationLink` (there's nothing playable yet) and
     /// with a status detail line in place of the second line of text, plus a swipe
     /// action appropriate to its own state instead of always "Remove".
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 W12): the row now opens Book Details (where Cancel and
+    /// the room notices live), says its percentage in digits and to VoiceOver, and the
+    /// swipe no longer completes on a full swipe: Cancel throws away a part-done download.
     @ViewBuilder
     private func inFlightRow(_ item: InFlightItem) -> some View {
-        WatchBookRow(title: item.title, author: item.author,
-                     cover: { LocalCoverThumbnail(itemId: item.id, side: WatchBookRow<EmptyView, EmptyView, EmptyView>.coverSide) },
-                     detail: { inFlightStatusDetail(item.state) })
+        NavigationLink {
+            WatchBookDetailView(itemId: item.id, title: item.title, author: item.author)
+        } label: {
+            WatchBookRow(title: item.title, author: item.author,
+                         cover: { LocalCoverThumbnail(itemId: item.id, side: WatchBookRow<EmptyView, EmptyView, EmptyView>.coverSide) },
+                         detail: { inFlightStatusDetail(item.state) })
+        }
         .accessibilityElement(children: .combine)
-        .swipeActions(edge: .trailing) {
+        .accessibilityValue(inFlightAccessibilityValue(item.state))
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             switch item.state {
             case .queued, .downloading:
                 Button(role: .destructive) {
@@ -303,9 +317,17 @@ struct StandaloneDownloadsView: View {
             // doc comment; the "On iPhone" rows use the same badge (Batch 412).
             WatchStatusBadge(text: "Queued", systemImage: "clock", tint: WatchTheme.secondaryText)
         case .downloading(let progress):
-            WatchLinearProgressBar(progress: progress)
-                .frame(height: 3)
-                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                WatchLinearProgressBar(progress: progress)
+                    .frame(height: 3)
+                    .padding(.top, 2)
+                // Batch 490 (REVIEW 2026-11-11 W12): the number under the bar; same key as
+                // Book Details' "Downloading 42%". VoiceOver hears it as the row's value.
+                Text("Downloading \(Self.percent(progress))%")
+                    .font(WatchMetrics.captionFont().monospacedDigit())
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .accessibilityHidden(true)
+            }
         case .failed(let reason):
             // Critique 2026-10-06 (colorize): alert glyph, cream sentence. No line limit:
             // "Not enough room on this Watch…" names its fix in its second half.
@@ -313,6 +335,20 @@ struct StandaloneDownloadsView: View {
         case .notDownloaded, .downloaded:
             EmptyView()
         }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W12): whole percent, clamped.
+    private static func percent(_ progress: Double) -> Int {
+        Int((min(max(progress, 0), 1) * 100).rounded())
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W12): the downloading row's VoiceOver value. Queued and
+    /// failed rows already read their badge or notice through `.combine`.
+    private func inFlightAccessibilityValue(_ state: WatchLocalDownloadState) -> Text {
+        if case .downloading(let progress) = state {
+            return Text("Downloading \(Self.percent(progress))%")
+        }
+        return Text(verbatim: "")
     }
 
     /// User-visible storage accounting — the "and/or be user-visible" half of the
@@ -333,6 +369,10 @@ struct StandaloneDownloadsView: View {
                         .font(WatchMetrics.captionFont().monospacedDigit())
                         .foregroundStyle(WatchTheme.secondaryText)
                 }
+                // Batch 490 (REVIEW 2026-11-11 F29): the limit set in Settings › Downloads.
+                Text("Storage Limit: \(manager.storageLimit.label)")
+                    .font(WatchMetrics.captionFont().monospacedDigit())
+                    .foregroundStyle(WatchTheme.secondaryText)
             }
         }
     }

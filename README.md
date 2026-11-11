@@ -34,6 +34,22 @@ If something is wrong with the server itself, raise it there. If something is wr
   Spotlight, Handoff, CarPlay, and an Apple Watch app that works with the phone or on its own.
 - **Languages:** English and Simplified Chinese.
 
+## Single sign-on (SSO)
+
+ShelfHead can sign in through your server's OpenID Connect set-up. The server talks to your
+identity provider; ShelfHead only needs the server address.
+
+Before the first SSO sign-in, a server admin has to allow ShelfHead's sign-in address:
+
+1. In Audiobookshelf, open **Settings › Authentication**.
+2. Under **Allowed Mobile Redirect URIs**, add `shelfhead-oidc://oauth`. Keep any entries that
+   are already there, such as `audiobookshelf://oauth` for the official app.
+3. Save.
+
+If this step is missing, the server refuses to start the sign-in and ShelfHead says so, with the
+address to copy. In the app, the SSO button sits under **Other sign-in options** on the sign-in
+page. If the admin changed the OpenID button text on the server, ShelfHead uses that text.
+
 ## Requirements
 
 - iOS 17.6 or later; watchOS 10 or later for the Watch app.

@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
 
 /// Stage 3 (REDESIGN_PROPOSAL_2026-08-26.md §2.1): this is now the root screen of the
 /// Listening tab — the app's whole retrospective story (stats, Year in Review, your
@@ -322,6 +323,128 @@ enum StatsHeroLine: Equatable {
     }
 }
 
+// MARK: - Batch 490 (REVIEW 2026-11-11 D7, F27): sessions paging, books goal, history export
+
+/// Batch 490 (REVIEW 2026-11-11 D7): "See all sessions" pages the server's history instead
+/// of showing only the first page. Pure so it's unit-tested.
+enum SessionPaging {
+    /// Sessions per page, for the Stats tab's first page and every page after it, so page
+    /// indices line up.
+    static let pageSize = 25
+
+    /// A page shorter than `pageSize` is the last one.
+    static func reachedEnd(lastPageCount: Int, pageSize: Int = SessionPaging.pageSize) -> Bool {
+        lastPageCount < pageSize
+    }
+
+    /// Load the next page when the last row appears, unless a load is running, the end was
+    /// reached, or the last attempt failed (that waits for Retry).
+    static func shouldLoadMore(appearingId: String, lastId: String?, isLoading: Bool,
+                               reachedEnd: Bool, failed: Bool) -> Bool {
+        guard let lastId, appearingId == lastId else { return false }
+        return !isLoading && !reachedEnd && !failed
+    }
+
+    /// `existing` plus the new page, skipping ids already shown (a session logged between
+    /// two fetches shifts the pages by one).
+    static func appending<T: Identifiable>(_ page: [T], to existing: [T]) -> [T] {
+        var seen = Set(existing.map(\.id))
+        var out = existing
+        for item in page where seen.insert(item.id).inserted { out.append(item) }
+        return out
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F27): an optional books-this-year goal beside the daily
+/// minutes goal, counted from `FinishedBookCatalog`'s finish dates for the current calendar
+/// year. Pure so it's unit-tested.
+enum BooksYearGoal {
+    /// UserDefaults key (an Int; 0 = off, the default).
+    static let defaultsKey = "settings_booksPerYearGoal"
+    static let presets = [6, 12, 24, 36, 52]
+    static let customRange = 1...365
+
+    struct Progress: Equatable {
+        let finished: Int
+        let goal: Int
+        var isMet: Bool { finished >= goal }
+        /// 0...1, for anything drawn as a fill.
+        var fraction: Double { goal > 0 ? min(max(Double(finished) / Double(goal), 0), 1) : 0 }
+    }
+
+    /// Books finished in `year` of `calendar`.
+    static func finishedCount(finishDates: [Date], year: Int, calendar: Calendar = .current) -> Int {
+        finishDates.filter { calendar.component(.year, from: $0) == year }.count
+    }
+
+    /// Nil when the goal is off.
+    static func progress(finishDates: [Date], goal: Int, now: Date, calendar: Calendar = .current) -> Progress? {
+        guard goal > 0 else { return nil }
+        let year = calendar.component(.year, from: now)
+        return Progress(finished: finishedCount(finishDates: finishDates, year: year, calendar: calendar), goal: goal)
+    }
+
+    /// Only once the catalog has really loaded (an empty catalog is a real 0), never while
+    /// loading or after a failed load with nothing cached, which would read as "0 of 24".
+    static func isVisible(goal: Int, catalogState: FinishedCatalogDisplayState) -> Bool {
+        goal > 0 && (catalogState == .content || catalogState == .empty)
+    }
+
+    /// "7 of 24 books this year", or "Goal hit · 25 of 24 books this year".
+    static func text(_ p: Progress) -> String {
+        p.isMet
+            ? String(localized: "Goal hit \u{00B7} \(p.finished) of \(p.goal) books this year", comment: "Books goal reached; %1$lld books finished this year, %2$lld the goal")
+            : String(localized: "\(p.finished) of \(p.goal) books this year", comment: "Books goal progress; %1$lld books finished this year, %2$lld the goal")
+    }
+
+    /// One sentence for VoiceOver.
+    static func spoken(_ p: Progress) -> String {
+        p.isMet
+            ? String(localized: "Books goal hit: \(p.finished) of \(p.goal) books finished this year.", comment: "VoiceOver; %1$lld books finished this year, %2$lld the goal")
+            : String(localized: "Books goal: \(p.finished) of \(p.goal) books finished this year.", comment: "VoiceOver; %1$lld books finished this year, %2$lld the goal")
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F27): the Stats per-day map as a CSV, `date,minutes`, ISO
+/// dates in order, minutes to one decimal. POSIX formatting so the file is the same in every
+/// language. Nonisolated: it runs inside the share sheet's file export. Pure so it's
+/// unit-tested.
+nonisolated enum ListeningHistoryCSV {
+    static let header = "date,minutes"
+
+    static func make(days: [String: Double]) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        // Only well-formed day keys; `yyyy-MM-dd` sorts correctly as text.
+        let rows = days.filter { key, _ in f.date(from: key).map { f.string(from: $0) } == key }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key),\(minutes(seconds: $0.value))" }
+        return ([header] + rows).joined(separator: "\n") + "\n"
+    }
+
+    /// "12.5". Negative server values count as 0.
+    static func minutes(seconds: Double) -> String {
+        String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), max(seconds, 0) / 60)
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F27): the CSV handed to `ShareLink`, written to a temp file
+/// only when shared (the `FinishedBooksCSV` pattern). Holds the days, not the text, so the
+/// Stats body doesn't build the file on every pass.
+struct ListeningHistoryCSVFile: Transferable {
+    let days: [String: Double]
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .commaSeparatedText) { file in
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("ShelfHead-listening-history.csv")
+            try Data(ListeningHistoryCSV.make(days: file.days).utf8).write(to: url, options: .atomic)
+            return SentTransferredFile(url)
+        }
+    }
+}
+
 struct StatsView: View {
     @Environment(LibraryViewModel.self) private var libraryViewModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -337,6 +460,10 @@ struct StatsView: View {
     private let reachability = ReachabilityStore.shared
     @State private var range: StatRange = .week
     @AppStorage(SettingsKeys.dailyListeningGoalMinutes) private var dailyGoalMinutes = 30
+    // Batch 490 (REVIEW 2026-11-11 F27): books-this-year goal (0 = off) and its finish dates.
+    @AppStorage(BooksYearGoal.defaultsKey) private var booksYearGoal = 0
+    @State private var finishedCatalog = FinishedBookCatalog.shared
+    @State private var showingCustomBooksGoal = false
 
     // Perf fix: these used to be computed straight in `body` (`stats?.monthTotal()`,
     // `stats?.currentStreak`, `stats?.bestStreak`, `bars(for: range)`), each of which
@@ -353,6 +480,10 @@ struct StatsView: View {
     @State private var cachedCurrentStreak: Int = 0
     @State private var cachedBestStreak: Int = 0
     @State private var cachedBars: [Bar] = []
+    // Batch 490 (REVIEW 2026-11-11 F11a): top five books by all-time listening (refreshed with the other
+    // cached figures, never in body) and the selected library's totals (nil = hide the section).
+    @State private var cachedMostListened: [MostListenedBook] = []
+    @State private var libraryStats: LibraryStats?
 
     /// UI-12: now the shared `bottomBarClearance` helper (Extensions.swift) instead of
     /// an independently-maintained copy.
@@ -409,7 +540,11 @@ struct StatsView: View {
 
                         hero
 
-                        figureRow
+                        // Batch 490 (REVIEW 2026-11-11 F27): the books goal sits under the figures.
+                        VStack(alignment: .leading, spacing: Space.s) {
+                            figureRow
+                            booksGoalLine
+                        }
 
                         // Critique 2026-10-06 (peak-end): Year in Review stays near the top.
                         // Now a quiet row on the ground rather than a card.
@@ -427,6 +562,11 @@ struct StatsView: View {
                             .onChange(of: range) { _, _ in refreshChartBars() }
 
                         historySection
+
+                        // Batch 490 (REVIEW 2026-11-11 F11a): both hide themselves when there is nothing to show.
+                        mostListenedSection
+
+                        yourLibrarySection
 
                         moreSection
                     }
@@ -446,6 +586,18 @@ struct StatsView: View {
         // G7 (REVIEW_2026-09-04_UI.md): the nav-bar streak capsule (Stage 3 moved it here
         // from Home's header) is gone — it duplicated the streak figure below it.
         .task { await load() }
+        // Batch 490 (REVIEW 2026-11-11 F27): finish dates for the books goal, only when it's on.
+        .task(id: booksYearGoal) {
+            if booksYearGoal > 0 { await finishedCatalog.refresh() }
+        }
+        // Batch 490 (REVIEW 2026-11-11 F11a): a different selected library has different totals.
+        .onChange(of: libraryViewModel.selectedLibrary?.id) { _, _ in
+            libraryStats = nil
+            Task { await loadLibraryStats() }
+        }
+        .sheet(isPresented: $showingCustomBooksGoal) {
+            CustomBooksGoalSheet(goal: $booksYearGoal)
+        }
         // If the account switches while this screen happens to still be on the nav
         // stack, drop the stale account's numbers and reload for the new one — the
         // scope check in `load()` above only stops stale results from landing, it
@@ -454,12 +606,18 @@ struct StatsView: View {
             stats = nil
             statsLoadedAt = nil
             sessions = []
+            libraryStats = nil   // Batch 490 (REVIEW 2026-11-11 F11a)
             isLoading = true
             // Drop the stale account's cached derived figures too — otherwise the old
             // account's streaks/month total/chart would flash on screen for one frame
             // before `load()`'s refresh lands.
             refreshStatsDerivedValues()
             Task { await load() }
+            // Batch 490 (REVIEW 2026-11-11 F27): the new account's finish dates (Cassette Wall's pattern).
+            if booksYearGoal > 0 {
+                finishedCatalog.reset()
+                Task { await finishedCatalog.refresh() }
+            }
         }
         .reexpandsTabBarOnAppear()
     }
@@ -478,6 +636,8 @@ struct StatsView: View {
         // through to an all-zero dashboard. See `StatsScreenPhase.showsSkeletonWhileLoading`.
         if StatsScreenPhase.showsSkeletonWhileLoading(hasStats: stats != nil) { isLoading = true }
         loadFailed = false
+        // Batch 490 (REVIEW 2026-11-11 F11a): library totals load beside the rest and never hold the tab up.
+        Task { await loadLibraryStats() }
         do {
             let fetched = try await AudiobookshelfAPI.shared.getListeningStats()
             if scope == activeStatsScope() {
@@ -492,7 +652,8 @@ struct StatsView: View {
         }
         // History is a nice-to-have; don't fail the whole screen if it errors, and
         // keep the last-loaded sessions rather than blanking on a failed refresh.
-        if let fresh = try? await AudiobookshelfAPI.shared.getListeningSessions(itemsPerPage: 25),
+        // Batch 490 (REVIEW 2026-11-11 D7): page 0 at `SessionPaging.pageSize`; "See all" pages on from 1.
+        if let fresh = try? await AudiobookshelfAPI.shared.getListeningSessions(page: 0, itemsPerPage: SessionPaging.pageSize),
            scope == activeStatsScope() {
             sessions = fresh
         }
@@ -510,6 +671,7 @@ struct StatsView: View {
     /// Reads `stats` once and folds the chart bars in via `refreshChartBars()` so there's
     /// a single entry point for "stats changed, redo the derived numbers".
     private func refreshStatsDerivedValues() {
+        cachedMostListened = MostListened.top(stats?.items)   // Batch 490 (REVIEW 2026-11-11 F11a)
         cachedMonthTotal = stats?.monthTotal() ?? 0
         cachedCurrentStreak = stats?.currentStreak ?? 0
         cachedBestStreak = stats?.bestStreak ?? 0
@@ -605,6 +767,9 @@ struct StatsView: View {
                     dailyGoalMinutes = 0
                     Haptics.selection()
                 }
+                // Batch 490 (REVIEW 2026-11-11 F27): the books-this-year goal, as a submenu.
+                Divider()
+                booksGoalMenu
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.title3)
@@ -616,8 +781,81 @@ struct StatsView: View {
             // CO-7 (Batch 353): the checkmark and item text in the label colour on the menu's
             // glass. The button's own glyph keeps its explicit amber above.
             .systemChromeTint()
-            .accessibilityLabel("Change daily goal")
-            .accessibilityValue(dailyGoalMinutes > 0 ? Text("\(dailyGoalMinutes) minutes") : Text("Off", comment: "Daily goal is switched off"))
+            // Batch 490 (REVIEW 2026-11-11 F27): the menu now holds both goals.
+            .accessibilityLabel("Change goals")
+            .accessibilityValue(goalsMenuValue)
+        }
+    }
+
+    // MARK: - Books goal (Batch 490 (REVIEW 2026-11-11 F27))
+
+    /// Off, the presets, and Custom… (a small stepper sheet). The current choice is ticked;
+    /// a custom number shows in the Custom item.
+    private var booksGoalMenu: some View {
+        Menu {
+            Button {
+                booksYearGoal = 0
+                Haptics.selection()
+            } label: {
+                if booksYearGoal == 0 { Label("Off", systemImage: "checkmark") } else { Text("Off") }
+            }
+            ForEach(BooksYearGoal.presets, id: \.self) { count in
+                Button {
+                    booksYearGoal = count
+                    Haptics.selection()
+                } label: {
+                    if booksYearGoal == count { Label("\(count) books", systemImage: "checkmark") } else { Text("\(count) books") }
+                }
+            }
+            Button {
+                showingCustomBooksGoal = true
+            } label: {
+                if booksYearGoal > 0, !BooksYearGoal.presets.contains(booksYearGoal) {
+                    Label("Custom (\(booksYearGoal))\u{2026}", systemImage: "checkmark")
+                } else {
+                    Text("Custom\u{2026}")
+                }
+            }
+        } label: {
+            Label("Books this year", systemImage: "books.vertical")
+        }
+    }
+
+    /// The goals menu's VoiceOver value: both goals, one sentence each.
+    private var goalsMenuValue: String {
+        let daily = dailyGoalMinutes > 0
+            ? String(localized: "Daily goal: \(dailyGoalMinutes) minutes.", comment: "VoiceOver; %lld is the daily listening goal in minutes")
+            : String(localized: "Daily goal off.", comment: "VoiceOver; the daily listening goal is switched off")
+        let books = booksYearGoal > 0
+            ? String(localized: "Books goal: \(booksYearGoal) books this year.", comment: "VoiceOver; %lld is the books-this-year goal")
+            : String(localized: "Books goal off.", comment: "VoiceOver; the books-this-year goal is switched off")
+        return LocalizedText.sentences([daily, books])
+    }
+
+    /// "7 of 24 books this year", quiet, under the figures. Nothing when the goal is off or
+    /// the finished books haven't loaded.
+    @ViewBuilder
+    private var booksGoalLine: some View {
+        let state = FinishedCatalogDisplayState.resolve(isEmpty: finishedCatalog.books.isEmpty,
+                                                        isRefreshing: finishedCatalog.isRefreshing,
+                                                        hasLoaded: finishedCatalog.hasLoaded,
+                                                        lastRefreshFailed: finishedCatalog.lastRefreshFailed)
+        if BooksYearGoal.isVisible(goal: booksYearGoal, catalogState: state),
+           let progress = BooksYearGoal.progress(finishDates: finishedCatalog.books.map(\.finishedAt),
+                                                 goal: booksYearGoal, now: Date()) {
+            Typo.supporting(HStack(spacing: 4) {
+                if progress.isMet {
+                    // Teal means done.
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(Color.shelfAccentText)
+                }
+                Text(BooksYearGoal.text(progress))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.shelfMuted)
+            })
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(BooksYearGoal.spoken(progress))
         }
     }
 
@@ -786,10 +1024,11 @@ struct StatsView: View {
 
             if sessions.count > shown.count {
                 NavigationLink {
-                    SessionsListView(sessions: sessions, bottomClearance: bottomClearance)
+                    SessionsListView(initialSessions: sessions, bottomClearance: bottomClearance)
                 } label: {
                     HStack {
-                        Typo.secondaryAction(Text("See all \(sessions.count) sessions"))
+                        // Batch 490 (REVIEW 2026-11-11 D7): no count; the list pages past the first 25.
+                        Typo.secondaryAction(Text("See all sessions"))
                             .foregroundStyle(Color.shelfAmberText)
                         Spacer(minLength: Space.s)
                         Image(systemName: "chevron.right")
@@ -800,10 +1039,73 @@ struct StatsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                // Critique 2026-10-06 (polish): "See all" alone doesn't say what.
-                .accessibilityLabel("See all recent sessions")
             }
         }
+    }
+
+    // MARK: - Most listened / Your library (Batch 490, REVIEW 2026-11-11 F11a)
+
+    /// Top five books by all-time listening, from the `items` map of the listening-stats response.
+    /// Hidden when the server sent none. Each row opens the book, the same push Recent sessions use.
+    @ViewBuilder private var mostListenedSection: some View {
+        if !cachedMostListened.isEmpty {
+            VStack(alignment: .leading, spacing: Space.s) {
+                RetroSectionHeader(title: LocalizedStringResource("Most listened", comment: "Stats section header: the books listened to for longest"))
+                ForEach(cachedMostListened) { book in
+                    MostListenedRow(book: book)
+                    if book.id != cachedMostListened.last?.id {
+                        Divider().overlay(Color.shelfSurface)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Totals for the selected book library. Hidden for a podcast library, before a library is chosen,
+    /// and when the call failed or came back empty.
+    @ViewBuilder private var yourLibrarySection: some View {
+        if libraryViewModel.selectedLibrary?.mediaType != "podcast",
+           let libraryStats, libraryStats.hasFigures {
+            let items = LibraryStatsFigures.items(libraryStats)
+            VStack(alignment: .leading, spacing: Space.m) {
+                RetroSectionHeader(title: LocalizedStringResource("Your library", comment: "Stats section header: totals for the selected library"))
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: Space.m) {
+                        ForEach(items) { figureCell($0) }
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: Space.l) {
+                            ForEach(items) { figureCell($0) }
+                        }
+                        Grid(alignment: .leading, horizontalSpacing: Space.l, verticalSpacing: Space.m) {
+                            ForEach(Array(stride(from: 0, to: items.count, by: 2)), id: \.self) { start in
+                                GridRow {
+                                    figureCell(items[start])
+                                    if start + 1 < items.count { figureCell(items[start + 1]) }
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: Space.m) {
+                            ForEach(items) { figureCell($0) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Never awaited by `load()`. A failure, or a podcast library, leaves `libraryStats` nil, which hides the section.
+    private func loadLibraryStats() async {
+        let scope = activeStatsScope()
+        guard let library = libraryViewModel.selectedLibrary, library.mediaType != "podcast" else {
+            libraryStats = nil
+            return
+        }
+        let fetched = try? await AudiobookshelfAPI.shared.getLibraryStats(libraryId: library.id)
+        // The account or library can change while this is in flight; drop a stale answer.
+        guard scope == activeStatsScope(), library.id == libraryViewModel.selectedLibrary?.id else { return }
+        libraryStats = fetched   // nil on failure hides the section
     }
 
     // MARK: - More
@@ -836,6 +1138,16 @@ struct StatsView: View {
                              subtitle: "Your favourite moments, played in order")
             }
             .buttonStyle(.plain)
+            // Batch 490 (REVIEW 2026-11-11 F27): the per-day listening map as a CSV.
+            if let days = stats?.days, !days.isEmpty {
+                ShareLink(item: ListeningHistoryCSVFile(days: days),
+                          preview: SharePreview(Text("Listening history"))) {
+                    quietLinkRow(icon: "tablecells", title: "Export listening history",
+                                 subtitle: "Minutes listened each day, as a CSV file",
+                                 trailingSymbol: "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -908,7 +1220,8 @@ struct StatsView: View {
 
     /// Critique 2026-10-06 (distill → layout): a quiet row on the ground for Year in
     /// Review and All Bookmarks (they were cards, the same weight as the stats).
-    private func quietLinkRow(icon: String, title: LocalizedStringResource, subtitle: LocalizedStringResource) -> some View {
+    private func quietLinkRow(icon: String, title: LocalizedStringResource, subtitle: LocalizedStringResource,
+                              trailingSymbol: String = "chevron.right") -> some View {
         HStack(spacing: Space.m) {
             Image(systemName: icon)
                 .font(.body)
@@ -921,7 +1234,7 @@ struct StatsView: View {
                     .foregroundStyle(Color.shelfMuted)
             }
             Spacer(minLength: Space.s)
-            Image(systemName: "chevron.right")
+            Image(systemName: trailingSymbol)
                 // VD-7 (docs/design-review.md, Round 4): trailing disclosure chevron
                 // scales with the row like the app's other row chevrons.
                 .scaledFont(13, weight: .semibold, relativeTo: .caption)
@@ -1083,6 +1396,85 @@ struct StatsView: View {
     fileprivate static func formatHoursText(_ seconds: Double) -> String { StatsFormat.hours(seconds) }
 }
 
+/// Batch 490 (REVIEW 2026-11-11 F11a): figures for the "Your library" section, in the same `Item` form as the
+/// figure row so the cells look the same. Zero or missing figures are left out.
+enum LibraryStatsFigures {
+    static func items(_ stats: LibraryStats) -> [StatsFigureRow.Item] {
+        var items: [StatsFigureRow.Item] = []
+        if let books = stats.totalItems, books > 0 {
+            items.append(.init(id: "books", value: books.formatted(.number), label: String(localized: "Books", comment: "Stats figure label: number of books in the library"),
+                               spoken: books == 1 ? String(localized: "1 book in the library") : String(localized: "\(books.formatted(.number)) books in the library"),
+                               isFinished: false))
+        }
+        if let authors = stats.totalAuthors, authors > 0 {
+            items.append(.init(id: "authors", value: authors.formatted(.number), label: String(localized: "Authors", comment: "Stats figure label: number of authors in the library"),
+                               spoken: authors == 1 ? String(localized: "1 author in the library") : String(localized: "\(authors.formatted(.number)) authors in the library"),
+                               isFinished: false))
+        }
+        if let seconds = stats.totalDuration, seconds > 0 {
+            items.append(.init(id: "length", value: StatsFormat.hours(seconds), label: String(localized: "Total length", comment: "Stats figure label: combined running time of the library"),
+                               spoken: String(localized: "Total length, \(StatsFormat.spoken(seconds))", comment: "VoiceOver; %@ is a spoken duration"),
+                               isFinished: false))
+        }
+        if let bytes = stats.totalSize, bytes > 0, bytes.isFinite {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(min(bytes, Double(Int64.max / 2))), countStyle: .file)
+            items.append(.init(id: "size", value: size, label: String(localized: "Size on disk", comment: "Stats figure label: total file size of the library on the server"),
+                               spoken: String(localized: "Size on disk, \(size)", comment: "VoiceOver; %@ is a file size"),
+                               isFinished: false))
+        }
+        return items
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F11a): one "Most listened" row. Opens the book through the same destination
+/// the Recent sessions rows use (a downloaded copy first, else the server's item).
+private struct MostListenedRow: View {
+    let book: MostListenedBook
+
+    var body: some View {
+        NavigationLink {
+            SessionBookDestination(itemId: book.id, title: book.title)
+        } label: {
+            HStack(spacing: Space.m) {
+                CoverImageView(itemId: book.id, width: 40, height: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Typo.rowTitle(book.title.map { Text(verbatim: $0) } ?? Text("Unknown title"))
+                        .foregroundStyle(Color.shelfCream)
+                        .lineLimit(1)
+                    if let author = book.author {
+                        Typo.rowSubtitle(Text(verbatim: author))
+                            .foregroundStyle(Color.shelfMuted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: Space.s)
+                // Tape-Counter Rule: the time is a monospaced figure.
+                Typo.figure(Text(StatsFormat.hours(book.seconds)))
+                    .foregroundStyle(Color.shelfMuted)
+                Image(systemName: "chevron.right")
+                    .scaledFont(13, weight: .semibold, relativeTo: .caption)
+                    .foregroundStyle(Color.shelfMuted)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityHint("Opens the book")
+    }
+
+    private var label: String {
+        let time = StatsFormat.spoken(book.seconds)
+        let name = book.title ?? String(localized: "Unknown title")
+        if let author = book.author {
+            return String(localized: "\(name), \(author), \(time) listened", comment: "VoiceOver, Most listened row: %1$@ is the title, %2$@ the author, %3$@ a spoken duration")
+        }
+        return String(localized: "\(name), \(time) listened", comment: "VoiceOver, Most listened row: %1$@ is the title, %2$@ a spoken duration")
+    }
+}
+
 /// One Recent Sessions row, shared by the inline list and the "See all" list.
 private struct SessionRow: View {
     let session: ListeningSession
@@ -1196,15 +1588,72 @@ private struct SessionBookDestination: View {
 }
 
 /// Critique 2026-10-06 (peak-end): the full fetched session history behind "See all".
+/// Batch 490 (REVIEW 2026-11-11 D7): it used to stop at the Stats tab's first page. It now
+/// pages on from page 1 as the last row appears, with a loading row and a failure row with
+/// Retry, and stops at the first short page (`SessionPaging`).
 private struct SessionsListView: View {
-    let sessions: [ListeningSession]
     let bottomClearance: CGFloat
 
+    @State private var sessions: [ListeningSession]
+    @State private var nextPage = 1
+    @State private var isLoadingMore = false
+    @State private var loadMoreFailed = false
+    @State private var reachedEnd: Bool
+
+    /// A page made only of sessions already shown doesn't move the last row, so its
+    /// `onAppear` wouldn't fire again; fetch on, a few pages at most.
+    private static let maxPagesPerLoad = 3
+
+    init(initialSessions: [ListeningSession], bottomClearance: CGFloat) {
+        self.bottomClearance = bottomClearance
+        _sessions = State(initialValue: initialSessions)
+        _reachedEnd = State(initialValue: SessionPaging.reachedEnd(lastPageCount: initialSessions.count))
+    }
+
     var body: some View {
-        List(sessions) { session in
-            SessionLinkRow(session: session)
+        List {
+            ForEach(sessions) { session in
+                SessionLinkRow(session: session)
+                    .listRowBackground(Color.shelfBackground)
+                    .listRowSeparatorTint(Color.shelfSurface)
+                    .onAppear {
+                        if SessionPaging.shouldLoadMore(appearingId: session.id, lastId: sessions.last?.id,
+                                                        isLoading: isLoadingMore, reachedEnd: reachedEnd,
+                                                        failed: loadMoreFailed) {
+                            Task { await loadMore() }
+                        }
+                    }
+            }
+            if isLoadingMore {
+                HStack(spacing: Space.s) {
+                    ProgressView()
+                        .shelfSpinner()
+                    Typo.supporting(Text("Loading more sessions\u{2026}"))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
                 .listRowBackground(Color.shelfBackground)
-                .listRowSeparatorTint(Color.shelfSurface)
+                .listRowSeparator(.hidden)
+                .accessibilityElement(children: .combine)
+            } else if loadMoreFailed {
+                HStack(spacing: Space.s) {
+                    Typo.supporting(Text("Couldn\u{2019}t load more sessions."))
+                        .foregroundStyle(Color.shelfMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: Space.s)
+                    Button {
+                        Task { await loadMore() }
+                    } label: {
+                        Typo.secondaryAction(Text("Retry"))
+                            .foregroundStyle(Color.shelfAmberText)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .listRowBackground(Color.shelfBackground)
+                .listRowSeparator(.hidden)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -1212,6 +1661,82 @@ private struct SessionsListView: View {
         .contentMargins(.bottom, bottomClearance, for: .scrollContent)
         .navigationTitle("Recent Sessions")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func loadMore() async {
+        guard !isLoadingMore, !reachedEnd else { return }
+        let scope = Self.scope()
+        isLoadingMore = true
+        loadMoreFailed = false
+        var pagesThisLoad = 0
+        while pagesThisLoad < Self.maxPagesPerLoad {
+            pagesThisLoad += 1
+            let page: [ListeningSession]
+            do {
+                page = try await AudiobookshelfAPI.shared.getListeningSessions(page: nextPage, itemsPerPage: SessionPaging.pageSize)
+            } catch {
+                if scope == Self.scope() { loadMoreFailed = true }
+                break
+            }
+            // The account switched while this was in flight: don't mix its sessions in.
+            guard scope == Self.scope() else { break }
+            let before = sessions.count
+            sessions = SessionPaging.appending(page, to: sessions)
+            nextPage += 1
+            reachedEnd = SessionPaging.reachedEnd(lastPageCount: page.count)
+            if reachedEnd || sessions.count > before { break }
+        }
+        isLoadingMore = false
+    }
+
+    private static func scope() -> String {
+        "\(AuthStore.shared.serverURL)|\(AccountStore.currentAccountId ?? "")"
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F27): a custom books-this-year goal on a stepper, from the
+/// goals menu's Custom… item.
+private struct CustomBooksGoalSheet: View {
+    @Binding var goal: Int
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = 12
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Stepper(value: $draft, in: BooksYearGoal.customRange) {
+                        Text("\(draft) books")
+                            .monospacedDigit()
+                            .foregroundStyle(Color.shelfCream)
+                    }
+                } footer: {
+                    Typo.supporting(Text("Counts the books you finish this calendar year."))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+                .listRowBackground(Color.shelfCard)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.shelfBackground.ignoresSafeArea())
+            .navigationTitle("Books this year")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    SheetCancelButton { dismiss() }
+                        .monochromeToolbarItem()
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    SheetConfirmButton(title: "Save") {
+                        goal = draft
+                        Haptics.selection()
+                        dismiss()
+                    }
+                    .monochromeToolbarItem()
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .onAppear { draft = goal > 0 ? goal : 12 }
     }
 }
 

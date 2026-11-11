@@ -28,6 +28,20 @@ struct ChapterListSheet: View {
     /// the `.task` corrects it before the sheet has finished presenting.
     @State private var showsIndex = true
 
+    /// Batch 490 (REVIEW 2026-11-11 F23): a chapter that ends at or before the current
+    /// chapter's start has been listened past. Nil current chapter → nothing is. Pure.
+    static func isPlayed(chapterEnd: Double, currentChapterStart: Double?) -> Bool {
+        guard let currentChapterStart else { return false }
+        return chapterEnd <= currentChapterStart + 0.5
+    }
+
+    /// Batch 490 (F23): the current row's "12:04 left" — media time divided by speed, the
+    /// same wall-clock figure as the mini player's. Pure.
+    static func timeLeftText(chapterEnd: Double, currentTime: Double, rate: Double) -> String {
+        let left = max(0, chapterEnd - currentTime) / max(rate, 0.1)
+        return String(localized: "\(left.formattedTime) left", comment: "Chapter list: time left in the current chapter, e.g. 12:04 left")
+    }
+
     /// Item 11 (REVIEW-2026-09-09-REMAINING.md): how many of this book's chapters the
     /// server sent in a shape the client couldn't use, and which were therefore dropped
     /// during decoding rather than failing the whole book/session.
@@ -85,10 +99,16 @@ struct ChapterListSheet: View {
                     // same job. (`PlayerViewModel` now memoises the resolution itself,
                     // which is the other half of the same fix.)
                     let currentChapterId = playerViewModel.currentChapter?.id
+                    // Batch 490 (REVIEW 2026-11-11 F23): chapters before the current one
+                    // are dimmed as played. Keyed off the current chapter, not the clock, so
+                    // it changes only at a chapter boundary.
+                    let currentChapterStart = playerViewModel.currentChapter?.start
 
                     LazyVStack(spacing: 0) {
                         ForEach(Array(playerViewModel.chapters.enumerated()), id: \.element.id) { position, chapter in
                             let isCurrent = chapter.id == currentChapterId
+                            let isPlayed = !isCurrent && Self.isPlayed(chapterEnd: chapter.end,
+                                                                       currentChapterStart: currentChapterStart)
                             Button {
                                 // S8 (REVIEW_2026-09-04_UI.md)
                                 Haptics.selection()
@@ -128,12 +148,19 @@ struct ChapterListSheet: View {
                                         // Same chapter name as the caption, bookmarks and
                                         // Jump back (critique 2026-10-05, third run).
                                         Typo.rowTitle(Text(PlayerView.displayChapterTitle(chapter.title)))
-                                            .foregroundStyle(isCurrent ? Color.shelfAmberText : Color.shelfCream)
+                                            .foregroundStyle(isCurrent ? Color.shelfAmberText
+                                                             : (isPlayed ? Color.shelfMuted : Color.shelfCream))
                                             .lineLimit(2)
                                             .multilineTextAlignment(.leading)
 
-                                        Typo.fine(Text((chapter.end - chapter.start).formattedDuration))
-                                            .foregroundStyle(Color.shelfMuted)
+                                        if isCurrent {
+                                            // Batch 490 (F23): time left, its own view so
+                                            // only this line follows the clock.
+                                            ChapterTimeLeftLine(chapterEnd: chapter.end)
+                                        } else {
+                                            Typo.fine(Text((chapter.end - chapter.start).formattedDuration))
+                                                .foregroundStyle(Color.shelfMuted)
+                                        }
                                     }
 
                                     Spacer()
@@ -152,7 +179,9 @@ struct ChapterListSheet: View {
                             .accessibilityLabel(isCurrent
                                 ? String(localized: "Now playing, \(PlayerView.displayChapterTitle(chapter.title))", comment: "VoiceOver label for the current row in the chapter list. %@ is the chapter title")
                                 : PlayerView.displayChapterTitle(chapter.title))
-                            .accessibilityValue((chapter.end - chapter.start).formattedDuration)
+                            .accessibilityValue(isPlayed
+                                ? String(localized: "\((chapter.end - chapter.start).formattedDuration), played", comment: "VoiceOver value for a chapter-list row already listened past. %@ is the chapter's length")
+                                : (chapter.end - chapter.start).formattedDuration)
                             .accessibilityAddTraits(isCurrent ? .isSelected : [])
 
                             Divider()
@@ -641,6 +670,14 @@ struct QueueSheet: View {
     // confirmation — a single mistap could lose every queued book.
     @State private var showClearConfirmation = false
 
+    /// Batch 490 (REVIEW 2026-11-11 P9): the queue's footer, following the Autoplay Next
+    /// setting. Pure, for tests.
+    static func footerText(autoplayNext: Bool) -> String {
+        autoplayNext
+            ? String(localized: "Plays when this book ends", comment: "Up Next queue footer when Autoplay Next is on")
+            : String(localized: "Autoplay is off. Tap a book to start it.", comment: "Up Next queue footer when Autoplay Next is off")
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -652,62 +689,68 @@ struct QueueSheet: View {
                                    subtitle: LocalizedStringResource("Open another book, tap More options, then choose Up Next to line it up."))
                 } else {
                     List {
-                        ForEach(playerViewModel.upNext) { item in
-                            Button {
-                                Haptics.selection()
-                                playerViewModel.playFromQueue(item)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 12) {
-                                    CoverImageView(itemId: item.id, width: 44, height: 44)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Typo.rowTitle(Text(item.title))
-                                            .foregroundStyle(Color.shelfCream).lineLimit(2)
-                                        Typo.rowSubtitle(Text(item.authorName))
-                                            .foregroundStyle(Color.shelfMuted).lineLimit(1)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "play.circle")
-                                        .foregroundStyle(Color.shelfMuted)
-                                }
-                            }
-                            .listRowBackground(Color.shelfCard)
-                            // View details without leaving the queue, and jump an item to
-                            // the front without dragging it there row-by-row.
-                            .contextMenu {
+                        // Batch 490 (REVIEW 2026-11-11 P9): the footer says when the queue plays.
+                        Section {
+                            ForEach(playerViewModel.upNext) { item in
                                 Button {
                                     Haptics.selection()
-                                    detailItem = item
+                                    playerViewModel.playFromQueue(item)
+                                    dismiss()
                                 } label: {
-                                    Label("View Book Details", systemImage: "info.circle")
-                                }
-                                if playerViewModel.upNext.first?.id != item.id {
-                                    Button {
-                                        Haptics.selection()
-                                        playerViewModel.playNext(item)
-                                    } label: {
-                                        Label("Move to Top", systemImage: "arrow.up.to.line")
+                                    HStack(spacing: 12) {
+                                        CoverImageView(itemId: item.id, width: 44, height: 44)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Typo.rowTitle(Text(item.title))
+                                                .foregroundStyle(Color.shelfCream).lineLimit(2)
+                                            Typo.rowSubtitle(Text(item.authorName))
+                                                .foregroundStyle(Color.shelfMuted).lineLimit(1)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "play.circle")
+                                            .foregroundStyle(Color.shelfMuted)
                                     }
                                 }
-                                Button(role: .destructive) {
-                                    playerViewModel.removeFromQueueWithUndo(item)
-                                } label: {
-                                    Label("Remove", systemImage: "trash")
+                                .listRowBackground(Color.shelfCard)
+                                // View details without leaving the queue, and jump an item to
+                                // the front without dragging it there row-by-row.
+                                .contextMenu {
+                                    Button {
+                                        Haptics.selection()
+                                        detailItem = item
+                                    } label: {
+                                        Label("View Book Details", systemImage: "info.circle")
+                                    }
+                                    if playerViewModel.upNext.first?.id != item.id {
+                                        Button {
+                                            Haptics.selection()
+                                            playerViewModel.playNext(item)
+                                        } label: {
+                                            Label("Move to Top", systemImage: "arrow.up.to.line")
+                                        }
+                                    }
+                                    Button(role: .destructive) {
+                                        playerViewModel.removeFromQueueWithUndo(item)
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
+                                }
+                                // Critique 2026-10-06 (harden): was `.onDelete`, whose full swipe
+                                // removed a queued book with no way back. An explicit action, no
+                                // full swipe, and an Undo toast (below), like the bookmark rows.
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        playerViewModel.removeFromQueueWithUndo(item)
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
                                 }
                             }
-                            // Critique 2026-10-06 (harden): was `.onDelete`, whose full swipe
-                            // removed a queued book with no way back. An explicit action, no
-                            // full swipe, and an Undo toast (below), like the bookmark rows.
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    playerViewModel.removeFromQueueWithUndo(item)
-                                } label: {
-                                    Label("Remove", systemImage: "trash")
-                                }
+                            .onMove { from, to in
+                                playerViewModel.moveInQueue(from: from, to: to)   // persists the new order
                             }
-                        }
-                        .onMove { from, to in
-                            playerViewModel.moveInQueue(from: from, to: to)   // persists the new order
+                        } footer: {
+                            Typo.fine(Text(Self.footerText(autoplayNext: SettingsStore.autoplayNext)))
+                                .foregroundStyle(Color.shelfMuted)
                         }
                     }
                     .scrollContentBackground(.hidden)
@@ -929,12 +972,28 @@ struct SpeedSheet: View {
                     Typo.supporting(Text("Narrator reads at \(Int(pace.rounded())) wpm → \(label(resulting))"))
                         .foregroundStyle(Color.shelfMuted)
                 }
-            } else {
-                Typo.supporting(Text("Transcribe this book to set speed by words per minute."))
-                    .foregroundStyle(Color.shelfMuted)
             }
         }
         .padding(.horizontal, Space.xl)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 P7): the "Transcribe this book…" hint, only when this
+    /// book could actually be transcribed here; it used to show on every device and book,
+    /// pointing at a feature that wasn't there.
+    private var showsTranscribeHint: Bool {
+        guard let book = playerViewModel.currentBook else { return false }
+        return Self.showsTranscribeHint(hasNarratorPace: narratorPace != nil,
+                                        canTranscribe: TranscriptionCenter.shared.canTranscribe,
+                                        transcriptsEnabled: SettingsStore.transcriptsEnabled,
+                                        isPodcast: book.isPodcast,
+                                        isDownloaded: DownloadManager.shared.isDownloaded(itemId: book.id))
+    }
+
+    /// Pure, for tests: transcription is supported (OS and device), the Transcripts setting
+    /// is on, the book is not a podcast and is downloaded, and there's no pace yet.
+    static func showsTranscribeHint(hasNarratorPace: Bool, canTranscribe: Bool, transcriptsEnabled: Bool,
+                                    isPodcast: Bool, isDownloaded: Bool) -> Bool {
+        !hasNarratorPace && canTranscribe && transcriptsEnabled && !isPodcast && isDownloaded
     }
 
     /// Cleanup pass (Batch N-5 redundancy close-out): was its own formatting body,
@@ -965,6 +1024,10 @@ struct SpeedSheet: View {
             ScrollView {
             VStack(spacing: 20) {
                 // (The "Playback Speed" title is the navigation title below.)
+
+                // Batch 490 (REVIEW 2026-11-11 P7): the ×/WPM switch leads, since it
+                // decides what the controls below it mean; it was under the caption.
+                wpmSection
 
                 // Fine adjust: − / current / +
                 HStack(spacing: 24) {
@@ -1023,7 +1086,11 @@ struct SpeedSheet: View {
                                 : Text("Applies to this book · remembered next time"))
                     .foregroundStyle(Color.shelfMuted)
 
-                wpmSection
+                if showsTranscribeHint {
+                    Typo.supporting(Text("Transcribe this book to set speed by words per minute."))
+                        .foregroundStyle(Color.shelfMuted)
+                        .padding(.horizontal, Space.xl)
+                }
 
                 Spacer(minLength: 0)
             }
@@ -1117,5 +1184,21 @@ private struct SpeedStepperButton: View {
             }
         })
         .onDisappear { holdTask?.cancel(); holdTask = nil }
+    }
+}
+
+
+/// Batch 490 (REVIEW 2026-11-11 F23): the current chapter row's time left. Its own view so
+/// the per-tick `currentTime` read invalidates one line, not the whole chapter list.
+private struct ChapterTimeLeftLine: View {
+    @Environment(PlayerViewModel.self) private var playerViewModel
+    let chapterEnd: Double
+
+    var body: some View {
+        Typo.fine(Text(ChapterListSheet.timeLeftText(chapterEnd: chapterEnd,
+                                                     currentTime: playerViewModel.currentTime,
+                                                     rate: Double(playerViewModel.playbackRate))))
+            .foregroundStyle(Color.shelfMuted)
+            .monospacedDigit()
     }
 }

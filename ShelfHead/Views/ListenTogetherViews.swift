@@ -29,7 +29,8 @@ struct ListenTogetherStatusBanner: View {
             HStack(spacing: 12) {
                 Image(systemName: "shareplay").foregroundStyle(Color.shelfMuted).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Typo.supporting(Text("SharePlay \u{00B7} \(ListenTogetherLogic.displayCount(participants)) people"),
+                    // Batch 490 (REVIEW 2026-11-11 P11): "Waiting for others" while alone, not "1 people".
+                    Typo.supporting(Text(verbatim: ListenTogetherLogic.statusLine(participants: participants)),
                                     weight: .semibold)
                         .foregroundStyle(Color.shelfCream)
                     Typo.fine(Text(verbatim: title)).foregroundStyle(Color.shelfMuted).lineLimit(1)
@@ -73,5 +74,6 @@ private struct ListenTogetherNoticeModifier: ViewModifier {
         } message: {
             message?.detail
         }
+        .systemChromeTint()   // Batch 490 (REVIEW 2026-11-11 V3): neutral dialog buttons (CO-7)
     }
 }

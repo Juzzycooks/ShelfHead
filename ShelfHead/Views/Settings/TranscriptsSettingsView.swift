@@ -90,6 +90,8 @@ struct TranscriptsSettingsView: View {
                             SettingsCaption(text: "Captions can show a translation under each line, made on this iPhone. Turn captions on from the player’s menu.")
                         }
                         .disabled(!transcriptsEnabled)
+                        // Batch 490 (REVIEW 2026-11-11 N3): searchable now, so it gets an anchor.
+                        .settingsRowAnchor(SettingsRow.transcriptTranslation)
                     }
                 } header: {
                     RetroSectionHeader(title: "Options")
@@ -178,7 +180,9 @@ struct TranscriptsSettingsView: View {
                 ProgressView().frame(width: 20)
             } else {
                 Image(systemName: status.symbol)
-                    .foregroundStyle(status.isProblem ? Color.shelfOrange : Color.shelfAmberText)
+                    // Batch 490 (REVIEW 2026-11-11 V6): a status glyph is static decoration, so
+                    // muted, not the accent (One Light Rule); a problem stays orange.
+                    .foregroundStyle(status.isProblem ? Color.shelfOrange : Color.shelfMuted)
                     .frame(width: 20)
                     .accessibilityHidden(true)
             }
@@ -195,7 +199,8 @@ struct TranscriptsSettingsView: View {
         let problem = intelligence.availability
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: problem == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(problem == nil ? Color.shelfAmberText : Color.shelfOrange)
+                // Batch 490 (REVIEW 2026-11-11 V6): as `statusRow`, muted when all is well.
+                .foregroundStyle(problem == nil ? Color.shelfMuted : Color.shelfOrange)
                 .frame(width: 20)
                 .accessibilityHidden(true)
             Group {

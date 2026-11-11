@@ -68,3 +68,29 @@ enum SleepTimerOption: Equatable {
             + [.endOfBook]
     }
 }
+
+extension SleepTimerOption {
+    /// Batch 490 (REVIEW 2026-11-11 F20): the "Custom…" sleep length range, in minutes. A
+    /// custom length arms an ordinary `.minutes(n)`, so the Live Activity, widgets, Control
+    /// Center and Watch need nothing new.
+    static let customMinutesRange: ClosedRange<Int> = 1...180
+
+    /// Clamps a custom pick into `customMinutesRange`. Pure.
+    static func clampedCustomMinutes(_ minutes: Int) -> Int {
+        min(max(minutes, customMinutesRange.lowerBound), customMinutesRange.upperBound)
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 V8): the one default title for a bookmark made without a
+/// note — "‹chapter› · ‹time›" when the moment has a chapter, the time alone otherwise.
+/// Shared by the player, the lock screen / headphones bookmark command, the Lock Screen star
+/// and CarPlay, which used to title the same moment three different ways.
+enum BookmarkDefaultTitle {
+    static func make(chapterTitle: String?, time: Double) -> String {
+        let clock = time.formattedTime
+        let chapter = chapterTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !chapter.isEmpty else { return clock }
+        return String(localized: "\(chapter) · \(clock)",
+                      comment: "Default bookmark title. The first %@ is the chapter title, the second the time in the book, e.g. 1:02:03")
+    }
+}

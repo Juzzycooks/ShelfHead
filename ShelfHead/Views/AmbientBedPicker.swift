@@ -37,15 +37,17 @@ struct AmbientBedPicker: View {
             engine.select(bed)
         } label: {
             HStack(spacing: 12) {
+                // Batch 490 (REVIEW 2026-11-11 V6): accent ink, not the raw accent fill (about 1.9:1
+                // in Light). The surface variant, since the picker also sits on a card in Settings.
                 Image(systemName: icon)
                     .frame(width: 28)
-                    .foregroundStyle(selected ? Color.shelfAmber : Color.shelfMuted)
+                    .foregroundStyle(selected ? Color.shelfAmberTextOnSurface : Color.shelfMuted)
                 Text(verbatim: title)
                     .foregroundStyle(Color.shelfCream)
                 Spacer()
                 if selected {
                     Image(systemName: "checkmark")
-                        .foregroundStyle(Color.shelfAmber)
+                        .foregroundStyle(Color.shelfAmberTextOnSurface)   // Batch 490 (REVIEW 2026-11-11 V6)
                         .accessibilityHidden(true)
                 }
             }
@@ -72,9 +74,12 @@ struct AmbientBedSheet: View {
             .navigationTitle("Ambient Sound")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button, as the player's sheets use.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
+                        .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
             }
         }
     }

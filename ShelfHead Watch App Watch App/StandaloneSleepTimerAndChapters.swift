@@ -43,6 +43,15 @@ struct StandaloneSleepTimer: Equatable {
         remainingSeconds = max(0, remaining - seconds)
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 F29): this timer with `seconds` more playing time, for
+    /// "Add 15 Minutes". nil for an end-of-chapter timer (a boundary, not a countdown) or a
+    /// non-positive amount. Keeps `option`, so the Sleep sheet still ticks the preset the
+    /// listener picked.
+    func extended(by seconds: Double) -> StandaloneSleepTimer? {
+        guard let remainingSeconds, seconds.isFinite, seconds > 0 else { return nil }
+        return StandaloneSleepTimer(option: option, remainingSeconds: remainingSeconds + seconds, chapterEnd: nil)
+    }
+
     /// Seconds until it fires, given the current book position.
     func secondsLeft(currentTime: Double) -> Double {
         if let remainingSeconds { return remainingSeconds }

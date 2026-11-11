@@ -55,6 +55,9 @@ struct KidsSettingsView: View {
                     }
                     SettingsCaption(text: "Opens on big picture tiles, one for each saved account. Going from a child’s account to a grown-up’s asks for Face ID or your passcode.")
                 }
+            } header: {
+                // Batch 490 (REVIEW 2026-11-11 V4): was the page's one header-less section.
+                RetroSectionHeader(title: "Profile Picker")
             }
             .listRowBackground(Color.shelfCard)
         }
@@ -76,11 +79,14 @@ struct KidsSettingsView: View {
         } message: { _ in
             Text("Their listening history stays on the server unless you delete the account there too.")
         }
+        // Batch 490 (REVIEW 2026-11-11 V3): label-coloured dialog buttons, as everywhere else.
+        .systemChromeTint()
         .alert(Text("Couldn’t delete"), isPresented: Binding(get: { removalMessage != nil }, set: { if !$0 { removalMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(verbatim: removalMessage ?? "")
         }
+        .systemChromeTint()
     }
 
     private func kidRow(_ account: ServerAccount) -> some View {
@@ -88,9 +94,12 @@ struct KidsSettingsView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 KidAvatarView(symbol: profile.symbol, colorIndex: profile.colorIndex, size: 44)
+                // Batch 490 (REVIEW 2026-11-11 V4): type roles and tokens, not system styles.
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: account.username).font(.headline)
-                    Text(verbatim: account.displayHost).font(.footnote).foregroundStyle(.secondary)
+                    Typo.rowTitle(Text(verbatim: account.username))
+                        .foregroundStyle(Color.shelfCream)
+                    Typo.rowSubtitle(Text(verbatim: account.displayHost))
+                        .foregroundStyle(Color.shelfMuted)
                 }
                 Spacer()
                 Button(role: .destructive) { kidToRemove = account } label: {
@@ -109,6 +118,7 @@ struct KidsSettingsView: View {
                 }
             )) {
                 Text("Use Bedtime Story for this child")
+                    .foregroundStyle(Color.shelfCream)
             }
         }
         .padding(.vertical, 4)
@@ -147,11 +157,14 @@ struct KidAvatarView: View {
     var size: CGFloat = 56
 
     var body: some View {
+        let fill = Color(hex: KidAvatar.colorHexes[KidAvatar.clampedColorIndex(colorIndex)])
         ZStack {
-            Circle().fill(Color(hex: KidAvatar.colorHexes[KidAvatar.clampedColorIndex(colorIndex)]))
+            Circle().fill(fill)
             Image(systemName: symbol)
                 .font(.system(size: size * 0.5, weight: .semibold))
-                .foregroundStyle(.white)
+                // Batch 490 (REVIEW 2026-11-11 A2): white measured under 3:1 on the yellow,
+                // orange and green fills; the shared contrast helper picks the ink that wins.
+                .foregroundStyle(CoverPalette.ink(on: fill))
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -196,16 +209,27 @@ private struct AddChildSheet: View {
             .background(Color.shelfBackground)
             .navigationTitle(Text("Add a Child"))
             .navigationBarTitleDisplayMode(.inline)
+            // Batch 490 (REVIEW 2026-11-11 V1): the shared sheet buttons. After creation, swipe
+            // to dismiss is off, so the close button is its own always-placed item rather than
+            // conditional content inside one.
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if createdPassword == nil { Button("Cancel") { dismiss() } }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if createdPassword != nil {
-                        Button("Done") { dismiss() }
-                    } else {
-                        Button("Create") { Task { await create() } }.disabled(!canCreate)
+                if createdPassword == nil {
+                    ToolbarItem(placement: .cancellationAction) {
+                        SheetCancelButton { dismiss() }
+                            .monochromeToolbarItem()
                     }
+                    .shelfVisibilityPriority(.high)
+                    ToolbarItem(placement: .confirmationAction) {
+                        SheetConfirmButton(title: "Create") { Task { await create() } }
+                            .disabled(!canCreate)
+                    }
+                    .shelfVisibilityPriority(.high)
+                } else {
+                    ToolbarItem(placement: .confirmationAction) {
+                        SheetCloseButton { dismiss() }
+                            .monochromeToolbarItem()
+                    }
+                    .shelfVisibilityPriority(.high)
                 }
             }
             .task { await loadLibraries() }
@@ -230,14 +254,18 @@ private struct AddChildSheet: View {
                 .accessibilityLabel(Text("New password"))
             }
         } footer: {
-            Text("The name is the child’s sign-in name on the server. The password is shown once more when you finish.")
+            formFooter("The name is the child’s sign-in name on the server. The password is shown once more when you finish.")
         }
+        // Batch 490 (REVIEW 2026-11-11 V4): card rows, retro headers and token footers,
+        // like the Settings pages behind this sheet.
+        .listRowBackground(Color.shelfCard)
 
         Section {
             avatarPicker
         } header: {
-            Text("Picture")
+            RetroSectionHeader(title: "Picture")
         }
+        .listRowBackground(Color.shelfCard)
 
         Section {
             ForEach(libraries) { library in
@@ -247,10 +275,11 @@ private struct AddChildSheet: View {
             }
             if libraries.isEmpty { ProgressView().frame(maxWidth: .infinity) }
         } header: {
-            Text("Libraries")
+            RetroSectionHeader(title: "Libraries")
         } footer: {
-            Text("The child can only see the libraries you tick. Explicit content is always off.")
+            formFooter("The child can only see the libraries you tick. Explicit content is always off.")
         }
+        .listRowBackground(Color.shelfCard)
 
         if !availableTags.isEmpty {
             Section {
@@ -258,22 +287,43 @@ private struct AddChildSheet: View {
                     Toggle(isOn: binding(for: tag, in: $selectedTags)) { Text(verbatim: tag) }
                 }
             } header: {
-                Text("Only show these tags")
+                RetroSectionHeader(title: "Only show these tags")
             } footer: {
-                Text("Leave all off to allow every tag. Ticking some limits the child to books carrying one of them.")
+                formFooter("Leave all off to allow every tag. Ticking some limits the child to books carrying one of them.")
             }
+            .listRowBackground(Color.shelfCard)
         }
 
         Section {
             Toggle("Allow downloads", isOn: $allowDownloads)
             Toggle("Use Bedtime Story for this child", isOn: $useBedtimeStory)
         } footer: {
-            Text("Bedtime Story stops at the end of the chapter and doesn’t play on to the next book.")
+            formFooter("Bedtime Story stops at the end of the chapter and doesn’t play on to the next book.")
         }
+        .listRowBackground(Color.shelfCard)
 
         if let errorText {
-            Section { Text(verbatim: errorText).foregroundStyle(.red) }
+            // Batch 490 (REVIEW 2026-11-11 V4): DESIGN.md orange rule, orange glyph beside a
+            // cream sentence (was red text).
+            Section {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.shelfOrange)
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    Typo.supporting(Text(verbatim: errorText))
+                        .foregroundStyle(Color.shelfCream)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            .listRowBackground(Color.shelfCard)
         }
+    }
+
+    private func formFooter(_ text: LocalizedStringResource) -> some View {
+        Typo.supporting(Text(text))
+            .foregroundStyle(Color.shelfMuted)
     }
 
     private var avatarPicker: some View {
@@ -282,24 +332,29 @@ private struct AddChildSheet: View {
                 ForEach(KidAvatar.symbols, id: \.self) { candidate in
                     Button { symbol = candidate } label: {
                         KidAvatarView(symbol: candidate, colorIndex: colorIndex, size: 48)
-                            .overlay(Circle().stroke(Color.primary, lineWidth: symbol == candidate ? 3 : 0))
+                            // Batch 490 (REVIEW 2026-11-11 V4): the label-colour token, not `.primary`.
+                            .overlay(Circle().stroke(Color.shelfCream, lineWidth: symbol == candidate ? 3 : 0))
                             .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel(Text(verbatim: candidate))
+                    // Batch 490 (REVIEW 2026-11-11 A2): a name, not "teddybear.fill".
+                    .accessibilityLabel(Text(verbatim: KidAvatar.name(forSymbol: candidate)))
                     .accessibilityAddTraits(symbol == candidate ? .isSelected : [])
                 }
             }
-            HStack(spacing: 10) {
+            // Batch 490 (REVIEW 2026-11-11 A2): 44 pt wide targets (were 36). Eight of them
+            // don't fit one row on a small phone, so they wrap in a grid like the pictures.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 6)], spacing: 6) {
                 ForEach(Array(KidAvatar.colorHexes.enumerated()), id: \.offset) { index, hex in
                     Button { colorIndex = index } label: {
                         Circle().fill(Color(hex: hex))
                             .frame(width: 28, height: 28)
-                            .overlay(Circle().stroke(Color.primary, lineWidth: colorIndex == index ? 3 : 0))
-                            .frame(minWidth: 36, minHeight: 44)
+                            .overlay(Circle().stroke(Color.shelfCream, lineWidth: colorIndex == index ? 3 : 0).padding(-4))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel(Text("Colour \(index + 1)"))
+                    .accessibilityLabel(Text(verbatim: KidAvatar.name(forColorIndex: index)))
                     .accessibilityAddTraits(colorIndex == index ? .isSelected : [])
                 }
             }
@@ -310,7 +365,8 @@ private struct AddChildSheet: View {
         Section {
             HStack(spacing: 12) {
                 KidAvatarView(symbol: symbol, colorIndex: colorIndex, size: 56)
-                Text(verbatim: trimmedName).font(.headline)
+                Typo.rowTitle(Text(verbatim: trimmedName))
+                    .foregroundStyle(Color.shelfCream)
             }
             HStack {
                 Text(verbatim: password).font(.title3.monospaced()).textSelection(.enabled)
@@ -324,10 +380,11 @@ private struct AddChildSheet: View {
                 .buttonStyle(.borderless)
             }
         } header: {
-            Text("Account created")
+            RetroSectionHeader(title: "Account created")
         } footer: {
-            Text("This password is shown only now. The child’s account is already saved on this iPhone; switch to it from Settings or the profile picker.")
+            formFooter("This password is shown only now. The child’s account is already saved on this iPhone; switch to it from Settings or the profile picker.")
         }
+        .listRowBackground(Color.shelfCard)
     }
 
     private func binding(for value: String, in set: Binding<Set<String>>) -> Binding<Bool> {

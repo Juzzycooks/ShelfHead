@@ -37,6 +37,17 @@
         }
       }
     },
+    "Downloads" : {
+      "comment" : "Home Screen quick action title",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "下载"
+          }
+        }
+      }
+    },
     "NSFaceIDUsageDescription" : {
       "comment" : "Privacy - Face ID Usage Description",
       "extractionState" : "extracted_with_value",
@@ -105,6 +116,28 @@
           "stringUnit" : {
             "state" : "machine_translated",
             "value" : "ShelfHead 使用 Siri，让你可以用语音播放有声书，包括在 CarPlay 中。"
+          }
+        }
+      }
+    },
+    "Resume" : {
+      "comment" : "Home Screen quick action title",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "继续播放"
+          }
+        }
+      }
+    },
+    "Search" : {
+      "comment" : "Home Screen quick action title",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "搜索"
           }
         }
       }

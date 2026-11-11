@@ -603,6 +603,9 @@ private struct DownloadedBooksSection: View {
                         detail: DownloadRowDetail.text(forDuration: item.duration, bytes: downloadManager.itemStorageBytes[item.id]),
                         onOpen: detailSelection.map { selection in { selection.wrappedValue = $0 } }
                     )
+                        // Batch 490 (REVIEW 2026-11-11 D7): the same touch-and-hold menu as
+                        // every other book row (Home, Library, Series), which this list lacked.
+                        .bookContextMenu(item)
                         .swipeActions(edge: .leading) {
                             Button {
                                 playOrPause(item)
@@ -699,6 +702,8 @@ private struct DownloadPreferencesSection: View {
                 .disabled(!autoDownload)
                 SettingsCaption(text: "Needs Auto-download Continue Listening.")
             }
+            // Batch 490 (REVIEW 2026-11-11 N3): searchable, so it gets an anchor.
+            .settingsRowAnchor(SettingsRow.chargingOnly)
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(isOn: $autoDeleteFinished) {
@@ -736,10 +741,20 @@ private struct DownloadPreferencesSection: View {
                 // wrong as soon as anything repopulates the cache before the view
                 // reappears (`.task` only runs once per view lifetime). Re-measure
                 // instead of assuming.
-                Task { await refreshCacheSize() }
+                // Batch 490 (REVIEW 2026-11-11 D3): the on-disk cover tier
+                // (`Caches/covers/`, up to 200 MB) was never cleared here and never
+                // counted, so the row showed a few KB and freed almost nothing. It is
+                // cleared off the main thread, then the total is re-measured.
+                // `CoverVersions.reset()` (which sign-out pairs with this) is left out on
+                // purpose: it only matters across accounts, and resetting it within one
+                // account would drop the `?ts=` stamp and fetch each cover twice.
+                Task {
+                    await Task.detached(priority: .userInitiated) { DiskCoverCache.clear() }.value
+                    await refreshCacheSize()
+                }
             } label: {
                 HStack {
-                    settingRow("photo.stack", "Clear image cache")
+                    settingRow("photo.stack", "Clear cover cache")
                     Spacer()
                     Typo.supporting(Text(cacheSizeText)).foregroundStyle(Color.shelfMuted)
                 }
@@ -771,8 +786,13 @@ private struct DownloadPreferencesSection: View {
 
     // T9 (REVIEW_2026-09-04_UI.md): extracted from `.task` so the "Clear image cache"
     // action can re-measure afterward instead of hardcoding "0 KB".
+    // Batch 490 (REVIEW 2026-11-11 D3): counts the cover folder as well as `URLCache`,
+    // walked off the main thread (it lists up to a few thousand files).
     private func refreshCacheSize() async {
-        cacheSizeText = ByteCountFormatter.string(fromByteCount: Int64(URLCache.shared.currentDiskUsage), countStyle: .file)
+        let bytes = await Task.detached(priority: .utility) {
+            DiskCoverCache.totalBytes() + Int64(URLCache.shared.currentDiskUsage)
+        }.value
+        cacheSizeText = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 

@@ -18,6 +18,9 @@ final class MoodSearchViewModel {
     private(set) var understood: MoodQuery?
     /// The text the current results are for; the view compares it with the search field.
     private(set) var answeredText = ""
+    /// Batch 490 (REVIEW 2026-11-11 E6): true when the snapshot stopped at `snapshotCap`
+    /// before the end of the library, so the view can say only the first books were checked.
+    private(set) var snapshotIsPartial = false
 
     private var snapshot: [LibraryItem] = []
     private var snapshotLibraryId: String?
@@ -35,6 +38,7 @@ final class MoodSearchViewModel {
     func invalidateSnapshot() {
         snapshot = []
         snapshotLibraryId = nil
+        snapshotIsPartial = false  // Batch 490 (REVIEW 2026-11-11 E6)
     }
 
     func ask(_ text: String, libraryId: String, progress: @escaping (LibraryItem) -> MediaProgress?) async {
@@ -47,10 +51,11 @@ final class MoodSearchViewModel {
 
         if snapshotLibraryId != libraryId || snapshot.isEmpty {
             do {
-                let fetched = try await Self.fetchSnapshot(libraryId: libraryId)
+                let (fetched, partial) = try await Self.fetchSnapshot(libraryId: libraryId)
                 guard generation == runGeneration else { return }
                 snapshot = fetched
                 snapshotLibraryId = libraryId
+                snapshotIsPartial = partial  // Batch 490 (REVIEW 2026-11-11 E6)
             } catch {
                 guard generation == runGeneration else { return }
                 if !(error is CancellationError) {
@@ -76,19 +81,30 @@ final class MoodSearchViewModel {
         phase = .done
     }
 
-    /// Pages through the whole library (capped at 5000 books), throwing on any failed page.
-    private static func fetchSnapshot(libraryId: String) async throws -> [LibraryItem] {
+    /// Batch 490 (REVIEW 2026-11-11 E6): the most books one Ask reads. Was a silent 5000.
+    nonisolated static let snapshotCap = 5000
+
+    /// Batch 490 (REVIEW 2026-11-11 E6): whether a fetch that stopped with `fetched` books
+    /// missed some of the server's `total`. Pure, pinned by `QuickWinsLibraryTests`.
+    nonisolated static func isPartial(fetched: Int, total: Int, cap: Int = snapshotCap) -> Bool {
+        fetched >= cap && total > fetched
+    }
+
+    /// Pages through the whole library (capped at `snapshotCap` books), throwing on any failed page.
+    private static func fetchSnapshot(libraryId: String) async throws -> (items: [LibraryItem], partial: Bool) {
         var all: [LibraryItem] = []
         var page = 0
         let limit = 200
-        while all.count < 5000 {
+        var total = 0
+        while all.count < snapshotCap {
             let response = try await AudiobookshelfAPI.shared.getLibraryItems(
                 libraryId: libraryId, limit: limit, page: page, sort: LibrarySort.title.rawValue)
+            total = response.total
             guard !response.results.isEmpty else { break }
             all.append(contentsOf: response.results)
             page += 1
             if all.count >= response.total { break }
         }
-        return all
+        return (all, isPartial(fetched: all.count, total: total))
     }
 }

@@ -178,16 +178,18 @@ struct ChapterSuggestionsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
         .toolbar {
+            // Batch 490 (REVIEW 2026-11-11 V1): the shared Cancel and Save, as Edit Bookmark uses.
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
+                SheetCancelButton { dismiss() }
                     .monochromeToolbarItem()
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { save() }
+                SheetConfirmButton(title: "Save") { save() }
                     .fontWeight(.semibold)
                     .disabled(model.phase != .ready || model.includedCount < 2)
                     .monochromeToolbarItem()
             }
+            .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
         }
         .onAppear { if model.suggestions.isEmpty, model.phase == .scanning(nil) { model.start(context) } }
         .onDisappear { model.cancel() }

@@ -1047,7 +1047,9 @@ struct ShelfHeadWidgetView: View {
                   ? "pin.fill"
                   : (entry.snapshot == nil
                      ? "recordingtape"
-                     : (entry.snapshot?.isPlaying == true ? "pause.fill" : "headphones")))
+                     // Batch 490 (REVIEW 2026-11-11 Y6): `pause.fill` looked like a button but the
+                     // widget isn't one; show state (waveform) instead of an action.
+                     : (entry.snapshot?.isPlaying == true ? "waveform" : "headphones")))
         }
         .gaugeStyle(.accessoryCircularCapacity)
         // W7: dims the ring itself, not just the glyph, so the true-empty case reads as
@@ -1140,8 +1142,10 @@ struct ShelfHeadWidgetView: View {
                         // now; base size (8pt) is unchanged, so default rendering is
                         // identical. See `homeScreen`'s `.dynamicTypeSize` cap for why
                         // this can't grow without bound in a fixed-size tile.
-                        .widgetScaledFont(8, weight: .heavy, design: .rounded, relativeTo: .caption2)
-                        .tracking(WidgetText.tracking(1.5))
+                        // Batch 490 (REVIEW 2026-11-11 A5): 11pt is the HIG widget floor (was 8pt);
+                        // tracking tightened so the pinned eyebrow still fits the small tile.
+                        .widgetScaledFont(11, weight: .heavy, design: .rounded, relativeTo: .caption2)
+                        .tracking(WidgetText.tracking(0.8))
                         // U1 (REVIEW_2026-08-20_UI_SECURITY.md): `amberText`, not raw
                         // `amber` — same contrast-safe token the other eyebrows use.
                         .foregroundStyle(Retro.amberText)
@@ -1165,7 +1169,8 @@ struct ShelfHeadWidgetView: View {
             Spacer(minLength: 0)
             ProgressBar(progress: s.progress)
             Text("-\(timeString(s.duration - s.currentTime))")
-                .widgetScaledFont(9, weight: .semibold, design: .monospaced, relativeTo: .caption2)
+                // Batch 490 (REVIEW 2026-11-11 A5): was 9pt; 11pt HIG widget floor.
+                .widgetScaledFont(11, weight: .semibold, design: .monospaced, relativeTo: .caption2)
                 .foregroundStyle(Retro.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1184,8 +1189,9 @@ struct ShelfHeadWidgetView: View {
                 Text(entry.eyebrow)
                     // W4 (REVIEW_2026-09-04_UI.md Pass 4): base sizes unchanged
                     // throughout — only scaling behavior is new.
-                    .widgetScaledFont(9, weight: .heavy, design: .rounded, relativeTo: .caption2)
-                    .tracking(WidgetText.tracking(2))
+                    // Batch 490 (REVIEW 2026-11-11 A5): was 9pt; 11pt HIG widget floor.
+                    .widgetScaledFont(11, weight: .heavy, design: .rounded, relativeTo: .caption2)
+                    .tracking(WidgetText.tracking(1.5))
                     // U1/U2 (REVIEW_2026-08-20_UI_SECURITY.md): raw amber + 0.85 opacity
                     // measured 1.70:1 in Light. `amberText` (no opacity — it has zero
                     // headroom for one) is the contrast-safe token.
@@ -1208,7 +1214,8 @@ struct ShelfHeadWidgetView: View {
                     Spacer()
                     Text("-\(timeString(s.duration - s.currentTime))")
                 }
-                .widgetScaledFont(10, weight: .semibold, design: .monospaced, relativeTo: .caption2)
+                // Batch 490 (REVIEW 2026-11-11 A5): was 10pt; 11pt HIG widget floor.
+                .widgetScaledFont(11, weight: .semibold, design: .monospaced, relativeTo: .caption2)
                 .foregroundStyle(Retro.muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1276,8 +1283,9 @@ struct ShelfHeadWidgetView: View {
             Text(entry.eyebrow)
                 // W4 (REVIEW_2026-09-04_UI.md Pass 4): base sizes unchanged throughout —
                 // only scaling behavior is new.
-                .widgetScaledFont(10, weight: .heavy, design: .rounded, relativeTo: .caption)
-                .tracking(WidgetText.tracking(2))
+                // Batch 490 (REVIEW 2026-11-11 A5): was 10pt; 11pt HIG widget floor.
+                .widgetScaledFont(11, weight: .heavy, design: .rounded, relativeTo: .caption)
+                .tracking(WidgetText.tracking(1.5))
                 // U1/U2 (REVIEW_2026-08-20_UI_SECURITY.md): raw amber + 0.85 opacity
                 // measured 1.70:1 in Light. `amberText` (no opacity — it has zero
                 // headroom for one) is the contrast-safe token.
@@ -1426,7 +1434,8 @@ struct ShelfHeadWidgetView: View {
             // so a signed-in user is never told to sign in — see `SharedPlayback
             // .resolvedSignedIn(hasSnapshot:)`.
             Text(entry.isSignedIn == false ? "Sign in to ShelfHead" : "Start a book in ShelfHead")
-                .widgetScaledFont(10, relativeTo: .caption2)
+                // Batch 490 (REVIEW 2026-11-11 A5): was 10pt; 11pt HIG widget floor.
+                .widgetScaledFont(11, relativeTo: .caption2)
                 .foregroundStyle(Retro.muted)
                 .multilineTextAlignment(.center)
         }
@@ -1466,6 +1475,10 @@ struct ShelfHeadWidgetBundle: WidgetBundle {
             ShelfHeadResumeControl()
             ShelfHeadSleepTimerControl()
             ShelfHeadOpenNowPlayingControl()
+            // Batch 490 (REVIEW 2026-11-11 F17): skip and bookmark controls.
+            ShelfHeadSkipBackControl()
+            ShelfHeadSkipForwardControl()
+            ShelfHeadAddBookmarkControl()
         }
     }
 }

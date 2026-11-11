@@ -154,6 +154,10 @@ final class EPUBReaderModel {
     private(set) var currentSpineIndex = 0
     private(set) var position = EPUBPosition(spineIndex: 0, fraction: 0)
     var style: EPUBReaderStyle { didSet { if style != oldValue { restyle() } } }
+    /// Batch 490 (REVIEW 2026-11-11 F31): CSS appended after `style.css` (line spacing).
+    /// `EPUBReaderStyle` lives in `EPUBPackage.swift`, so the reader's extras ride here.
+    var extraCSS: String { didSet { if extraCSS != oldValue { restyle() } } }
+    private var fullCSS: String { style.css + extraCSS }
 
     // Batch 431: read-along state.
     enum ReadAlongState: Equatable { case unavailable, matching, ready, mismatch }
@@ -179,17 +183,18 @@ final class EPUBReaderModel {
 
     private static let jsWorld = WKContentWorld.defaultClient
 
-    init(itemId: String, fileURL: URL, style: EPUBReaderStyle) {
+    init(itemId: String, fileURL: URL, style: EPUBReaderStyle, extraCSS: String = "") {
         self.itemId = itemId
         self.fileURL = fileURL
         self.style = style
+        self.extraCSS = extraCSS
         var config = WebPage.Configuration()
         config.defaultNavigationPreferences.allowsContentJavaScript = false
         if let scheme = URLScheme(Self.schemeName) {
             config.urlSchemeHandlers[scheme] = EPUBSchemeHandler(backing: backing)
         }
         page = WebPage(configuration: config, navigationDecider: EPUBNavigationDecider(router: router))
-        backing.css = style.css
+        backing.css = fullCSS
         router.onInternal = { [weak self] url in self?.followInternal(url) }
     }
 
@@ -291,13 +296,13 @@ final class EPUBReaderModel {
     // MARK: Style and position
 
     private func restyle() {
-        backing.css = style.css
+        backing.css = fullCSS
         Task { await applyStyle() }
     }
 
     private func applyStyle() async {
         _ = try? await evaluate("document.getElementById('shelfhead-style').textContent = css; return null;",
-                                arguments: ["css": style.css])
+                                arguments: ["css": fullCSS])
         // A new size reflows the text; keep the spoken sentence marked (and in view when following).
         if let highlighted, highlighted.spineIndex == currentSpineIndex {
             await applyHighlight(highlighted, scroll: isFollowing)
@@ -447,6 +452,9 @@ struct EPUBReaderView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("epubReader.fontScale") private var storedScale = 0.0
     @AppStorage("epubReader.serif") private var serif = true
+    /// Batch 490 (REVIEW 2026-11-11 F31): page colour and line spacing, by raw value.
+    @AppStorage("epubReader.theme") private var pageTheme = EPUBPageTheme.matchApp.rawValue
+    @AppStorage("epubReader.lineSpacing") private var lineSpacing = EPUBLineSpacing.normal.rawValue
 
     @State private var model: EPUBReaderModel?
     @State private var showContents = false
@@ -465,7 +473,8 @@ struct EPUBReaderView: View {
             }
         }
         .task(id: item.id) {
-            let created = EPUBReaderModel(itemId: item.id, fileURL: fileURL, style: makeStyle())
+            let created = EPUBReaderModel(itemId: item.id, fileURL: fileURL, style: makeStyle(),
+                                          extraCSS: currentLineSpacing.css)
             created.openExternal = { openURL($0) }
             created.smoothScroll = !reduceMotion
             model = created
@@ -504,6 +513,8 @@ struct EPUBReaderView: View {
         .onChange(of: dynamicTypeSize) { _, _ in model?.style = makeStyle() }
         .onChange(of: storedScale) { _, _ in model?.style = makeStyle() }
         .onChange(of: serif) { _, _ in model?.style = makeStyle() }
+        .onChange(of: pageTheme) { _, _ in model?.style = makeStyle() }
+        .onChange(of: lineSpacing) { _, _ in model?.extraCSS = currentLineSpacing.css }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             Task { await model?.capturePosition() }
@@ -660,15 +671,36 @@ struct EPUBReaderView: View {
                 Label("Smaller Text", systemImage: "textformat.size.smaller")
             }
             .disabled(currentScale <= 0.8)
+            // Batch 490 (REVIEW 2026-11-11 F31): the menu stays open so the size can be
+            // stepped more than once (iOS 16.4+, under the iOS 26 gate here).
+            .menuActionDismissBehavior(.disabled)
             Button {
                 storedScale = min(2.5, (currentScale + 0.1).rounded(toPlaces: 1))
             } label: {
                 Label("Larger Text", systemImage: "textformat.size.larger")
             }
             .disabled(currentScale >= 2.5)
+            .menuActionDismissBehavior(.disabled)
             Toggle(isOn: $serif) {
                 Label("Serif", systemImage: "textformat")
             }
+            // Batch 490 (REVIEW 2026-11-11 F31): page colour and line spacing as inline
+            // submenus (HIG Menus: a picker in a menu for one-of-several choices).
+            Picker(selection: $pageTheme) {
+                Text("Match App").tag(EPUBPageTheme.matchApp.rawValue)
+                Text("Sepia").tag(EPUBPageTheme.sepia.rawValue)
+                Text("Black").tag(EPUBPageTheme.black.rawValue)
+            } label: {
+                Label("Page Colour", systemImage: "circle.lefthalf.filled")
+            }
+            .pickerStyle(.menu)
+            Picker(selection: $lineSpacing) {
+                Text("Normal").tag(EPUBLineSpacing.normal.rawValue)
+                Text("Relaxed").tag(EPUBLineSpacing.relaxed.rawValue)
+            } label: {
+                Label("Line Spacing", systemImage: "text.alignleft")
+            }
+            .pickerStyle(.menu)
         } label: {
             Image(systemName: "textformat.size")
         }
@@ -729,23 +761,66 @@ struct EPUBReaderView: View {
         return min(2.5, max(0.8, (1.0 + 0.1 * Double(steps)).rounded(toPlaces: 1)))
     }
 
+    private var currentLineSpacing: EPUBLineSpacing {
+        EPUBLineSpacing(rawValue: lineSpacing) ?? .normal
+    }
+
     private func makeStyle() -> EPUBReaderStyle {
-        EPUBReaderStyle(
-            backgroundHex: hex(.shelfBackground),
-            textHex: hex(.shelfCream),
-            accentHex: hex(.shelfAmberText),
+        // Batch 490 (REVIEW 2026-11-11 F31): Black uses the app's dark-appearance ink and
+        // accent; Sepia uses fixed paper colours (see `EPUBPageTheme.colours`).
+        let theme = EPUBPageTheme(rawValue: pageTheme) ?? .matchApp
+        let scheme: ColorScheme = theme == .black ? .dark : colorScheme
+        let colours = theme.colours(app: (background: hex(.shelfBackground, scheme: scheme),
+                                          text: hex(.shelfCream, scheme: scheme),
+                                          accent: hex(.shelfAmberText, scheme: scheme)))
+        return EPUBReaderStyle(
+            backgroundHex: colours.background,
+            textHex: colours.text,
+            accentHex: colours.accent,
             fontScale: currentScale,
             serif: serif)
     }
 
-    /// Resolves a theme colour for the current appearance as `#RRGGBB`.
-    private func hex(_ color: Color) -> String {
-        let traits = UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+    /// Resolves a theme colour for the given (default: current) appearance as `#RRGGBB`.
+    private func hex(_ color: Color, scheme: ColorScheme? = nil) -> String {
+        let traits = UITraitCollection(userInterfaceStyle: (scheme ?? colorScheme) == .dark ? .dark : .light)
         let resolved = UIColor(color).resolvedColor(with: traits)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
         func channel(_ v: CGFloat) -> Int { Int((min(1, max(0, v)) * 255).rounded()) }
         return String(format: "#%02X%02X%02X", channel(r), channel(g), channel(b))
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F31): the EPUB page colour. Pure and not gated on iOS 26
+/// so `QuickWinsBookDetailTests` can pin it. Stored by raw value in `epubReader.theme`.
+nonisolated enum EPUBPageTheme: String, CaseIterable, Sendable {
+    case matchApp, sepia, black
+
+    typealias Colours = (background: String, text: String, accent: String)
+
+    /// Sepia: #5B4636 text on #F4ECD8 is about 7.5:1, the #8B5A12 link about 5.0:1 (WCAG AA
+    /// for body text). Black: a true #000000 page with the app's dark-appearance ink and
+    /// accent (`app` already resolved for dark by the caller).
+    func colours(app: Colours) -> Colours {
+        switch self {
+        case .matchApp: return app
+        case .sepia: return (background: "#F4ECD8", text: "#5B4636", accent: "#8B5A12")
+        case .black: return (background: "#000000", text: app.text, accent: app.accent)
+        }
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F31): the EPUB line spacing. `EPUBReaderStyle.css` sets
+/// 1.6 on the body; Relaxed overrides it (and the book's own paragraph rules) with 1.9.
+nonisolated enum EPUBLineSpacing: String, CaseIterable, Sendable {
+    case normal, relaxed
+
+    var css: String {
+        switch self {
+        case .normal: return ""
+        case .relaxed: return "\nbody, body p, body li, body div, body blockquote { line-height: 1.9 !important; }"
+        }
     }
 }
 

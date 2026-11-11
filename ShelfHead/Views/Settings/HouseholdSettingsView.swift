@@ -162,7 +162,8 @@ struct HouseholdSettingsView: View {
                                                 selected: symbol == avatarSymbol)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text(verbatim: symbol))
+                        // Batch 490 (REVIEW 2026-11-11 A2): a name, not the raw symbol name.
+                        .accessibilityLabel(Text(verbatim: HouseholdAvatar.name(forSymbol: symbol)))
                         .accessibilityAddTraits(symbol == avatarSymbol ? .isSelected : [])
                     }
                 }
@@ -183,7 +184,7 @@ struct HouseholdSettingsView: View {
                                 .frame(minWidth: 44, minHeight: 44)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text("Colour \(index + 1)"))
+                        .accessibilityLabel(Text(verbatim: HouseholdAvatar.name(forColorIndex: index)))
                         .accessibilityAddTraits(index == HouseholdAvatar.clampedColor(avatarColor) ? .isSelected : [])
                     }
                 }

@@ -123,6 +123,181 @@ struct ListeningStats: Codable {
     let totalTime: Double?          // seconds
     let today: Double?              // seconds
     let days: [String: Double]?     // "YYYY-MM-DD" -> seconds
+    // Batch 490 (REVIEW 2026-11-11 F11a): the server's per-book map (libraryItemId -> time listened).
+    // Optional with a default so existing memberwise calls compile; decodes without ever throwing.
+    var items: ListeningStatsItems? = nil
+}
+
+// MARK: - Per-book listening time (Batch 490, REVIEW 2026-11-11 F11a)
+
+/// One value of `items` in `GET /api/me/listening-stats`. Server shape (ApiRouter.getUserListeningStatsHelpers):
+/// `{ id: libraryItemId, timeListening: seconds, mediaMetadata: <session metadata>, lastUpdate }`. Every field is
+/// optional and a bad value is dropped rather than thrown, so an odd item can never fail the whole Stats load.
+struct ListeningStatsItem: Codable, Equatable {
+    var id: String?
+    var timeListening: Double?
+    var title: String?
+    var author: String?
+
+    init(id: String? = nil, timeListening: Double? = nil, title: String? = nil, author: String? = nil) {
+        self.id = id
+        self.timeListening = timeListening
+        self.title = title
+        self.author = author
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, timeListening, mediaMetadata }
+
+    /// The session's `mediaMetadata` is the book's metadata: `title`, then `authors: [{ id, name }]` (full form)
+    /// and/or `authorName` (minified form). Read whichever is present.
+    private struct Metadata: Codable {
+        var title: String?
+        var authorName: String?
+        var authors: [Person]?
+        struct Person: Codable { var name: String? }
+
+        init(title: String?, authorName: String?) { self.title = title; self.authorName = authorName; self.authors = nil }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            title = try? c.decodeIfPresent(String.self, forKey: .title)
+            authorName = try? c.decodeIfPresent(String.self, forKey: .authorName)
+            authors = try? c.decodeIfPresent([Person].self, forKey: .authors)
+        }
+        private enum CodingKeys: String, CodingKey { case title, authorName, authors }
+    }
+
+    init(from decoder: Decoder) throws {
+        // Never throws: a value that isn't an object just reads as an empty item (which `MostListened` drops).
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        id = try? c.decodeIfPresent(String.self, forKey: .id)
+        timeListening = try? c.decodeIfPresent(Double.self, forKey: .timeListening)
+        let meta = try? c.decodeIfPresent(Metadata.self, forKey: .mediaMetadata)
+        title = meta?.title
+        let joined = (meta?.authors ?? []).compactMap(\.name).filter { !$0.isEmpty }.joined(separator: ", ")
+        if let name = meta?.authorName, !name.isEmpty {
+            author = name
+        } else {
+            author = joined.isEmpty ? nil : joined
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(id, forKey: .id)
+        try c.encodeIfPresent(timeListening, forKey: .timeListening)
+        try c.encode(Metadata(title: title, authorName: author), forKey: .mediaMetadata)
+    }
+}
+
+/// The `items` object. Decoding never throws: anything that isn't an object of objects reads as empty.
+struct ListeningStatsItems: Codable, Equatable {
+    var byId: [String: ListeningStatsItem]
+
+    init(byId: [String: ListeningStatsItem] = [:]) { self.byId = byId }
+
+    init(from decoder: Decoder) throws {
+        let container = try? decoder.singleValueContainer()
+        byId = (container.flatMap { try? $0.decode([String: ListeningStatsItem].self) }) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(byId)
+    }
+}
+
+/// One row of the Stats tab's "Most listened" section.
+struct MostListenedBook: Identifiable, Equatable {
+    let id: String          // libraryItemId
+    let title: String?
+    let author: String?
+    let seconds: Double
+}
+
+enum MostListened {
+    /// The `limit` books with the most time listened, longest first. Ties break on title (case-insensitive,
+    /// then id) so the order is stable between loads. Rows with no time, or a non-finite one, are dropped.
+    static func top(_ items: ListeningStatsItems?, limit: Int = 5) -> [MostListenedBook] {
+        guard let items, limit > 0 else { return [] }
+        let rows: [MostListenedBook] = items.byId.compactMap { key, item in
+            guard let seconds = item.timeListening, seconds.isFinite, seconds > 0 else { return nil }
+            let id = (item.id?.isEmpty == false ? item.id : nil) ?? key
+            let title = item.title?.isEmpty == false ? item.title : nil
+            let author = item.author?.isEmpty == false ? item.author : nil
+            return MostListenedBook(id: id, title: title, author: author, seconds: seconds)
+        }
+        let sorted = rows.sorted { a, b in
+            if a.seconds != b.seconds { return a.seconds > b.seconds }
+            let ta = a.title ?? "", tb = b.title ?? ""
+            let order = ta.caseInsensitiveCompare(tb)
+            if order != .orderedSame { return order == .orderedAscending }
+            return a.id < b.id
+        }
+        return Array(sorted.prefix(limit))
+    }
+}
+
+// MARK: - Library statistics (Batch 490, REVIEW 2026-11-11 F11a)
+
+/// `GET /api/libraries/:id/stats` (LibraryController.stats). Only the four totals the Stats tab shows; the
+/// rest (largestItems, authorsWithCount, genresWithCount, longestItems, numAudioTracks) is ignored. A book
+/// library sends `totalAuthors`; a podcast library doesn't. Counts and sizes may arrive as any JSON number.
+struct LibraryStats: Decodable, Equatable {
+    var totalItems: Int?
+    var totalAuthors: Int?
+    var totalDuration: Double?   // seconds
+    var totalSize: Double?       // bytes
+
+    init(totalItems: Int? = nil, totalAuthors: Int? = nil, totalDuration: Double? = nil, totalSize: Double? = nil) {
+        self.totalItems = totalItems
+        self.totalAuthors = totalAuthors
+        self.totalDuration = totalDuration
+        self.totalSize = totalSize
+    }
+
+    private enum CodingKeys: String, CodingKey { case totalItems, totalAuthors, totalDuration, totalSize }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func number(_ key: CodingKeys) -> Double? { (try? c.decodeIfPresent(Double.self, forKey: key)) ?? nil }
+        totalItems = number(.totalItems).flatMap { $0.isFinite ? Int($0) : nil }
+        totalAuthors = number(.totalAuthors).flatMap { $0.isFinite ? Int($0) : nil }
+        totalDuration = number(.totalDuration)
+        totalSize = number(.totalSize)
+    }
+
+    /// Whether there is anything worth a section.
+    var hasFigures: Bool { (totalItems ?? 0) > 0 }
+}
+
+// MARK: - E-reader devices (Batch 490, REVIEW 2026-11-11 F11a)
+
+/// One entry of `ereaderDevices` in the `POST /api/authorize` response: only the devices this user may use
+/// (`EmailSettings.getEReaderDevices(user)`). Server fields: name, email, availabilityOption, users.
+struct EReaderDevice: Decodable, Equatable, Identifiable {
+    let name: String
+    var id: String { name }
+
+    private enum CodingKeys: String, CodingKey { case name }
+}
+
+/// Just the part of the authorize payload the app reads here; everything else is ignored.
+struct AuthorizeEReaderDevices: Decodable {
+    let ereaderDevices: [EReaderDevice]?
+
+    private enum CodingKeys: String, CodingKey { case ereaderDevices }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Lossy: one malformed device is skipped rather than hiding the rest.
+        struct Lossy: Decodable {
+            let value: EReaderDevice?
+            init(from decoder: Decoder) throws { value = try? EReaderDevice(from: decoder) }
+        }
+        let raw = (try? c.decodeIfPresent([Lossy].self, forKey: .ereaderDevices)) ?? nil
+        ereaderDevices = raw?.compactMap(\.value).filter { !$0.name.isEmpty }
+    }
 }
 
 extension ListeningStats {
@@ -342,7 +517,12 @@ enum SmartFilter: String, CaseIterable, Identifiable {
         case .shortListens: return "hare"
         case .longListens: return "tortoise"
         case .unplayedInStartedSeries: return "square.stack.3d.up.badge.a"
-        case .missingCovers: return "photo.badge.exclamationmark"
+        case .missingCovers:
+            // Batch 490 (REVIEW 2026-11-11 A5): `photo.badge.exclamationmark` is an SF Symbols
+            // 2024 symbol (iOS 18.0 in CoreGlyphs' name_availability.plist), so iOS 17 drew
+            // nothing. `photo` (2019, iOS 13.0) stands in there.
+            if #available(iOS 18, *) { return "photo.badge.exclamationmark" }
+            return "photo"
         case .favoriteNewArrivals: return "star.circle"
         }
     }

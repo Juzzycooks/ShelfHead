@@ -121,6 +121,20 @@ nonisolated enum DiskCoverCache {
         }
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 D3): bytes on disk in `Caches/covers/`, for the
+    /// "Clear cover cache" row in Settings › Downloads. Walks the directory, so call it off
+    /// the main thread.
+    static func totalBytes() -> Int64 {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        return totalBytes(ofFileSizes: files.map { (try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize })
+    }
+
+    /// Pure, for tests: the sum of the sizes that could be read (unreadable ones count as 0).
+    static func totalBytes(ofFileSizes sizes: [Int?]) -> Int64 {
+        sizes.reduce(Int64(0)) { $0 + Int64(max(0, $1 ?? 0)) }
+    }
+
     /// Keeps the cache bounded (unlike the UserDefaults growth fixed in M7 — this is
     /// exactly the kind of thing that needs a cap). Call occasionally (e.g. once at
     /// launch), not on every write — this walks the whole directory.

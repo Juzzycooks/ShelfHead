@@ -78,6 +78,10 @@ struct WatchSleepSheet: View {
     /// End of Chapter needs chapter data, which a download played offline can lack.
     let hasChapters: Bool
     let onSelect: (WatchSleepTimerOption) -> Void
+    /// Batch 490 (REVIEW 2026-11-11 F29): "Add 15 Minutes", or nil to hide the row. The
+    /// caller passes nil unless a countdown is running (`WatchSleepExtend.isAvailable`),
+    /// so an end-of-chapter timer never shows it.
+    var onExtend: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -95,6 +99,25 @@ struct WatchSleepSheet: View {
                         Label(remainingText, systemImage: "moon.zzz.fill")
                             .font(WatchMetrics.secondaryFont(weight: .medium).monospacedDigit())
                             .foregroundStyle(WatchTheme.accentText)
+                        if let onExtend {
+                            Button {
+                                WatchHaptics.tap()
+                                onExtend()
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "plus.circle")
+                                        .foregroundStyle(WatchTheme.icon)
+                                        .watchIconColumn()
+                                    Text("Add 15 Minutes")
+                                        .font(WatchMetrics.contentRowTitleFont())
+                                        .foregroundStyle(WatchTheme.primaryText)
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel(String(localized: "Add 15 minutes to the sleep timer"))
+                        }
                     }
                 }
                 ForEach(WatchSleepTimerOption.presets, id: \.self) { option in
@@ -230,6 +253,7 @@ struct WatchBookmarksSheet: View {
     /// companion's list arrives with the iPhone's snapshot.
     let onLoad: (() async -> Void)?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @State private var outcome: WatchBookmarkOutcome?
     @State private var outcomeResetTask: Task<Void, Never>?
 
@@ -248,7 +272,9 @@ struct WatchBookmarksSheet: View {
                                 .font(WatchMetrics.secondaryFont(weight: .medium))
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(WatchTheme.accent)
+                        // Batch 490 (REVIEW 2026-11-11 W14): a lit amber slab under
+                        // Always-On breaks Dim-the-Picture; it goes quiet like the rest.
+                        .tint(isLuminanceReduced ? WatchTheme.secondaryText : WatchTheme.accent)
                         .disabled(!canAdd)
                         .accessibilityLabel(outcome?.accessibilityLabel ?? String(localized: "Bookmark current position"))
                         .accessibilityHint(canAdd ? "" : String(localized: "Unavailable while nothing is playing"))
@@ -305,12 +331,17 @@ struct WatchBookmarksSheet: View {
         .contentShape(Rectangle())
     }
 
-    /// The outcome on the button, a failure haptic, a VoiceOver announcement, then back
+    /// The outcome on the button, one result haptic, a VoiceOver announcement, then back
     /// to the plain label — the same rhythm as the tool row's Bookmark button.
     private func show(_ newOutcome: WatchBookmarkOutcome) {
         outcome = newOutcome
-        if newOutcome == .failed { WatchHaptics.failure() }
-        if newOutcome == .saved { WatchHaptics.success() }
+        // Batch 490 (REVIEW 2026-11-11 W8): one rule for both Bookmark buttons; a save
+        // kept offline now buzzes success too, since it was saved.
+        switch WatchFeedbackHaptic.forBookmark(newOutcome) {
+        case .success: WatchHaptics.success()
+        case .failure: WatchHaptics.failure()
+        case nil: break
+        }
         if newOutcome != .saving {
             AccessibilityNotification.Announcement(newOutcome.accessibilityLabel).post()
         }
@@ -326,7 +357,9 @@ struct WatchBookmarksSheet: View {
 // MARK: - More
 
 /// The "⋯" sheet: the actions that used to sit below the fold as each mode's footer
-/// (Mark as Finished, Stop Playing), the Bookmarks list, and Downloads. watchOS has no
+/// (Mark as Finished, Stop Playing) and the Bookmarks list. Batch 490 (REVIEW 2026-11-11
+/// W5): Downloads is gone from here. It pushed the whole downloads screen on top of a
+/// sheet on top of Now Playing; it lives in Library's toolbar and Settings. watchOS has no
 /// `Menu` (Apple docs: iOS 14, macOS 11, tvOS 17, visionOS 1 — no watchOS), so this is a
 /// sheet with a plain list.
 struct WatchNowPlayingMoreSheet<ModeActions: View>: View {
@@ -342,11 +375,6 @@ struct WatchNowPlayingMoreSheet<ModeActions: View>: View {
                     } label: {
                         Label("Bookmarks", systemImage: "bookmark")
                     }
-                }
-                NavigationLink {
-                    StandaloneDownloadsView()
-                } label: {
-                    Label("Downloads", systemImage: "arrow.down.circle")
                 }
                 modeActions()
             }

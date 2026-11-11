@@ -19,12 +19,18 @@ struct DeckSkinSettingsSection: View {
                 }
             }
             .padding(.vertical, 4)
-            Toggle("Button sounds", isOn: $buttonSounds)
+            // Batch 490 (REVIEW 2026-11-11 V4): a `settingRow` like its neighbours, with the
+            // retro header, a token footer and card rows.
+            Toggle(isOn: $buttonSounds) {
+                settingRow("speaker.wave.2.fill", "Button sounds")
+            }
         } header: {
-            Text("Deck")
+            RetroSectionHeader(title: "Deck")
         } footer: {
-            Text("Each deck redraws the player’s artwork and keys. From the Cover takes its colours from the book that’s playing. Button sounds are short clicks when you press a player key. They follow the volume, and, as with other playback audio, play even when the Silent switch is on, so they are off by default.")
+            Typo.supporting(Text("Each deck redraws the player’s artwork and keys. From the Cover takes its colours from the book that’s playing. Button sounds are short clicks when you press a player key. They follow the volume, and, as with other playback audio, play even when the Silent switch is on, so they are off by default."))
+                .foregroundStyle(Color.shelfMuted)
         }
+        .listRowBackground(Color.shelfCard)
     }
 
     private func thumbnail(_ skin: DeckSkin) -> some View {
@@ -35,16 +41,15 @@ struct DeckSkinSettingsSection: View {
         } label: {
             VStack(spacing: 6) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12).fill(Color.shelfSurface)
+                    RoundedRectangle(cornerRadius: Radius.card).fill(Color.shelfSurface)
                     Image(systemName: skin.symbolName)
                         .font(.system(size: min(skinGlyphSize, 40), weight: .regular))
                         .foregroundStyle(Color.shelfCream.opacity(0.85))
                 }
                 .frame(height: 64)
-                .overlay(RoundedRectangle(cornerRadius: 12)
+                .overlay(RoundedRectangle(cornerRadius: Radius.card)
                     .strokeBorder(Color.shelfCream.opacity(selected ? 0.9 : 0.12), lineWidth: selected ? 2 : 1))
-                Text(skin.displayName)
-                    .font(.caption)
+                Typo.supporting(Text(skin.displayName))
                     .foregroundStyle(Color.shelfCream)
                     .multilineTextAlignment(.center)
             }

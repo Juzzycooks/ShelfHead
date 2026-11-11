@@ -190,15 +190,28 @@ struct WatchShelfView: View {
         ) {
             Button("Play") {
                 if let request = pendingPhonePlay {
-                    companion.playItem(itemId: request.itemId)
-                    path.append(.phoneNowPlaying)
+                    if request.stopsOnWatch {
+                        // Batch 490 (REVIEW 2026-11-11 W4): save and stop this Watch first;
+                        // the iPhone half may still ask about the iPhone's own book.
+                        Task {
+                            await store.standalone.stopAndWriteOutProgress()
+                            playOnPhone(itemId: request.itemId, title: request.title)
+                        }
+                    } else {
+                        companion.playItem(itemId: request.itemId)
+                        path.append(.phoneNowPlaying)
+                    }
                 }
                 pendingPhonePlay = nil
             }
             Button("Cancel", role: .cancel) { pendingPhonePlay = nil }
         } message: {
             if let request = pendingPhonePlay {
-                Text("\u{201C}\(request.currentTitle)\u{201D} stops on your iPhone.")
+                if request.stopsOnWatch {
+                    Text(String(localized: "\u{201C}\(request.currentTitle)\u{201D} stops on this Watch.", comment: "Confirmation message; %@ is the title of the book now playing"))
+                } else {
+                    Text("\u{201C}\(request.currentTitle)\u{201D} stops on your iPhone.")
+                }
             }
         }
         // Moved from `WatchHomeView`. Only standalone sync sets a conflict.
@@ -265,7 +278,8 @@ struct WatchShelfView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(WatchTheme.accent)
+                // Batch 490 (REVIEW 2026-11-11 W14): Worn Taupe with the wrist down (Always-On Rule).
+                .watchProminentTint()
                 Button("Not Now") {
                     runSetupDismissed = true
                     UserDefaults.standard.set(true, forKey: WatchRunSetupPrompt.dismissedDefaultsKey)
@@ -321,18 +335,40 @@ struct WatchShelfView: View {
             case .watch:
                 path.append(.watchNowPlaying(itemId: book.itemId, title: book.title, author: book.author))
             case .iPhone:
-                switch WatchPlayRequestDecision.decide(requestedItemId: book.itemId, current: companion.playbackState) {
-                case .playNow:
-                    companion.playItem(itemId: book.itemId)
-                    path.append(.phoneNowPlaying)
-                case .confirmReplacing(let currentTitle):
-                    pendingPhonePlay = WatchPlayRequest(itemId: book.itemId, title: book.title, currentTitle: currentTitle)
+                // Batch 490 (REVIEW 2026-11-11 W4): a book loaded on this Watch is saved and
+                // stopped before the iPhone starts, asking first when it is playing.
+                let engine = store.standalone
+                switch WatchPlayOnPhoneWatchAction.decide(engineIsLoaded: engine.isLoaded, engineIsPlaying: engine.isPlaying,
+                                                          engineTitle: engine.itemTitle) {
+                case .nothing:
+                    playOnPhone(itemId: book.itemId, title: book.title)
+                case .stopWatch:
+                    Task {
+                        await engine.stopAndWriteOutProgress()
+                        playOnPhone(itemId: book.itemId, title: book.title)
+                    }
+                case .confirmStoppingWatch(let currentTitle):
+                    pendingPhonePlay = WatchPlayRequest(itemId: book.itemId, title: book.title,
+                                                        currentTitle: currentTitle, stopsOnWatch: true)
                 }
             }
         case .browse:
             path.append(.browse)
         case .setup:
             path.append(.setup)
+        }
+    }
+
+    /// The iPhone half of a sleeve tap: plays now, or asks when the iPhone is playing a
+    /// different book. (Body moved out of `activate` in Batch 490 so W4 can call it after
+    /// stopping this Watch.)
+    private func playOnPhone(itemId: String, title: String) {
+        switch WatchPlayRequestDecision.decide(requestedItemId: itemId, current: companion.playbackState) {
+        case .playNow:
+            companion.playItem(itemId: itemId)
+            path.append(.phoneNowPlaying)
+        case .confirmReplacing(let currentTitle):
+            pendingPhonePlay = WatchPlayRequest(itemId: itemId, title: title, currentTitle: currentTitle)
         }
     }
 

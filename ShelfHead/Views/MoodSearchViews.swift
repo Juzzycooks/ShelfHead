@@ -40,6 +40,7 @@ enum MoodReasonText {
 /// A book row in Ask results: cover, title, author and the reasons it matched.
 struct MoodResultRow: View {
     let match: MoodMatch
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var why: String { MoodReasonText.line(match.reasons) }
 
@@ -49,7 +50,9 @@ struct MoodResultRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Typo.rowTitle(Text(verbatim: match.item.title))
                     .foregroundStyle(Color.shelfCream)
-                    .lineLimit(1)
+                    // Batch 490 (REVIEW 2026-11-11 A5): wraps at accessibility sizes, as
+                    // `SearchResultRow`'s title does (Polish pass J3-9).
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                 Typo.rowSubtitle(Text(verbatim: match.item.authorName))
                     .foregroundStyle(Color.shelfMuted)
                     .lineLimit(1)

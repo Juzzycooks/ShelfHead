@@ -26,7 +26,10 @@ struct SpatialAudioSettingsSection: View {
                 SettingsCaption(text: "Audiobooks are stereo recordings, so this widens the sound rather than placing voices around you. Head tracking and Fixed or Head Tracked are chosen in Control Centre: touch and hold the volume slider.")
             }
         } header: {
-            Text("Spatial Audio")
+            // Batch 490 (REVIEW 2026-11-11 V4): the retro header and card rows every other
+            // Settings section uses (was a plain system header on the default row colour).
+            RetroSectionHeader(title: "Spatial Audio")
         }
+        .listRowBackground(Color.shelfCard)
     }
 }

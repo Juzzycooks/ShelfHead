@@ -107,6 +107,36 @@ struct GeneratedFooter: View {
     }
 }
 
+/// Batch 490 (REVIEW 2026-11-11 P5): names a moment in the book the way the player does. The
+/// player shows chapter-relative time ("12:44 · Chapter 3") once chapters exist, and these sheets
+/// used to show whole-book time ("7:42:10"), so tapping one described the same jump in two
+/// schemes. Built on `BookmarksSheet.momentLabel` (the house format) and the player's own
+/// chapter rule (`PlayerViewModel.chapterIndex(in:at:)`); a chapterless book keeps plain time.
+@MainActor
+enum BookMoment {
+    /// The chapter covering `time`, by the player's half-open `[start, end)` rule.
+    static func chapter(at time: Double, in chapters: [Chapter]) -> Chapter? {
+        PlayerViewModel.chapterIndex(in: chapters, at: time).map { chapters[$0] }
+    }
+
+    /// "12:44 · Chapter 3", or plain time when no chapter covers `time`.
+    static func label(time: Double, chapters: [Chapter]) -> String {
+        BookmarksSheet.momentLabel(time: time, chapter: chapter(at: time, in: chapters))
+    }
+
+    /// Just the time half: chapter-relative when a chapter covers `time`.
+    static func time(_ time: Double, chapters: [Chapter]) -> String {
+        BookmarksSheet.momentTime(time: time, chapter: chapter(at: time, in: chapters))
+    }
+
+    /// The chapters to name moments in `itemId` by: the player's (which include chapters made on
+    /// this device) when that book is the one loaded, else none, so a sheet opened from Book
+    /// Detail for another book falls back to plain time rather than borrowing the wrong chapters.
+    static func chapters(for itemId: String, player: PlayerViewModel) -> [Chapter] {
+        player.currentBook?.id == itemId ? player.chapters : []
+    }
+}
+
 // MARK: - Previously On…
 
 /// Batch 428: a "previously on" recap of what the listener has heard, written on this device from
@@ -116,6 +146,8 @@ struct RecapSheet: View {
     let itemId: String
     let title: String
     let author: String
+    /// Batch 490 (REVIEW 2026-11-11 P5): as `XRaySheet.chapters`.
+    var chapters: [Chapter]? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(PlayerViewModel.self) private var playerViewModel
@@ -147,11 +179,12 @@ struct RecapSheet: View {
             .navigationTitle("Previously On\u{2026}")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button, as the player's sheets use.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                         .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
             }
         }
         .systemChromeTint()
@@ -206,7 +239,7 @@ struct RecapSheet: View {
                     .foregroundStyle(Color.shelfCream)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
 
                 montageSection(text)
 
@@ -321,6 +354,9 @@ struct RecapSheet: View {
             startMontage(text)
         } label: {
             Label(title, systemImage: "play.fill")
+                // Batch 490 (REVIEW 2026-11-11 V2): ink on the accent fill is contrast-picked, not
+                // the white `.borderedProminent` draws (about 2:1 on VU Amber), as Rewind below does.
+                .foregroundStyle(Color.onAccent)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent)
@@ -363,13 +399,16 @@ struct RecapSheet: View {
     @ViewBuilder
     private var montageMoments: some View {
         if let marks = montage.manifest?.marks, !marks.isEmpty {
+            // Batch 490 (REVIEW 2026-11-11 P5): moments named as the player names them.
+            let chapters = self.chapters ?? BookMoment.chapters(for: itemId, player: playerViewModel)
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(marks.enumerated()), id: \.offset) { index, mark in
                     let isCurrent = index == montage.currentMarkIndex
                     switch mark.item {
                     case .clip(let start, _, let clipText):
+                        let moment = BookMoment.label(time: start, chapters: chapters)
                         VStack(alignment: .leading, spacing: 2) {
-                            Typo.fine(Text(verbatim: RecapPlanner.timestamp(start)))
+                            Typo.fine(Text(verbatim: moment))
                                 .foregroundStyle(isCurrent ? Color.shelfAmberText : Color.shelfMuted)
                                 .monospacedDigit()
                             Typo.supporting(Text(verbatim: clipText))
@@ -378,7 +417,7 @@ struct RecapSheet: View {
                         }
                         .momentRow(isCurrent: isCurrent)
                         .accessibilityElement(children: .combine)
-                        .accessibilityLabel(Text("Moment at \(RecapPlanner.timestamp(start)): \(clipText)"))
+                        .accessibilityLabel(Text("Moment at \(moment): \(clipText)"))
                         .accessibilityAddTraits(isCurrent ? .isSelected : [])
                     case .speech(let line):
                         Typo.fine(Text(verbatim: line))
@@ -438,14 +477,17 @@ struct ZonedOutSheet: View {
                 case .failed(let reason): IntelligenceFailureView(reason: reason) { attempt += 1 }
                 }
             }
-            .navigationTitle("What Just Happened")
+            // Batch 490 (REVIEW 2026-11-11 P11): the same name as the ⋯ menu row that opens it
+            // (it was "What Just Happened").
+            .navigationTitle("I Zoned Out")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button, as the player's sheets use.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                         .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
             }
         }
         .systemChromeTint()
@@ -478,22 +520,24 @@ struct ZonedOutSheet: View {
     }
 
     private func ready(summary: String, rewindTo: Double) -> some View {
-        ScrollView {
+        // Batch 490 (REVIEW 2026-11-11 P5): "Rewind to 12:44 · Chapter 3", as the player names it.
+        let moment = BookMoment.label(time: rewindTo, chapters: BookMoment.chapters(for: itemId, player: playerViewModel))
+        return ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(verbatim: summary)
                     .font(.body)
                     .foregroundStyle(Color.shelfCream)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
 
                 Button {
                     Haptics.selection()
                     playerViewModel.seek(to: rewindTo, reason: .zonedOut)
                     dismiss()
                 } label: {
-                    Text(String(localized: "Rewind to \(rewindTo.formattedTime)",
-                                comment: "Button on the I Zoned Out sheet. %@ is a time like 12:40"))
+                    Text(String(localized: "Rewind to \(moment)",
+                                comment: "Button on the I Zoned Out sheet. %@ is a moment like 12:40 · Chapter 3 (a plain time like 1:12:40 when the book has no chapters)"))
                         // Ink on the accent fill is contrast-picked, not white (DESIGN.md).
                         .foregroundStyle(Color.onAccent)
                         .frame(maxWidth: .infinity, minHeight: 44)

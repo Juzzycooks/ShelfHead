@@ -468,7 +468,10 @@ final class NowPlayingSessionModel: MediaSessionRepresentable {
         case .createBookmark:
             ShelfLog.info(.playback, "Lock Screen star: bookmark at \(Int(time))s")
             starBookmarkTimes[itemId, default: []].append(time)
-            await BookmarkSyncService.shared.create(itemId: itemId, time: time, title: time.formattedTime)
+            // Batch 490 (REVIEW 2026-11-11 V8): same default title as the player's.
+            await BookmarkSyncService.shared.create(
+                itemId: itemId, time: time,
+                title: BookmarkDefaultTitle.make(chapterTitle: service.currentChapter?.title, time: time))
         case .deleteBookmark(let at):
             ShelfLog.info(.playback, "Lock Screen star: removing bookmark at \(Int(at))s")
             starBookmarkTimes[itemId]?.removeAll { $0 == at }

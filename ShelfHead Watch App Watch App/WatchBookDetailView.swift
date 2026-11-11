@@ -52,6 +52,10 @@ struct WatchBookDetailView: View {
     /// Critique 2026-10-06 (harden): whether this book fits, worked out before the
     /// Download button is offered. `nil` until checked, or when the size isn't known.
     @State private var roomPlan: WatchDownloadRoomPlan?
+    /// Batch 490 (REVIEW 2026-11-11 W1): the size from the server when the caller didn't
+    /// pass one (a Shelf sleeve), so the room check runs from there too.
+    @State private var fetchedSizeBytes: Int64?
+    @State private var didFetchSize = false
     /// Batch 413: Mark as Finished's confirmation, request and outcome.
     @State private var confirmsMarkFinished = false
     @State private var isMarkingFinished = false
@@ -66,10 +70,11 @@ struct WatchBookDetailView: View {
                                     phoneIsReachable: companion.isReachable)
     }
     private var hasWatchSession: Bool { watchStore.authState == .active }
+    private var knownSizeBytes: Int64? { sizeBytes ?? fetchedSizeBytes }
 
-    /// Re-check the room whenever what's on the Watch changes.
+    /// Re-check the room whenever what's on the Watch, or the Storage Limit, changes.
     private var roomCheckKey: String {
-        "\(itemId)|\(manager.downloads.count)|\(manager.totalBytesUsed)|\(sizeBytes ?? 0)"
+        "\(itemId)|\(manager.downloads.count)|\(manager.totalBytesUsed)|\(knownSizeBytes ?? 0)|\(manager.storageLimit.rawValue)"
     }
 
     var body: some View {
@@ -85,11 +90,20 @@ struct WatchBookDetailView: View {
         // Batch 412 (Watch redesign): no generic "Book" title; the book is the title.
         .navigationTitle("")
         .task(id: roomCheckKey) {
-            guard sizeBytes != nil, !manager.isDownloaded(itemId: itemId) else {
+            guard !manager.isDownloaded(itemId: itemId) else {
                 roomPlan = nil
                 return
             }
-            roomPlan = await manager.roomPlan(forBytes: sizeBytes)
+            // Batch 490 (REVIEW 2026-11-11 W1): one lookup per screen when the size is unknown.
+            if knownSizeBytes == nil, !didFetchSize, hasWatchSession {
+                didFetchSize = true
+                fetchedSizeBytes = await manager.bookSize(itemId: itemId)
+            }
+            guard let size = knownSizeBytes else {
+                roomPlan = nil
+                return
+            }
+            roomPlan = await manager.roomPlan(forBytes: size)
         }
         .confirmsPlayReplacement($pendingPlay)
         .confirmsDownloadRemoval($pendingRemoveId)
@@ -204,6 +218,8 @@ struct WatchBookDetailView: View {
             }
             .frame(width: coverSide, height: coverSide)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            // Batch 490 (REVIEW 2026-11-11 W14): the Always-On Rule.
+            .watchAlwaysOnDimmed()
             .accessibilityHidden(true)
             VStack(spacing: WatchMetrics.titleSubtitleSpacing) {
                 Text(title)
@@ -233,7 +249,8 @@ struct WatchBookDetailView: View {
         let options = playOptions
         playControl(options.primary)
             .buttonStyle(.borderedProminent)
-            .tint(WatchTheme.accent)
+            // Batch 490 (REVIEW 2026-11-11 W14): Worn Taupe with the wrist down (Always-On Rule).
+            .watchProminentTint()
         if let secondary = options.secondary {
             playControl(secondary)
                 .buttonStyle(.bordered)
@@ -277,6 +294,8 @@ struct WatchBookDetailView: View {
             case .notDownloaded:
                 if roomPlan == .noRoom {
                     noRoomNotice
+                } else if roomPlan == .biggerThanLimit {
+                    biggerThanLimitNotice
                 } else {
                     Button {
                         startDownload()
@@ -313,6 +332,8 @@ struct WatchBookDetailView: View {
             case .failed where roomPlan == .noRoom:
                 // Still no room: Try Again would fail the same way, so point at the fix.
                 noRoomNotice
+            case .failed where roomPlan == .biggerThanLimit:
+                biggerThanLimitNotice
             case .failed(let reason):
                 // Critique 2026-10-06 (colorize): alert glyph, cream sentence.
                 WatchAlertNotice(text: .verbatim(reason), font: WatchMetrics.captionFont())
@@ -349,7 +370,7 @@ struct WatchBookDetailView: View {
     /// Size against room, and what downloading would remove. Only when the size is known.
     @ViewBuilder
     private var roomLines: some View {
-        if let sizeBytes {
+        if let sizeBytes = knownSizeBytes {
             Text(WatchDownloadRoomCopy.sizeLine(bookBytes: sizeBytes, roomBytes: manager.roomForDownloadsBytes))
                 .font(WatchMetrics.captionFont().monospacedDigit())
                 .foregroundStyle(WatchTheme.secondaryText)
@@ -369,7 +390,7 @@ struct WatchBookDetailView: View {
     @ViewBuilder
     private var noRoomNotice: some View {
         WatchAlertNotice(text: .verbatim(WatchDownloadRoomCopy.noRoom(title: title)), font: WatchMetrics.captionFont())
-        if let sizeBytes {
+        if let sizeBytes = knownSizeBytes {
             Text(WatchDownloadRoomCopy.sizeLine(bookBytes: sizeBytes, roomBytes: manager.roomForDownloadsBytes))
                 .font(WatchMetrics.captionFont().monospacedDigit())
                 .foregroundStyle(WatchTheme.secondaryText)
@@ -385,6 +406,29 @@ struct WatchBookDetailView: View {
         .buttonStyle(.bordered)
         .tint(WatchTheme.cardBackground)
         .foregroundStyle(WatchTheme.primaryText)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W1): the book is bigger than the Storage Limit, so no
+    /// amount of removing helps and "On This Watch" would send the listener in a circle.
+    /// Says the size and the limit, and offers the setting when a larger limit fits it.
+    @ViewBuilder
+    private var biggerThanLimitNotice: some View {
+        let bookBytes = knownSizeBytes ?? 0
+        WatchAlertNotice(text: .verbatim(WatchDownloadRoomCopy.biggerThanLimit(bookBytes: bookBytes,
+                                                                               limitBytes: manager.storageLimit.bytes)),
+                         font: WatchMetrics.captionFont())
+        if WatchDownloadStorageLimit.canRaise(toFit: bookBytes) {
+            NavigationLink {
+                WatchStorageLimitView()
+            } label: {
+                Label("Storage Limit", systemImage: "internaldrive")
+                    .font(WatchMetrics.secondaryFont(weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(WatchTheme.cardBackground)
+            .foregroundStyle(WatchTheme.primaryText)
+        }
     }
 
     /// "Removed “X” to make room." on the book that needed the room, until dismissed.
@@ -424,7 +468,7 @@ struct WatchBookDetailView: View {
 
     private func startDownload() {
         WatchHaptics.tap()
-        Task { await manager.startDownload(itemId: itemId, title: title, author: author, expectedBytes: sizeBytes) }
+        Task { await manager.startDownload(itemId: itemId, title: title, author: author, expectedBytes: knownSizeBytes) }
     }
 }
 

@@ -58,9 +58,8 @@ struct WatchDiagnosticsView: View {
             // here under "Troubleshooting" is now Settings > Play On, in plain words. This
             // screen keeps the readout.
         }
-        // UI polish pass — see ChaptersView's identical comment: `.carousel` applies to
-        // every top-level list screen.
-        .listStyle(.carousel)
+        // Batch 490 (REVIEW 2026-11-11 W14): default list style; the No-Carousel Rule
+        // (DESIGN.md) missed this screen in Batch 412.
         .navigationTitle("Diagnostics")
     }
 

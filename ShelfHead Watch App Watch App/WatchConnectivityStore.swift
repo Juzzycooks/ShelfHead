@@ -275,7 +275,7 @@ final class WatchConnectivityStore: NSObject {
             // carries a nil scope and is validated without a scope check on the phone
             // (see `WatchCommandValidator.validate`).
             guard case .requestSnapshot = kind else {
-                reportOutcome(ok: false, reason: String(localized: "Not synced with iPhone yet"))
+                reportOutcome(kind, ok: false, reason: String(localized: "Not synced with iPhone yet"))
                 completion(false)
                 return
             }
@@ -316,14 +316,14 @@ final class WatchConnectivityStore: NSObject {
 
         guard WCSession.default.activationState == .activated else {
             rollback?()
-            if reportsOutcome { reportOutcome(ok: false, reason: String(localized: "Watch isn't connected yet"), phoneUnreachable: true) }
+            if reportsOutcome { reportOutcome(command.kind, ok: false, reason: String(localized: "Watch isn't connected yet"), phoneUnreachable: true) }
             completion(false)
             return
         }
 
         guard let data = try? JSONEncoder().encode(command) else {
             rollback?()
-            if reportsOutcome { reportOutcome(ok: false, reason: String(localized: "Couldn't send that command")) }
+            if reportsOutcome { reportOutcome(command.kind, ok: false, reason: String(localized: "Couldn't send that command")) }
             completion(false)
             return
         }
@@ -336,17 +336,17 @@ final class WatchConnectivityStore: NSObject {
                         rollback?()
                         self.requestFreshSnapshotOnForeground()
                         if reportsOutcome {
-                            self.reportOutcome(ok: false, reason: self.failureMessage(for: reply["reason"] as? String))
+                            self.reportOutcome(command.kind, ok: false, reason: self.failureMessage(for: reply["reason"] as? String))
                         }
                     } else if reportsOutcome {
-                        self.reportOutcome(ok: true, reason: nil)
+                        self.reportOutcome(command.kind, ok: true, reason: nil)
                     }
                     completion(ok)
                 }
             }, errorHandler: { _ in
                 Task { @MainActor in
                     rollback?()
-                    if reportsOutcome { self.reportOutcome(ok: false, reason: String(localized: "iPhone didn't respond"), phoneUnreachable: true) }
+                    if reportsOutcome { self.reportOutcome(command.kind, ok: false, reason: String(localized: "iPhone didn't respond"), phoneUnreachable: true) }
                     completion(false)
                 }
             })
@@ -370,7 +370,7 @@ final class WatchConnectivityStore: NSObject {
             // didn't go through and can retry once reachable instead of the app quietly
             // discarding it while showing a false success.
             rollback?()
-            if reportsOutcome { reportOutcome(ok: false, reason: String(localized: "iPhone unreachable"), phoneUnreachable: true) }
+            if reportsOutcome { reportOutcome(command.kind, ok: false, reason: String(localized: "iPhone unreachable"), phoneUnreachable: true) }
             completion(false)
         }
     }
@@ -382,8 +382,13 @@ final class WatchConnectivityStore: NSObject {
     /// Polish pass (WA-6): `phoneUnreachable` failures (out of range, no reply, not yet connected)
     /// are expected on a wrist and not worth a modal alert per tap; they raise the transient
     /// inline notice instead and leave `lastCommandFailed` alone.
-    private func reportOutcome(ok: Bool, reason: String?, phoneUnreachable: Bool = false) {
-        playHaptic(success: ok)
+    private func reportOutcome(_ kind: WatchCommandKind, ok: Bool, reason: String?, phoneUnreachable: Bool = false) {
+        // Batch 490 (REVIEW 2026-11-11 W8): a routine command (play/pause, skip, seek,
+        // speed, sleep, chapter) no longer buzzes `.success` on the phone's reply; the
+        // button's click already acknowledged it. Failure still buzzes everywhere.
+        if let haptic = WatchFeedbackHaptic.forReply(to: kind, ok: ok) {
+            playHaptic(success: haptic == .success)
+        }
         if !ok && phoneUnreachable {
             showPhoneUnreachableNotice()
             return
@@ -548,12 +553,11 @@ final class WatchConnectivityStore: NSObject {
             completion(false)
             return
         }
+        // Batch 490 (REVIEW 2026-11-11 W8): no `WatchHaptics.tap()` here any more. The
+        // button's own click acknowledges the press and the Bookmarks outcome
+        // (`WatchFeedbackHaptic.forBookmark`) plays the one result haptic; this used to
+        // add a third buzz on top of those two.
         send(.addBookmark, itemId: state.itemId, completion: completion)
-        // UI polish pass round 2 (29 August 2026): this fired with zero tactile
-        // confirmation before — see this file's own WATCH-4 comment on `playHaptic`
-        // just below, which fixed relay-command acknowledgments but never covered
-        // direct user actions like this one.
-        WatchHaptics.tap()
     }
 
     func cyclePlaybackSpeed() {
@@ -574,6 +578,19 @@ final class WatchConnectivityStore: NSObject {
     func setSleepTimer(_ option: WatchSleepTimerOption) {
         guard let state = playbackState else { return }
         send(.setSleepTimer(option: option), itemId: state.itemId)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): the Sleep sheet's "Add 15 Minutes". Optimistic
+    /// so the countdown moves at once; rolled back if the phone refuses it (including a
+    /// phone older than Batch 490, which can't decode `.extendSleepTimer`).
+    func extendSleepTimer(by seconds: Double = WatchSleepExtend.seconds) {
+        guard let state = playbackState,
+              WatchSleepExtend.isAvailable(option: state.sleepTimerOption, secondsLeft: state.sleepTimerRemaining)
+        else { return }
+        let previous = state.sleepTimerRemaining
+        send(.extendSleepTimer(seconds: seconds), itemId: state.itemId,
+             optimisticApply: { [weak self] in self?.playbackState?.sleepTimerRemaining = previous + seconds },
+             rollback: { [weak self] in self?.playbackState?.sleepTimerRemaining = previous })
     }
 
     /// Requires explicit confirmation before calling (see `BookProgressView`) —

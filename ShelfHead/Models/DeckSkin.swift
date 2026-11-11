@@ -18,7 +18,9 @@ nonisolated enum DeckSkin: String, CaseIterable, Identifiable, Sendable {
     var displayName: LocalizedStringResource {
         switch self {
         case .classic: return "Classic"
-        case .walkman: return "Walkman"
+        // Batch 490 (REVIEW 2026-11-11 P11): "Walkman" is a Sony trademark; the label is
+        // generic now. The stored raw value stays `walkman` so saved choices still load.
+        case .walkman: return "Pocket Cassette"
         case .reelToReel: return "Reel-to-Reel"
         case .eightTrack: return "8-Track"
         case .boombox: return "Boombox"

@@ -315,6 +315,25 @@ final class AudioPlayerService {
             },
             "com.shelfhead.previousChapter" as CFString, nil, .deliverImmediately
         )
+        // Batch 490 (REVIEW 2026-11-11 F17): Control Centre "Add Bookmark" (`AddBookmarkControlIntent`).
+        // Same guards, default title and `BookmarkSyncService.create` call as the lock screen
+        // bookmark command (`setupRemoteCommands`); does nothing when no book is loaded and
+        // never starts playback. Republishes the snapshot so the intent's `updatedAt` wait ends.
+        CFNotificationCenterAddObserver(
+            center, nil,
+            { _, _, _, _, _ in
+                Task { @MainActor in
+                    let service = AudioPlayerService.shared
+                    guard service.transientOverride == nil,
+                          let itemId = service.currentItemId, service.currentTime > 0 else { return }
+                    let time = service.currentTime
+                    let title = BookmarkDefaultTitle.make(chapterTitle: service.currentChapter?.title, time: time)
+                    service.republishSharedSnapshot()
+                    await BookmarkSyncService.shared.create(itemId: itemId, time: time, title: title)
+                }
+            },
+            "com.shelfhead.addBookmark" as CFString, nil, .deliverImmediately
+        )
     }
 
     /// Writes the shared snapshot so a widget/Live Activity intent waiting on its
@@ -895,6 +914,14 @@ final class AudioPlayerService {
             let rewind = SettingsStore.smartRewindAmount(pausedFor: Date().timeIntervalSince(pausedSince))
             if rewind > 0 { seek(to: max(0, currentTime - rewind)) }
         }
+        // Batch 490 (REVIEW 2026-11-11 F20): offered once, then forgotten either way.
+        if let offer = sleepResumeOffer {
+            sleepResumeOffer = nil
+            if let target = Self.sleepJumpBackTarget(armedAt: offer.time, armedItemId: offer.itemId,
+                                                     resumeAt: currentTime, currentItemId: currentItemId) {
+                onSleepResumeOffer?(offer.itemId, target)
+            }
+        }
 
         player?.volume = 1   // restore in case a sleep fade lowered it
         AmbientBedEngine.shared.setFadeFactor(1)
@@ -980,7 +1007,39 @@ final class AudioPlayerService {
     }
 
     private func setKeepAwake(_ on: Bool) {
-        UIApplication.shared.isIdleTimerDisabled = on && SettingsStore.keepScreenAwake
+        // Batch 490 (REVIEW 2026-11-11 P2): this service is the one owner of
+        // `isIdleTimerDisabled`; Driving Mode's hold is folded in by `applyIdleTimer()`
+        // rather than written from the view, so a pause can't let the screen sleep
+        // under Driving Mode and closing Driving Mode can't undo the playback setting.
+        keepAwakeWhilePlaying = on
+        applyIdleTimer()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 P2): whether playback has asked for the screen to
+    /// stay on (`play()` sets it, `pause()`/stop clear it); the setting is read at apply time.
+    @ObservationIgnored private var keepAwakeWhilePlaying = false
+
+    /// Batch 490 (REVIEW 2026-11-11 P2): true while Driving Mode is on screen. Driving
+    /// Mode is a glanceable dashboard, so it keeps the screen on whatever the "Keep screen
+    /// awake" setting says and whether or not audio is playing.
+    func setDrivingModeHoldsScreenAwake(_ on: Bool) {
+        guard holdsScreenAwakeForDrivingMode != on else { return }
+        holdsScreenAwakeForDrivingMode = on
+        applyIdleTimer()
+    }
+    @ObservationIgnored private var holdsScreenAwakeForDrivingMode = false
+
+    private func applyIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = Self.idleTimerDisabled(
+            playing: keepAwakeWhilePlaying,
+            keepScreenAwakeSetting: SettingsStore.keepScreenAwake,
+            drivingModeOnScreen: holdsScreenAwakeForDrivingMode)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 P2): the one idle-timer decision. Pure, for tests.
+    nonisolated static func idleTimerDisabled(playing: Bool, keepScreenAwakeSetting: Bool,
+                                              drivingModeOnScreen: Bool) -> Bool {
+        drivingModeOnScreen || (playing && keepScreenAwakeSetting)
     }
 
     func togglePlayPause() {
@@ -1227,6 +1286,8 @@ final class AudioPlayerService {
         removeTimeObserver()
         stopPeriodicSync()
         cancelSleepTimer()
+        sleepArmAnchor = nil       // Batch 490 (REVIEW 2026-11-11 F20)
+        sleepResumeOffer = nil
         setKeepAwake(false)
         statusObservation?.invalidate()
         statusObservation = nil
@@ -1277,7 +1338,18 @@ final class AudioPlayerService {
     /// intended extension, occasionally landing very close to where it already was and
     /// making the button look broken.
     func setSleepTimer(_ option: SleepTimerOption, allowSnap: Bool = true) {
+        // Batch 490 (REVIEW 2026-11-11 F20): where the listener was when they armed a
+        // timer. Kept through extend / reset / "+1 chapter" (the timer was never off);
+        // re-taken when arming from off or on another book; dropped when it ends up off.
+        let wasOff = sleepTimerOption == .off
         cancelSleepTimer()
+        defer {
+            if sleepTimerOption == .off {
+                sleepArmAnchor = nil
+            } else if wasOff || sleepArmAnchor?.itemId != currentItemId, let itemId = currentItemId {
+                sleepArmAnchor = (itemId, currentTime)
+            }
+        }
         defer { publishControlState() }
         // Batch 406: the one Live Activity hook. Every arm path (manual, smart snap,
         // "+15" on a chapter timer, shake-to-reset, Undo, bedtime auto-arm, Control
@@ -1318,6 +1390,7 @@ final class AudioPlayerService {
                         self.applySleepFade()
                         if self.sleepTimerRemaining <= 0 {
                             self.pause()
+                            self.noteSleepTimerFired()
                             self.cancelSleepTimer()
                             self.publishControlState()
                         }
@@ -1469,6 +1542,39 @@ final class AudioPlayerService {
         }
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 F20): the chip's "+1 chapter" for an end-of-chapter or
+    /// +N chapters timer — moves the stop one chapter boundary further on, counted from the
+    /// boundary it was already heading for (re-arming `.chapters(n + 1)` from "now" would
+    /// overshoot once playback has crossed into a later chapter). Restores full volume in
+    /// case the fade had begun. No-op when there's no later boundary.
+    func extendSleepTimerByOneChapter() {
+        guard let current = sleepTargetTime,
+              let option = Self.optionAfterAddingChapter(sleepTimerOption),
+              let next = Self.nextChapterSleepTarget(chapters: currentSession?.chapters ?? [],
+                                                     currentTarget: current) else { return }
+        sleepTargetTime = next
+        sleepTimerRemaining = max(next - currentTime, 0)
+        sleepTimerOption = option
+        player?.volume = 1
+        AmbientBedEngine.shared.setFadeFactor(1)
+        publishControlState()
+    }
+
+    /// The end of the first chapter that ends after `currentTarget`, or nil. Pure.
+    nonisolated static func nextChapterSleepTarget(chapters: [Chapter], currentTarget: Double) -> Double? {
+        chapters.map { $0.end }.filter { $0 > currentTarget + 0.5 }.min()
+    }
+
+    /// `.endOfChapter` → `.chapters(1)`, `.chapters(n)` → `.chapters(n + 1)`; nil for the
+    /// timers "+1 chapter" doesn't apply to. Pure.
+    nonisolated static func optionAfterAddingChapter(_ option: SleepTimerOption) -> SleepTimerOption? {
+        switch option {
+        case .endOfChapter: return .chapters(1)
+        case .chapters(let n): return .chapters(n + 1)
+        default: return nil
+        }
+    }
+
     /// Puts back a timer the listener just turned off from the player's sleep chip (the
     /// "Undo" offer, `PlayerViewModel.undoSleepTimerOff()`). A countdown resumes with its
     /// exact remaining seconds as a plain countdown (`allowSnap: false`, so it doesn't jump
@@ -1572,6 +1678,35 @@ final class AudioPlayerService {
     /// `SettingsStore.suppressScheduledSleepTimerForTonight`.
     func skipScheduledSleepTimerTonight() {
         SettingsStore.suppressScheduledSleepTimerForTonight()
+    }
+
+    // MARK: Batch 490 (REVIEW 2026-11-11 F20): "Jump back" to where the timer was set
+
+    /// Item and position when the current sleep timer was armed (see `setSleepTimer`).
+    @ObservationIgnored private var sleepArmAnchor: (itemId: String, time: Double)?
+    /// Set when a timer fires; offered once, at the next resume of the same book.
+    @ObservationIgnored private var sleepResumeOffer: (itemId: String, time: Double)?
+    /// Called by `play()` with (item id, armed position) when the listener resumes a book
+    /// whose sleep timer stopped it and they're well past where they set it. The player
+    /// offers a "Jump back" chip; nothing here ever seeks.
+    @ObservationIgnored var onSleepResumeOffer: ((String, Double) -> Void)?
+
+    /// A sleep timer has just stopped playback: remember where it was armed. End-of-book
+    /// timers don't call this — finishing the book is not a place to jump back from.
+    private func noteSleepTimerFired() {
+        sleepResumeOffer = sleepArmAnchor
+        sleepArmAnchor = nil
+    }
+
+    /// Played past the armed position by at least this much before the offer is worth
+    /// making; under it, smart rewind and the skip buttons already cover the gap.
+    nonisolated static let sleepJumpBackMinimum: TimeInterval = 180
+
+    /// Pure, for tests: the position to offer, or nil.
+    nonisolated static func sleepJumpBackTarget(armedAt: Double, armedItemId: String,
+                                                resumeAt: Double, currentItemId: String?) -> Double? {
+        guard armedItemId == currentItemId, resumeAt - armedAt >= sleepJumpBackMinimum else { return nil }
+        return armedAt
     }
 
     private func cancelSleepTimer() {
@@ -1719,6 +1854,7 @@ final class AudioPlayerService {
             if let sleepTarget = sleepTargetTime, sleepTarget <= (currentChapter?.end ?? 0) + 0.5,
                target > sleepTarget {
                 pause()
+                noteSleepTimerFired()
                 cancelSleepTimer()
                 publishControlState()
                 return
@@ -1765,6 +1901,7 @@ final class AudioPlayerService {
             applySleepFade()
             if sleepTimerRemaining <= 0.5 {
                 pause()
+                noteSleepTimerFired()
                 cancelSleepTimer()
                 publishControlState()
             }
@@ -2905,8 +3042,10 @@ final class AudioPlayerService {
                 // Queued if the write fails — the lock screen and headphone remote have no
                 // way to report an error, so this used to be the most silent of the eight
                 // bookmark call sites.
+                // Batch 490 (REVIEW 2026-11-11 V8): same default title as the player's.
                 await BookmarkSyncService.shared.create(
-                    itemId: itemId, time: time, title: time.formattedTime)
+                    itemId: itemId, time: time,
+                    title: BookmarkDefaultTitle.make(chapterTitle: self.currentChapter?.title, time: time))
             }
             return .success
         }

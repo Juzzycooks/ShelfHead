@@ -101,6 +101,32 @@ final class WatchLocalDownloadManager: NSObject {
     private(set) var totalBytesUsed: Int64 = 0
     private(set) var availableCapacityBytes: Int64?
 
+    /// Batch 490 (REVIEW 2026-11-11 W12/F29): Settings › Downloads › Wi‑Fi Only. Off by
+    /// default, which keeps the behaviour before it existed (cellular allowed). Applied per
+    /// request (`URLRequest.allowsCellularAccess`): the background session's configuration
+    /// is copied when the session is made and can't change afterwards, and a request set to
+    /// `false` never runs over cellular whatever the session allows. So it applies to
+    /// downloads started after the switch changes, not to ones already running.
+    private(set) var wifiOnly: Bool = UserDefaults.standard.bool(forKey: WatchLocalDownloadManager.wifiOnlyDefaultsKey)
+    static let wifiOnlyDefaultsKey = "watchDownloadsWiFiOnly"
+
+    /// Batch 490 (REVIEW 2026-11-11 F29): Settings › Downloads › Storage Limit, in place of
+    /// the fixed 500 MB ceiling (`WatchDownloadCap`). Default 500 MB, today's value.
+    private(set) var storageLimit: WatchDownloadStorageLimit =
+        WatchDownloadStorageLimit.stored(UserDefaults.standard.integer(forKey: WatchDownloadStorageLimit.defaultsKey))
+
+    func setWiFiOnly(_ value: Bool) {
+        wifiOnly = value
+        UserDefaults.standard.set(value, forKey: Self.wifiOnlyDefaultsKey)
+    }
+
+    /// Lowering the limit removes nothing now; the next finished download is measured
+    /// against it, and eviction still never takes a book part-way through.
+    func setStorageLimit(_ limit: WatchDownloadStorageLimit) {
+        storageLimit = limit
+        UserDefaults.standard.set(limit.rawValue, forKey: WatchDownloadStorageLimit.defaultsKey)
+    }
+
     /// Build-fix (28 August 2026, first real Xcode build): `lazy var` is rejected
     /// under `@Observable`'s macro expansion — the macro rewrites every stored
     /// property into a computed pair backed by an init-accessor, and a `lazy`
@@ -471,10 +497,25 @@ final class WatchLocalDownloadManager: NSObject {
         states[itemId] = .queued
         pendingMetadata[itemId] = (title, author, 0, [])
         // Queued first, so a second tap during the check can't start a second attempt.
-        if await roomPlan(forBytes: expectedBytes) == .noRoom {
+        // Batch 490 (REVIEW 2026-11-11 W1): with no size from the caller (a Shelf sleeve,
+        // a retry from Downloads) ask the server for it, one small GET, so the check runs
+        // there too. A failed lookup leaves it unknown, as before.
+        var bookBytes = expectedBytes
+        if bookBytes == nil {
+            bookBytes = await bookSize(itemId: itemId)
+        }
+        switch await roomPlan(forBytes: bookBytes) {
+        case .noRoom:
             states[itemId] = .failed(WatchDownloadRoomCopy.noRoom(title: title))
             WatchHaptics.failure()
             return
+        case .biggerThanLimit:
+            states[itemId] = .failed(WatchDownloadRoomCopy.biggerThanLimit(bookBytes: bookBytes ?? 0,
+                                                                          limitBytes: storageLimit.bytes))
+            WatchHaptics.failure()
+            return
+        case .fits, .fitsAfterRemoving:
+            break
         }
         // UX fix (31 August 2026): title/author used to only get recorded once the
         // playback session resolved (below), and — on failure — the delegate's
@@ -540,6 +581,8 @@ final class WatchLocalDownloadManager: NSObject {
                       let url = URL(string: "\(api.serverURL)\(contentUrl)") else { continue }
                 var request = AuthStore.shared.authorizedRequest(url: url)
                 request.timeoutInterval = 60
+                // Batch 490 (REVIEW 2026-11-11 W12): Wi‑Fi Only (see `wifiOnly`).
+                request.allowsCellularAccess = !wifiOnly
                 let downloadTask = self.session.downloadTask(with: request)
                 downloadTask.taskDescription = Self.taskDescription(itemId: itemId, trackIndex: track.index ?? 0)
                 tasksToResume.append(downloadTask)
@@ -563,7 +606,8 @@ final class WatchLocalDownloadManager: NSObject {
             // Cover: best-effort, not tracked toward "all tracks complete" — a
             // missing cover shouldn't block marking the book downloaded and playable.
             if let coverURL = api.coverURL(itemId: itemId, width: 400) {
-                let request = AuthStore.shared.authorizedRequest(url: coverURL)
+                var request = AuthStore.shared.authorizedRequest(url: coverURL)
+                request.allowsCellularAccess = !wifiOnly
                 let coverTask = self.session.downloadTask(with: request)
                 coverTask.taskDescription = Self.taskDescription(itemId: itemId, trackIndex: nil)
                 coverTask.resume()
@@ -744,7 +788,8 @@ final class WatchLocalDownloadManager: NSObject {
         refreshAvailableCapacity()
         // Critique 2026-10-06 (harden): one formula, shared with the before-download
         // check (`WatchDownloadCap`).
-        return WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes)
+        // Batch 490 (REVIEW 2026-11-11 F29): the chosen Storage Limit, not a fixed ceiling.
+        return WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes, limitBytes: storageLimit.bytes)
     }
 
     /// Which downloads to evict, oldest-first, to get back under `capBytes` — never
@@ -845,16 +890,25 @@ final class WatchLocalDownloadManager: NSObject {
     func roomPlan(forBytes bytes: Int64?) async -> WatchDownloadRoomPlan {
         guard let bytes, bytes > 0 else { return .fits }
         refreshAvailableCapacity()
-        let cap = WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes, pendingBytes: bytes)
+        let limit = storageLimit.bytes
+        let cap = WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes, pendingBytes: bytes, limitBytes: limit)
         let listening = await listeningStates()
+        // Batch 490 (REVIEW 2026-11-11 W1): `limitBytes` adds the "bigger than the limit" outcome.
         return WatchDownloadRoomPlan.plan(newBytes: bytes, downloads: Array(downloads.values), capBytes: cap,
-                                          protectedItemIds: loadedItemIds, listening: listening)
+                                          limitBytes: limit, protectedItemIds: loadedItemIds, listening: listening)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W1): the book's size from the server, for callers that
+    /// don't have it (a Shelf sleeve's Book Details, a retry). `nil` when the lookup fails or
+    /// the server doesn't say. Through `WatchAudiobookshelfAPI.send` like every other call.
+    func bookSize(itemId: String) async -> Int64? {
+        (try? await api.getItem(itemId: itemId))?.sizeBytes
     }
 
     /// Room for downloads right now: the cap less what's used. For the detail screen's
     /// "320 MB · 180 MB free for downloads".
     var roomForDownloadsBytes: Int64 {
-        max(0, WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes) - totalBytesUsed)
+        max(0, WatchDownloadCap.capBytes(availableBytes: availableCapacityBytes, limitBytes: storageLimit.bytes) - totalBytesUsed)
     }
 
     private func evictIfNeeded(newItemId: String) {

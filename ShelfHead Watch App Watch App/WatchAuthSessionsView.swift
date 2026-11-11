@@ -68,13 +68,21 @@ struct WatchAuthSessionsView: View {
         .task { await load() }
     }
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     private func sessionRow(_ session: WatchAuthSession) -> some View {
         VStack(alignment: .leading, spacing: WatchMetrics.titleSubtitleSpacing) {
             HStack {
-                Text(session.userAgent?.isEmpty == false ? session.userAgent! : String(localized: "Unknown device"))
+                // Batch 490 (REVIEW 2026-11-11 W14): a readable name from the User-Agent
+                // (the iPhone's Sessions rule), two lines, not the raw string cut to one.
+                Text(WatchSessionLabel.deviceName(userAgent: session.userAgent) ?? String(localized: "Unknown device"))
                     .font(WatchMetrics.contentRowTitleFont(weight: .medium))
                     .foregroundStyle(WatchTheme.primaryText)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 if session.current {
                     // Critique 2026-10-06 (colorize): neutral — green isn't in the palette
                     // and "this device" isn't a success.
@@ -86,6 +94,12 @@ struct WatchAuthSessionsView: View {
             if let ip = session.ipAddress, !ip.isEmpty {
                 Text(ip)
                     .font(WatchMetrics.subtitleFont())
+                    .foregroundStyle(WatchTheme.secondaryText)
+            }
+            // Batch 490 (REVIEW 2026-11-11 W14): when it was last used, like the iPhone.
+            if let lastUsed = WatchSessionLabel.lastUsedDate(updatedAtMs: session.updatedAt, createdAtMs: session.createdAt) {
+                Text("Last active \(Self.relativeFormatter.localizedString(for: lastUsed, relativeTo: Date()))")
+                    .font(WatchMetrics.captionFont())
                     .foregroundStyle(WatchTheme.secondaryText)
             }
         }
@@ -143,4 +157,25 @@ struct WatchAuthSessionsView: View {
 #Preview {
     NavigationStack { WatchAuthSessionsView() }
         .environment(WatchStore.shared)
+}
+
+/// Batch 490 (REVIEW 2026-11-11 W14): the Sessions row's wording, pure so it is pinned
+/// by tests (`QuickWinsWatchLibraryTests`). `deviceName` mirrors the iPhone's
+/// `AuthSession.displayName` User-Agent fallback: everything before the first "(" or
+/// "/", trimmed ("ShelfHead/7.5 CFNetwork/…" → "ShelfHead"). The Watch doesn't decode
+/// `deviceInfo`, so the iPhone's client-name and vendor/model steps don't apply here.
+nonisolated enum WatchSessionLabel {
+    /// nil when there is nothing readable; the row says "Unknown device".
+    static func deviceName(userAgent: String?) -> String? {
+        guard let userAgent, !userAgent.isEmpty else { return nil }
+        let cutoff = userAgent.firstIndex(where: { $0 == "(" || $0 == "/" }) ?? userAgent.endIndex
+        let prefix = userAgent[userAgent.startIndex..<cutoff].trimmingCharacters(in: .whitespaces)
+        return prefix.isEmpty ? nil : prefix
+    }
+
+    /// The last time the session was used (`updatedAt`, else `createdAt`; epoch ms).
+    static func lastUsedDate(updatedAtMs: Int64?, createdAtMs: Int64?) -> Date? {
+        guard let ms = updatedAtMs ?? createdAtMs, ms > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+    }
 }

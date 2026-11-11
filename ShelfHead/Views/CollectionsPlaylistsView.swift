@@ -377,7 +377,8 @@ struct BookCollectionDetailView: View {
             return
         }
         Task {
-            await playerViewModel.startPlayback(for: start)
+            // Batch 490 (REVIEW 2026-11-11 L4): replacing the loaded book offers "Jump back".
+            await playerViewModel.startPlaybackOfferingUndo(for: start)
             guard playerViewModel.currentBook?.id == start.id, !rest.isEmpty else { return }
             playerViewModel.addToQueue(rest)
         }

@@ -44,9 +44,9 @@ struct AllBookmarksView: View {
             } else if bookmarks.isEmpty && loadFailed {
                 // UI-11: previously `getAllBookmarks()`'s error was swallowed by
                 // `try?`, so a real failure looked identical to "no bookmarks saved."
-                EmptyStateView(icon: "wifi.exclamationmark", title: "Couldn't load",
-                               subtitle: "Check your connection and try again.",
-                               actionTitle: "Retry", action: { Task { await load() } })
+                // Batch 490 (REVIEW 2026-11-11 E6): was a bare "Couldn't load"; the shared
+                // state says offline vs. server unreachable and offers Retry.
+                LoadFailedStateView { Task { await load() } }
             } else if bookmarks.isEmpty {
                 EmptyStateView(icon: "bookmark", title: LocalizedStringResource("No bookmarks"),
                                subtitle: LocalizedStringResource("Bookmarks you save while listening show up here."))
@@ -421,9 +421,9 @@ struct AuthorsBrowseView: View {
                     .accessibilityLabel("Loading authors…")
                     .transition(.opacity)
             } else if libraryViewModel.filterData == nil && libraryViewModel.filterDataLoadFailed {
-                EmptyStateView(icon: "wifi.exclamationmark", title: "Couldn't load",
-                               subtitle: "Check your connection and try again.",
-                               actionTitle: "Retry", action: { Task { await libraryViewModel.loadFilterData() } })
+                // Batch 490 (REVIEW 2026-11-11 E6): was a bare "Couldn't load"; the shared
+                // state says offline vs. server unreachable and offers Retry.
+                LoadFailedStateView { Task { await libraryViewModel.loadFilterData() } }
             } else if authors.isEmpty {
                 EmptyStateView(
                     icon: search.isEmpty ? "person.2" : "magnifyingglass",
@@ -684,9 +684,9 @@ private struct PersonBooksPage: View {
                 .accessibilityLabel("Loading…")
                 .transition(.opacity)
             } else if loadFailed {
-                EmptyStateView(icon: "wifi.exclamationmark", title: "Couldn't load",
-                               subtitle: "Check your connection and try again.",
-                               actionTitle: "Retry", action: { Task { await load() } })
+                // Batch 490 (REVIEW 2026-11-11 E6): was a bare "Couldn't load"; the shared
+                // state says offline vs. server unreachable and offers Retry.
+                LoadFailedStateView { Task { await load() } }
             } else if books.isEmpty {
                 EmptyStateView(icon: "book.closed", title: LocalizedStringResource("No books"),
                                subtitle: .verbatim(kind == .author ? String(localized: "Nothing found for this author") : String(localized: "Nothing found for \(name)", comment: "Empty state; %@ is a narrator\u{2019}s name")))
@@ -924,9 +924,9 @@ struct NarratorsBrowseView: View {
             // UI-11: the old `filterData == nil` check alone meant a genuine failure
             // left this spinner running forever, since nothing ever told it to stop.
             if libraryViewModel.filterData == nil && libraryViewModel.filterDataLoadFailed {
-                EmptyStateView(icon: "wifi.exclamationmark", title: "Couldn't load",
-                               subtitle: "Check your connection and try again.",
-                               actionTitle: "Retry", action: { Task { await libraryViewModel.loadFilterData() } })
+                // Batch 490 (REVIEW 2026-11-11 E6): was a bare "Couldn't load"; the shared
+                // state says offline vs. server unreachable and offers Retry.
+                LoadFailedStateView { Task { await libraryViewModel.loadFilterData() } }
             } else if showsSkeleton {
                 // Was a centred `LoadingView` spinner — the odd one out next to
                 // Library Books' shape-matched skeleton. Same row shape as
@@ -1073,9 +1073,9 @@ struct GenreBooksView: View {
                 .accessibilityLabel("Loading…")
                 .transition(.opacity)
             } else if loadFailed {
-                EmptyStateView(icon: "wifi.exclamationmark", title: "Couldn't load",
-                               subtitle: "Check your connection and try again.",
-                               actionTitle: "Retry", action: { Task { await load() } })
+                // Batch 490 (REVIEW 2026-11-11 E6): was a bare "Couldn't load"; the shared
+                // state says offline vs. server unreachable and offers Retry.
+                LoadFailedStateView { Task { await load() } }
             } else if books.isEmpty {
                 EmptyStateView(icon: "book.closed", title: LocalizedStringResource("No books"), subtitle: LocalizedStringResource("Nothing found for \(genre)"))
             } else {

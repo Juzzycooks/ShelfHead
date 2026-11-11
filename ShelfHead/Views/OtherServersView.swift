@@ -328,6 +328,13 @@ struct OtherServersShelf: View {
     /// where the switch started. Its `switchingAccountId` is LS-4's in-flight state (the
     /// card shows progress and the whole shelf is disabled while a switch runs).
     @State private var flow = ServerSwitchFlow()
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// Batch 490 (REVIEW 2026-11-11 A5): cards widen at accessibility sizes so a title
+    /// isn't squeezed to a letter a line, and names wrap there instead of truncating.
+    private var cardWidth: CGFloat { dynamicTypeSize.isAccessibilitySize ? 160 : 96 }
+    private var titleLineLimit: Int? { dynamicTypeSize.isAccessibilitySize ? nil : 2 }
+    private var lineLimit: Int? { dynamicTypeSize.isAccessibilitySize ? nil : 1 }
 
     private func shelf(for account: ServerAccount) -> OtherServersStore.ServerShelf? {
         store.shelves.first { $0.id == account.id }
@@ -345,9 +352,16 @@ struct OtherServersShelf: View {
             HStack(alignment: .firstTextBaseline) {
                 RetroSectionHeader(title: "On Other Servers")
                 Spacer(minLength: 8)
-                NavigationLink("See all") { OtherServersView() }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.shelfAmberText)
+                // Batch 490 (REVIEW 2026-11-11 A5): a 44pt target, not just the text's height.
+                NavigationLink {
+                    OtherServersView()
+                } label: {
+                    Text("See all")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.shelfAmberText)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
             }
             .padding(.horizontal, Space.pageH)
 
@@ -386,7 +400,7 @@ struct OtherServersShelf: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 if let shelf = shelf(for: entry.account) {
-                    OtherServerCover(item: entry.item, shelf: shelf, size: 96)
+                    OtherServerCover(item: entry.item, shelf: shelf, size: cardWidth)
                 }
                 // LS-4: progress on the specific card being switched to.
                 if flow.switchingAccountId == entry.account.id {
@@ -397,18 +411,18 @@ struct OtherServersShelf: View {
                         .shelfSpinner()
                 }
             }
-            .frame(width: 96, height: 96)
+            .frame(width: cardWidth, height: cardWidth)
             .clipShape(RoundedRectangle(cornerRadius: Radius.chip))
             Typo.rowTitle(Text(entry.item.title))
                 .foregroundStyle(Color.shelfCream)
-                .lineLimit(2)
+                .lineLimit(titleLineLimit)
                 .multilineTextAlignment(.leading)
             Typo.rowSubtitle(Text(entry.item.authorName))
                 .foregroundStyle(Color.shelfMuted)
-                .lineLimit(1)
+                .lineLimit(lineLimit)
             hostChip(entry.account.displayHost)
         }
-        .frame(width: 96, alignment: .leading)
+        .frame(width: cardWidth, alignment: .leading)
         // HIG audit 2026-09-17 L7: title, author, and host chip were three separate
         // VoiceOver stops on what's a single tappable card (this is a Button label) —
         // combine them into one, matching `resultMessage`/`serverSummarySection`'s
@@ -433,17 +447,17 @@ struct OtherServersShelf: View {
                         .foregroundStyle(Color.shelfMuted)
                 }
             }
-            .frame(width: 96, height: 96)
+            .frame(width: cardWidth, height: cardWidth)
             .clipShape(RoundedRectangle(cornerRadius: Radius.chip))
             Typo.rowTitle(Text("Sign in"))
                 .foregroundStyle(Color.shelfAmberText)
-                .lineLimit(1)
+                .lineLimit(lineLimit)
             Typo.rowSubtitle(Text(account.username))
                 .foregroundStyle(Color.shelfMuted)
-                .lineLimit(1)
+                .lineLimit(lineLimit)
             hostChip(account.displayHost)
         }
-        .frame(width: 96, alignment: .leading)
+        .frame(width: cardWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Sign in to \(account.displayHost) as \(account.username)")
         .accessibilityValue(flow.switchingAccountId == account.id ? Text("Switching") : Text(verbatim: ""))
@@ -454,7 +468,7 @@ struct OtherServersShelf: View {
     private func hostChip(_ host: String) -> some View {
         Typo.fine(Text(host), weight: .semibold)
             .foregroundStyle(Color.shelfMuted)
-            .lineLimit(1)
+            .lineLimit(lineLimit)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(Color.shelfSurface))
@@ -470,17 +484,23 @@ struct OtherServersView: View {
     /// "Sign in to browse this server" goes through it too, so a server with no stored
     /// password asks for it instead of failing silently.
     @State private var flow = ServerSwitchFlow()
+    /// Batch 490 (REVIEW 2026-11-11 N7): the empty state's action opens Settings › Account.
+    @Environment(TabRouter.self) private var tabRouter
 
     var body: some View {
         ZStack {
             Color.shelfBackground.ignoresSafeArea()
 
             if store.shelves.isEmpty {
+                // Batch 490 (REVIEW 2026-11-11 N7): a way to act on "add another server" from here.
                 EmptyStateView(
                     icon: "server.rack",
                     title: LocalizedStringResource("No Other Servers"),
-                    subtitle: LocalizedStringResource("Add another server in Settings to browse it here.")
-                )
+                    subtitle: LocalizedStringResource("Add another server in Settings to browse it here."),
+                    actionTitle: LocalizedStringResource("Open Server Settings")
+                ) {
+                    tabRouter.requestedSettingsPage = .account
+                }
             } else {
                 List {
                     ForEach(store.shelves) { shelf in

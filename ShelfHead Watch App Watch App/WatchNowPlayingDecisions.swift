@@ -364,3 +364,116 @@ nonisolated enum WatchPaletteMath {
         }
     }
 }
+
+// MARK: - Batch 490 (REVIEW 2026-11-11 quick wins)
+
+/// Batch 490 (REVIEW 2026-11-11 W8): which haptic, if any, a result plays. The Watch used
+/// to play `.success` on every phone reply on top of the button's own click, so a skip
+/// buzzed twice and a bookmark three times. A routine command now relies on the click
+/// alone; success is kept for the outcomes a person waits on, failure everywhere.
+nonisolated enum WatchFeedbackHaptic: Equatable, Sendable {
+    case success
+    case failure
+
+    /// The haptic for the phone's reply to `kind`. `nil` means play nothing.
+    /// `.requestSnapshot` is background traffic; `.addBookmark` is played once by the
+    /// Bookmarks outcome UI (`forBookmark(_:)`), not here as well.
+    /// `@MainActor` because `WatchCommandKind` (shared with the phone, in `WatchModels.swift`)
+    /// takes this target's default main-actor isolation; every caller is on the main actor.
+    @MainActor
+    static func forReply(to kind: WatchCommandKind, ok: Bool) -> WatchFeedbackHaptic? {
+        switch kind {
+        case .requestSnapshot, .addBookmark:
+            return nil
+        default:
+            break
+        }
+        guard ok else { return .failure }
+        switch kind {
+        case .markFinished, .markItemFinished, .playItem:
+            return .success
+        default:
+            return nil
+        }
+    }
+
+    /// The one haptic a bookmark add plays, from its outcome. `.saving` plays nothing
+    /// (the button's own click already acknowledged the press).
+    static func forBookmark(_ outcome: WatchBookmarkOutcome) -> WatchFeedbackHaptic? {
+        switch outcome {
+        case .saving: return nil
+        case .saved, .savedOffline: return .success
+        case .failed: return .failure
+        }
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 W9): Crown scrub timing. The scrub used to drop focus as
+/// soon as the 350 ms seek debounce fired, so a pause mid-scrub handed the Crown back to
+/// volume. Now the seek still lands after `seekDebounce`, but the Crown stays on the
+/// scrubber until the row is tapped again or `releaseAfterIdle` passes with no movement.
+nonisolated enum WatchCrownScrub {
+    static let seekDebounce: Double = 0.35
+    static let releaseAfterIdle: Double = 3
+
+    static func nanoseconds(_ seconds: Double) -> UInt64 { UInt64(max(0, seconds) * 1_000_000_000) }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F29): the Sleep sheet's "Add 15 Minutes" row. Shown
+/// only while a countdown timer is running; an end-of-chapter timer is a boundary, not
+/// a countdown, so it gets no row.
+nonisolated enum WatchSleepExtend {
+    static let seconds: Double = 15 * 60
+
+    /// `@MainActor` for the same reason as `WatchFeedbackHaptic.forReply`.
+    @MainActor
+    static func isAvailable(option: WatchSleepTimerOption?, secondsLeft: Double?) -> Bool {
+        guard case .minutes = option, let secondsLeft, secondsLeft.isFinite, secondsLeft > 0 else { return false }
+        return true
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 W5): whether the standalone Now Playing page should
+/// switch to a book the engine has just loaded. The page was built for one item id, so
+/// a book started from elsewhere (the Shelf, Siri, auto-resume) left the page showing
+/// the old one with "Play" that would restart it.
+nonisolated enum StandaloneNowPlayingFollow {
+    static func shouldFollow(shownItemId: String, previousLoadedItemId: String?,
+                             newLoadedItemId: String?, isLoaded: Bool, isConfirming: Bool) -> Bool {
+        guard isLoaded, !isConfirming, let newLoadedItemId else { return false }
+        return newLoadedItemId != shownItemId && newLoadedItemId != previousLoadedItemId
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F29): standalone chapter skip from the system Now
+/// Playing controls and AirPods. Same rules as the phone's
+/// `AudioPlayerService.nextChapterTarget`/`previousChapterTarget`.
+nonisolated enum WatchChapterNavigation {
+    /// Previous restarts the current chapter when more than this far into it.
+    static let restartThreshold: Double = 3
+
+    /// The next chapter's start; failing that, the end of the book when it's ahead;
+    /// `nil` when there's nowhere to go.
+    static func nextTarget(chapterStarts: [Double], bookEnd: Double, currentTime: Double) -> Double? {
+        if let next = chapterStarts.sorted().first(where: { $0 > currentTime + 0.5 }) { return next }
+        return bookEnd > currentTime + 0.5 ? bookEnd : nil
+    }
+
+    /// The current chapter's start when more than `restartThreshold` into it; otherwise
+    /// the previous chapter's start (0 at the first chapter).
+    static func previousTarget(chapterStarts: [Double], currentTime: Double) -> Double {
+        let starts = chapterStarts.sorted()
+        let currentStart = starts.last(where: { $0 <= currentTime }) ?? 0
+        if currentTime - currentStart > restartThreshold { return currentStart }
+        return starts.last(where: { $0 < currentStart - 0.5 }) ?? 0
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F29): whether standalone Now Playing shows the buffering
+/// ring. Only a stream can stall on the network; a local download that is briefly
+/// waiting (the first frames after a seek) never shows it.
+nonisolated enum StandaloneBufferingDecision {
+    static func showsBuffering(isStreaming: Bool, isWaitingToPlay: Bool) -> Bool {
+        isStreaming && isWaitingToPlay
+    }
+}

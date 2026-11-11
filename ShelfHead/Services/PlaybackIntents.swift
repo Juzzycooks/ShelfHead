@@ -753,9 +753,37 @@ struct AudiobookQuery: EntityStringQuery {
     /// offline-safe, the same source `CarPlayCoordinator`'s Downloads tab reads from.
     /// `@MainActor` because `DownloadManager` itself is: this hops onto it rather than
     /// making the whole query type actor-isolated.
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 Y6): in-progress books first (most recently played first,
+    /// from the App Group list the app already publishes for widgets — `SharedLibrary`, a
+    /// synchronous local read), then downloaded books by title, up to ten.
     @MainActor
     func suggestedEntities() async throws -> [AudiobookEntity] {
-        DownloadManager.shared.downloadedLibraryItems().prefix(10).map(AudiobookEntity.init(from:))
+        let downloaded = DownloadManager.shared.downloadedLibraryItems()
+        let inProgress = SharedLibrary.read().books
+        let ids = Self.suggestedIDs(inProgress: inProgress.map { (id: $0.id, lastPlayed: $0.updatedAt) },
+                                    downloadedIDs: downloaded.map(\.id))
+        let downloadedByID = Dictionary(downloaded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let publishedByID = Dictionary(inProgress.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return ids.compactMap { id in
+            if let item = downloadedByID[id] { return AudiobookEntity(from: item) }
+            guard let book = publishedByID[id] else { return nil }
+            return AudiobookEntity(id: id, fields: AudiobookEntityFields(
+                title: book.title, authorName: book.author, narratorName: nil, seriesName: nil))
+        }
+    }
+
+    /// The ordering decision, pure: in-progress ids newest-played first, then the downloaded ids
+    /// in their given order, deduped, capped at `limit`.
+    nonisolated static func suggestedIDs(inProgress: [(id: String, lastPlayed: Date)],
+                                         downloadedIDs: [String], limit: Int = 10) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        let recent = inProgress.sorted { $0.lastPlayed > $1.lastPlayed }.map(\.id)
+        for id in recent + downloadedIDs where result.count < limit {
+            if seen.insert(id).inserted { result.append(id) }
+        }
+        return result
     }
 }
 
@@ -925,7 +953,11 @@ struct StartSleepTimerIntent: AppIntent {
     /// field in the player UI (`PlayerView`'s sleep timer menu is presets-only). Siri
     /// had no equivalent ceiling before this fix, so "set a 500 minute sleep timer"
     /// could ask for something the app itself never offers.
-    static let maxSleepTimerMinutes = 60
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 Y6): now follows the player's custom-length ceiling
+    /// (`SleepTimerOption.customMinutesRange`, 1...180) so "set a 90 minute sleep timer"
+    /// is no longer silently cut to 60.
+    static let maxSleepTimerMinutes = SleepTimerOption.customMinutesRange.upperBound
 
     /// The decision half of Item 33's fix — pure, so it can be pinned by a test
     /// independent of `AppIntents`/`AudioPlayerService`. `0` or a negative value used to
@@ -949,15 +981,26 @@ struct StartSleepTimerIntent: AppIntent {
         return .valid(requested)
     }
 
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        switch StartSleepTimerIntent.validatedSleepTimerMinutes(minutes) {
-        case .tooLow:
-            throw $minutes.needsValueError("Choose at least 1 minute")
-        case .valid(let value), .capped(let value):
-            try await PlaybackCoordinator.shared.setSleepTimerFromIntent(minutes: value)
-            return .result()
+    /// Batch 490 (REVIEW 2026-11-11 Y6): the confirmation names the value actually set, so a
+    /// capped request says so. Pure for tests.
+    nonisolated static func confirmationMinutes(for validation: MinutesValidation) -> Int? {
+        switch validation {
+        case .tooLow: return nil
+        case .valid(let value), .capped(let value): return value
         }
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let validation = StartSleepTimerIntent.validatedSleepTimerMinutes(minutes)
+        guard let value = StartSleepTimerIntent.confirmationMinutes(for: validation) else {
+            throw $minutes.needsValueError("Choose at least 1 minute")
+        }
+        try await PlaybackCoordinator.shared.setSleepTimerFromIntent(minutes: value)
+        let dialog = value == 1
+            ? IntentDialog(LocalizedStringResource("Sleep timer set for 1 minute."))
+            : IntentDialog(LocalizedStringResource("Sleep timer set for \(value) minutes."))
+        return .result(dialog: dialog)
     }
 }
 

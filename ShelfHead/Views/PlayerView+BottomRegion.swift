@@ -125,7 +125,9 @@ extension PlayerView {
                     // scrollable content (see `SpeedSheet.body`) may not fully fit at
                     // the fixed 340pt height. [device check] on the exact size this
                     // first becomes necessary at.
-                    .presentationDetents([.height(340), .large])
+                    // Batch 490 (REVIEW 2026-11-11 P7): `.medium` instead of a fixed 340pt,
+                    // which clipped the ×/WPM controls once they moved to the top.
+                    .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
 
@@ -494,6 +496,8 @@ private struct SleepTimerToolbarButton: View {
     let toolbarIconSlot: CGFloat
     let toolbarLabelPointSize: CGFloat
     let usesAccessibilityLayout: Bool
+    /// Batch 490 (REVIEW 2026-11-11 F20): the "Custom…" length picker.
+    @State private var showCustomSleep = false
 
     private var spokenSleepValue: String {
         let remaining = playerViewModel.sleepTimerRemaining
@@ -558,6 +562,13 @@ private struct SleepTimerToolbarButton: View {
                             playerViewModel.extendSleepTimer(by: 15 * 60)
                         } label: { Label("Add 15 Minutes", systemImage: "plus") }
                     }
+                    // Batch 490 (REVIEW 2026-11-11 F20): same as the chip's "+1 chapter".
+                    if AudioPlayerService.optionAfterAddingChapter(playerViewModel.sleepTimerOption) != nil {
+                        Button {
+                            Haptics.selection()
+                            playerViewModel.extendSleepTimerByOneChapter()
+                        } label: { Label("Add 1 Chapter", systemImage: "plus") }
+                    }
                     // Goes through `turnOffSleepTimer()` so the player offers the
                     // "Sleep timer off · Undo" chip, same as the status chip's ✕.
                     Button {
@@ -574,6 +585,11 @@ private struct SleepTimerToolbarButton: View {
                     ForEach(SleepTimerOption.menuMorePicks(hasChapters: hasChapters), id: \.label) { option in
                         optionToggle(option)
                     }
+                    // Batch 490 (REVIEW 2026-11-11 F20): any length from 1 to 180 minutes.
+                    Button {
+                        Haptics.selection()
+                        showCustomSleep = true
+                    } label: { Label("Custom\u{2026}", systemImage: "timer") }
                 } label: {
                     Label("More", systemImage: "ellipsis")
                 }
@@ -608,11 +624,58 @@ private struct SleepTimerToolbarButton: View {
         }
         // CO-7: menu text and checkmarks in the label colour, not amber on glass.
         .systemChromeTint()
+        .sheet(isPresented: $showCustomSleep) {
+            CustomSleepTimerSheet { minutes in
+                playerViewModel.setSleepTimer(.minutes(minutes))
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .accessibilityLabel("Sleep timer")
         // Critique 2026-10-05 (second run): was spoken "29m". `spokenSleepValue` says it in
         // words; the visible label stays "Sleep".
         .accessibilityValue(spokenSleepValue)
         .accessibilityHint("Opens sleep timer options")
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F20): "Custom…" in the Sleep menu's More. A wheel of 1–180
+/// minutes, like Clock's timer; Start arms an ordinary `.minutes(n)` timer, so the Live
+/// Activity, widgets, Control Center and Watch see nothing new.
+private struct CustomSleepTimerSheet: View {
+    let onStart: (Int) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var minutes = SleepTimerOption.clampedCustomMinutes(
+        SettingsStore.defaultSleepTimerMinutes > 0 ? SettingsStore.defaultSleepTimerMinutes : 30)
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.shelfBackground.ignoresSafeArea()
+                Picker("Minutes", selection: $minutes) {
+                    ForEach(Array(SleepTimerOption.customMinutesRange), id: \.self) { value in
+                        Text(SleepTimerOption.minutes(value).label).tag(value)
+                    }
+                }
+                .pickerStyle(.wheel)
+                .padding(.horizontal, Space.xl)
+            }
+            .navigationTitle("Custom Sleep Timer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    SheetCancelButton { dismiss() }.monochromeToolbarItem()
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    SheetConfirmButton(title: "Start") {
+                        Haptics.selection()
+                        onStart(SleepTimerOption.clampedCustomMinutes(minutes))
+                        dismiss()
+                    }
+                }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
+            }
+        }
     }
 }
 
@@ -660,7 +723,25 @@ private struct SleepStatusChip: View {
                 .monospacedDigit()
 
             // Extend only applies to a running countdown.
-            if playerViewModel.sleepTimerRemaining > 0 {
+            // Batch 490 (REVIEW 2026-11-11 F20): a chapter timer's extension is a chapter,
+            // in the slot +15m takes for a countdown (+15m stays in the Sleep menu, where
+            // it turns a chapter timer into minutes).
+            if AudioPlayerService.optionAfterAddingChapter(playerViewModel.sleepTimerOption) != nil {
+                Divider().frame(height: 14).overlay(Color.shelfCream.opacity(0.12))
+                    .padding(.horizontal, 2)
+                Button {
+                    Haptics.selection()
+                    playerViewModel.extendSleepTimerByOneChapter()
+                } label: {
+                    Typo.chip(Text("+1 chapter"), weight: .semibold)
+                        .frame(minWidth: 20, minHeight: 20)
+                        .contentShape(Rectangle().inset(by: -12))
+                }
+                .foregroundStyle(Color.shelfAmberText)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add 1 chapter")
+                .accessibilityHint("Stops the sleep timer one chapter later")
+            } else if playerViewModel.sleepTimerRemaining > 0 {
                 // Critique 2026-10-05: 2pt either side of the divider keeps the two
                 // enlarged hit areas below (+15m's reaches 12pt right, ✕'s 12pt left)
                 // from overlapping across what was a 21pt gap.
@@ -687,7 +768,9 @@ private struct SleepStatusChip: View {
             } label: {
                 Image(systemName: "xmark")
                     .scaledFont(10, weight: .bold, relativeTo: .caption2)
-                    .foregroundStyle(Color.shelfCream.opacity(0.55))
+                    // Batch 490 (REVIEW 2026-11-11 A5): was cream at 55%, under 3:1 on the
+                    // glass in Light; the muted token clears it in both themes.
+                    .foregroundStyle(Color.shelfMuted)
                     // Batch 218 (R10.6): UI-12's original fix gave this glyph a
                     // real `.frame(width: 44, height: 44)` to get a HIG-minimum
                     // tap target — correct on its own, but that 44pt height, plus

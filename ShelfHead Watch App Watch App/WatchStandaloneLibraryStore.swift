@@ -133,6 +133,9 @@ final class WatchStandaloneLibraryStore {
     static let selectedLibraryDefaultsKey = "standaloneSelectedLibraryId"
 
     private(set) var libraries: [WatchLibrary] = []
+    /// Batch 490 (REVIEW 2026-11-11 W11): the server has libraries, but every one is a
+    /// podcast library, which this Watch can't play. Lets the empty state say so.
+    private(set) var hasOnlyPodcastLibraries = false
     private(set) var librariesState: LoadState = .idle
     private(set) var selectedLibraryId: String?
 
@@ -189,13 +192,18 @@ final class WatchStandaloneLibraryStore {
             // "Couldn't reach the server," with `authState` left at `.active` — so the
             // only affordance was a Retry that could never succeed. See that type's
             // own doc comment.
-            let fetched = try await WatchStandaloneCall.perform { try await api.getLibraries() }
+            let all = try await WatchStandaloneCall.perform { try await api.getLibraries() }
+            // Batch 490 (REVIEW 2026-11-11 W11): podcasts stream on iPhone only, so their
+            // libraries are left out of the picker and never chosen by default.
+            let fetched = all.filter { WatchLibraryChoice.isPlayable(mediaType: $0.mediaType) }
             libraries = fetched
+            hasOnlyPodcastLibraries = fetched.isEmpty && !all.isEmpty
             librariesState = .loaded
             let stored = UserDefaults.standard.string(forKey: Self.selectedLibraryDefaultsKey)
-            let resolved = fetched.first { $0.id == stored } ?? fetched.first
-            if let resolved {
-                await selectLibrary(resolved.id)
+            if let resolvedId = WatchLibraryChoice.defaultLibraryId(candidateIds: fetched.map(\.id), storedId: stored) {
+                await selectLibrary(resolvedId)
+            } else {
+                selectedLibraryId = nil
             }
         } catch {
             librariesState = .failed(Self.message(for: error))
@@ -316,5 +324,21 @@ final class WatchStandaloneLibraryStore {
 
     private static func message(for error: Error) -> String {
         (error as? WatchAPIError)?.errorDescription ?? String(localized: "Couldn't reach the server.")
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 W11): which server libraries the standalone Library
+/// offers. Pure, so the rule is pinned by tests (`QuickWinsWatchLibraryTests`).
+nonisolated enum WatchLibraryChoice {
+    /// Everything but podcast libraries. A missing `mediaType` (older servers) counts as
+    /// books, which is what Audiobookshelf defaulted to before it had podcasts.
+    static func isPlayable(mediaType: String?) -> Bool {
+        mediaType?.lowercased() != "podcast"
+    }
+
+    /// The stored choice when it is still offered, otherwise the first offered library.
+    static func defaultLibraryId(candidateIds: [String], storedId: String?) -> String? {
+        if let storedId, candidateIds.contains(storedId) { return storedId }
+        return candidateIds.first
     }
 }

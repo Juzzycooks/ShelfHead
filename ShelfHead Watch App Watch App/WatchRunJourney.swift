@@ -469,6 +469,25 @@ nonisolated enum WatchPlayOnWatchPhoneAction: Equatable, Sendable {
     }
 }
 
+/// Batch 490 (REVIEW 2026-11-11 W4): "Play on iPhone" while this Watch has a book loaded.
+/// Sending the play request alone left the Watch playing too. A loaded book is saved and
+/// stopped first; one that's playing asks first ("X stops on this Watch"), as Play on Watch
+/// asks before replacing a playing book. A paused one stops without asking, as Play on
+/// Watch replaces a paused book without asking.
+nonisolated enum WatchPlayOnPhoneWatchAction: Equatable, Sendable {
+    /// Nothing loaded on this Watch: send the request.
+    case nothing
+    /// Paused on this Watch: save and stop it, then send.
+    case stopWatch
+    /// Playing on this Watch: ask, then save and stop it, then send.
+    case confirmStoppingWatch(currentTitle: String)
+
+    static func decide(engineIsLoaded: Bool, engineIsPlaying: Bool, engineTitle: String) -> WatchPlayOnPhoneWatchAction {
+        guard engineIsLoaded else { return .nothing }
+        return engineIsPlaying ? .confirmStoppingWatch(currentTitle: engineTitle) : .stopWatch
+    }
+}
+
 /// Where a downloaded book stands for eviction. Built from whatever the Watch knows: its
 /// own last position (`WatchPendingProgressQueue`) and the server's (the manifest, or the
 /// iPhone's snapshot), resolved by `WatchResumePoint`.
@@ -520,9 +539,16 @@ nonisolated enum WatchDownloadRoomPlan: Equatable, Sendable {
     case fitsAfterRemoving([String])
     /// Can't fit without removing a book that's part-way through. Nothing is removed.
     case noRoom
+    /// Batch 490 (REVIEW 2026-11-11 W1): the book alone is bigger than the Storage Limit,
+    /// so removing other books can never make room. Said as such, with no Downloads link.
+    case biggerThanLimit
 
+    /// `limitBytes` is the Storage Limit setting (`WatchDownloadStorageLimit`); the default
+    /// leaves the check out, for callers that only care about room.
     static func plan(newBytes: Int64, downloads: [WatchLocalDownload], capBytes: Int64,
+                     limitBytes: Int64 = .max,
                      protectedItemIds: Set<String>, listening: [String: WatchDownloadListening]) -> WatchDownloadRoomPlan {
+        if newBytes > limitBytes { return .biggerThanLimit }
         let used = downloads.reduce(Int64(0)) { $0 + $1.totalBytes }
         let total = used + max(0, newBytes)
         guard total > capBytes else { return .fits }
@@ -534,16 +560,54 @@ nonisolated enum WatchDownloadRoomPlan: Equatable, Sendable {
     }
 }
 
-/// The storage cap: the smaller of a fixed ceiling and half of what's free. Pure so the
+/// The storage cap: the smaller of the Storage Limit and half of what's free. Pure so the
 /// before-download check and the after-download eviction use the same number.
 nonisolated enum WatchDownloadCap {
+    /// The default Storage Limit (`WatchDownloadStorageLimit.default`), and the fixed
+    /// ceiling before Batch 490 made it a setting.
     static let fixedCeilingBytes: Int64 = 500 * 1024 * 1024
 
     /// `pendingBytes` is a download not yet on disk: free space will shrink by that much,
     /// so the cap it will be measured against is computed from what's left after it.
-    static func capBytes(availableBytes: Int64?, pendingBytes: Int64 = 0) -> Int64 {
-        guard let availableBytes else { return fixedCeilingBytes }
-        return min(fixedCeilingBytes, max(0, availableBytes - max(0, pendingBytes)) / 2)
+    /// Batch 490 (REVIEW 2026-11-11 F29): `limitBytes` is the chosen Storage Limit, in
+    /// place of the fixed ceiling.
+    static func capBytes(availableBytes: Int64?, pendingBytes: Int64 = 0,
+                         limitBytes: Int64 = fixedCeilingBytes) -> Int64 {
+        guard let availableBytes else { return limitBytes }
+        return min(limitBytes, max(0, availableBytes - max(0, pendingBytes)) / 2)
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F29/W1): Settings › Storage Limit. The most the Watch keeps
+/// for downloads; the cap is still never more than half of what's free
+/// (`WatchDownloadCap`). Raw value is MiB, so 500 MB is exactly the old fixed ceiling.
+nonisolated enum WatchDownloadStorageLimit: Int, CaseIterable, Identifiable, Sendable {
+    case mb500 = 500
+    case gb1 = 1024
+    case gb2 = 2048
+    case gb4 = 4096
+
+    static let defaultsKey = "watchDownloadStorageLimitMB"
+    static let `default`: WatchDownloadStorageLimit = .mb500
+
+    var id: Int { rawValue }
+    var bytes: Int64 { Int64(rawValue) * 1024 * 1024 }
+
+    /// A stored value, or the default when nothing (0) or an unknown value is stored.
+    static func stored(_ raw: Int) -> WatchDownloadStorageLimit {
+        WatchDownloadStorageLimit(rawValue: raw) ?? .default
+    }
+
+    /// "500 MB", "1 GB". Binary units, so the label is a round number.
+    var label: String { Self.label(bytes: bytes) }
+
+    static func label(bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
+    }
+
+    /// Whether a larger choice exists that this book would fit under.
+    static func canRaise(toFit bookBytes: Int64) -> Bool {
+        allCases.contains { $0.bytes >= bookBytes }
     }
 }
 
@@ -551,6 +615,19 @@ nonisolated enum WatchDownloadCap {
 nonisolated enum WatchDownloadRoomCopy {
     static func noRoom(title: String) -> String {
         String(localized: "Not enough room on this Watch. Remove a book to download \u{201C}\(title)\u{201D}.", comment: "%@ is a book title")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W1): the book is bigger than the Storage Limit, so
+    /// removing books can't help. Points at the setting when a larger limit would fit it.
+    static func biggerThanLimit(bookBytes: Int64, limitBytes: Int64) -> String {
+        let book = ByteCountFormatter.string(fromByteCount: max(0, bookBytes), countStyle: .file)
+        let limit = WatchDownloadStorageLimit.label(bytes: max(0, limitBytes))
+        if WatchDownloadStorageLimit.canRaise(toFit: bookBytes) {
+            return String(localized: "This book is \(book). ShelfHead keeps up to \(limit) on this Watch. Raise the Storage Limit to download it.",
+                          comment: "%1$@ is the book's size, e.g. 612 MB; %2$@ is the storage limit, e.g. 500 MB")
+        }
+        return String(localized: "This book is \(book). ShelfHead keeps up to \(limit) on this Watch, so stream it instead.",
+                      comment: "%1$@ is the book's size, e.g. 5.2 GB; %2$@ is the storage limit, e.g. 4 GB")
     }
 
     /// "Removes “A” to make room." / "Removes 3 finished or unstarted books to make room."

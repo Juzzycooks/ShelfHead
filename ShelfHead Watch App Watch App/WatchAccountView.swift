@@ -195,9 +195,8 @@ struct WatchAccountView: View {
         } message: {
             Text("Anything playing on this Watch stops, and your place is saved first.")
         }
-        // UI polish pass — see ChaptersView's identical comment: `.carousel` now
-        // applies to every top-level list screen, not just the two roots.
-        .listStyle(.carousel)
+        // Batch 490 (REVIEW 2026-11-11 W14): default list style; the No-Carousel Rule
+        // (DESIGN.md) missed this screen in Batch 412.
         .navigationTitle("Account")
         .task { await store.bootstrapAuth() }
     }

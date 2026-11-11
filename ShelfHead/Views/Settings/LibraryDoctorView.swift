@@ -59,13 +59,11 @@ struct LibraryDoctorView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
+            // Batch 490 (REVIEW 2026-11-11 V4): the empty state's own action button, not a
+            // Retry overlaid at the bottom of the screen.
             EmptyStateView(icon: "exclamationmark.triangle", title: LocalizedStringResource("Couldn’t scan the library"),
-                           subtitle: .verbatim(message))
-                .overlay(alignment: .bottom) {
-                    Button("Retry") { model.start(user: authViewModel.currentUser) }
-                        .foregroundStyle(Color.shelfAmberText)
-                        .padding(.bottom, 40)
-                }
+                           subtitle: .verbatim(message),
+                           actionTitle: LocalizedStringResource("Retry")) { model.start(user: authViewModel.currentUser) }
         case .ready:
             if model.findings.isEmpty {
                 EmptyStateView(icon: "checkmark.seal", title: LocalizedStringResource("Nothing to fix"),
@@ -212,8 +210,21 @@ struct LibraryDoctorFindingSheet: View {
                     .listRowBackground(Color.shelfCard)
 
                 if let error = model.actionError {
-                    Section { Text(verbatim: error).foregroundStyle(Color.red) }
-                        .listRowBackground(Color.shelfCard)
+                    // Batch 490 (REVIEW 2026-11-11 V4): DESIGN.md orange rule, orange glyph
+                    // beside a cream sentence (was red text).
+                    Section {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color.shelfOrange)
+                                .frame(width: 20)
+                                .accessibilityHidden(true)
+                            Typo.supporting(Text(verbatim: error))
+                                .foregroundStyle(Color.shelfCream)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    .listRowBackground(Color.shelfCard)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -221,9 +232,11 @@ struct LibraryDoctorFindingSheet: View {
             .navigationTitle(Text(LibraryDoctorView.title(finding.kind)))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button (system ✕ on iOS 26).
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }.monochromeToolbarItem()
+                    SheetCloseButton { dismiss() }.monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
             }
             .alert(Text("Apply This Change?"), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
                 Button("Apply") {

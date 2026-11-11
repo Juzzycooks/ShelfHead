@@ -159,8 +159,9 @@ struct BookTranscriptRow: View {
 
     private func header(subtitle: LocalizedStringResource?, glyph: String? = nil) -> some View {
         HStack(spacing: 12) {
+            // Batch 490 (REVIEW 2026-11-11 V6): a static row glyph, not an action, so neutral.
             Image(systemName: "text.quote")
-                .foregroundStyle(Color.shelfAmberText)
+                .foregroundStyle(Color.shelfMuted)
                 .frame(width: 24)
                 .accessibilityHidden(true)
             headerText(subtitle: subtitle, glyph: glyph)
@@ -177,7 +178,8 @@ struct BookTranscriptRow: View {
                         .foregroundStyle(Color.shelfMuted)
                 } icon: {
                     if let glyph {
-                        Image(systemName: glyph).foregroundStyle(Color.shelfAmberText)
+                        // Batch 490 (REVIEW 2026-11-11 V6): status decoration, neutral like its words.
+                        Image(systemName: glyph).foregroundStyle(Color.shelfMuted)
                     }
                 }
                 .labelStyle(.titleAndIcon)

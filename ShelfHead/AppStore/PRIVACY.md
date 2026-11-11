@@ -21,8 +21,8 @@ sends, and where it sends it.
   stored there only if you turn on the option to stay signed in. None of this syncs to iCloud
   Keychain; it stays on the device it was entered on.
 - **Settings and listening state.** Your preferences, playback positions, playback speed per book,
-  the Up Next queue, listening history, bookmark notes, favourite authors and narrators, and
-  profiles for children's accounts.
+  the Up Next queue, listening history, your recent library searches, bookmark notes, favourite
+  authors and narrators, and profiles for children's accounts.
 - **Downloads.** Audio files, ebooks and cover art you download for offline use, stored in the
   app's private storage.
 - **Things the app works out from your books.** Transcripts, captions, X-Ray notes, recaps and
@@ -42,8 +42,11 @@ ShelfHead talks directly to the server you sign in to, in order to:
   listened), which is how your server builds its listening statistics
 - keep a live connection open so progress made on another device shows up promptly
 - carry out changes you choose to make, such as uploading files, fixing a book's cover, chapters or
-  series details, starting a server backup, or (for server administrators) creating an account
-  for a child.
+  series details, removing a book from Continue Listening, starting a server backup, or (for
+  server administrators) creating an account for a child
+- ask your server to email an ebook to an e-reader, if you choose Send to E-reader. Your server
+  sends that email, to a device address its administrator has set up; ShelfHead does not send it
+  and does not keep the address.
 
 With each playback session the app also tells your server which client is playing: the app name
 and version, the type of device (for example "iPhone"), the iOS version number, and a device

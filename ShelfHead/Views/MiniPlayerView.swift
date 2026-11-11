@@ -374,7 +374,12 @@ struct MiniPlayerView: View {
                     MiniPlayerSubtitleLine(style: subtitleStyle)
                 }
                 // Keep the mini-player compact even at large text sizes.
-                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                // Batch 490 (REVIEW 2026-11-11 A5): the title now scales to the first
+                // accessibility size (it stopped at xxLarge, so large-text readers got no
+                // growth at all); the second line steps aside at accessibility sizes (see
+                // `MiniPlayerSubtitleLine`) so the bar keeps its height. Its status is still
+                // in the bar's VoiceOver label.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
 
                 // The text column no longer has to compete with two skip buttons for
                 // width, so a plain flexible spacer (rather than the old fixed 12pt
@@ -417,6 +422,9 @@ struct MiniPlayerView: View {
                 // matching Home's hero button.
                 .accessibilityLabel(playerViewModel.isPlaying ? "Pause" : "Resume")
                 .accessibilityValue(playerViewModel.isTransportWaiting ? "Loading" : "")
+                // Batch 490 (REVIEW 2026-11-11 A1): tells VoiceOver this starts audio, so
+                // it stays quiet after activation instead of talking over the book.
+                .accessibilityAddTraits(playerViewModel.isPlaying ? [] : .startsMediaSession)
             }
             // Critique 2026-10-05 (Mini player): the progress line sits under the text
             // column (past the 38pt cover + 12pt gap, short of the 44pt play button + 12pt
@@ -482,9 +490,14 @@ private struct MiniPlayerSubtitleLine: View {
     let style: AnyShapeStyle
 
     @Environment(PlayerViewModel.self) private var playerViewModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        if let pending = playerViewModel.pendingBook {
+        if dynamicTypeSize.isAccessibilitySize {
+            // Batch 490 (REVIEW 2026-11-11 A5): at accessibility sizes the title takes the
+            // room; this line would only truncate to an ellipsis beside it.
+            EmptyView()
+        } else if let pending = playerViewModel.pendingBook {
             // LS-2: while a start is in flight, `currentChapter` (if a chapter list is
             // even still around) belongs to the *previous* book's live session — showing
             // its countdown here under the pending book's cover/title would misrepresent
@@ -662,7 +675,10 @@ enum MiniPlayerStatus {
                                  chapterRemaining: chapterRemaining, rate: playbackRate) {
             return Line(kind: .sleep, full: sleep, short: sleep)
         }
-        if let rem = chapterRemaining {
+        if let media = chapterRemaining {
+            // Batch 490 (REVIEW 2026-11-11 P6): media seconds ÷ rate, so at 1.5× the line
+            // says how long the chapter will actually take, like the sleep countdown above.
+            let rem = media / max(playbackRate, 0.1)
             return Line(kind: .chapter, full: String(localized: "\(rem.formattedTime) left in chapter", comment: "Mini player line. %@ is the time left in the chapter, e.g. 12:44"),
                         short: String(localized: "\(rem.formattedTime) left", comment: "Mini player line (short form). %@ is the time left in the chapter"))
         }

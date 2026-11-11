@@ -27,8 +27,11 @@ struct AddToMixtapeSheet: View {
                             .frame(minHeight: 44)
                     }
                 }
+                // Batch 490 (REVIEW 2026-11-11 V4): card rows, a tracked section header and token
+                // type, matching `MixtapesView`.
+                .listRowBackground(Color.shelfCard)
                 if !store.mixtapes.isEmpty {
-                    Section("Mixtapes") {
+                    Section {
                         ForEach(store.mixtapes) { tape in
                             Button {
                                 if store.add(clip, to: tape.id) {
@@ -40,14 +43,17 @@ struct AddToMixtapeSheet: View {
                                 }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(verbatim: tape.title).foregroundStyle(Color.shelfCream)
+                                    Typo.rowTitle(Text(verbatim: tape.title)).foregroundStyle(Color.shelfCream)
                                     Typo.supporting(Text("\(tape.clips.count) clips"))
                                         .foregroundStyle(Color.shelfMuted)
                                 }
                                 .frame(minHeight: 44, alignment: .leading)
                             }
                         }
+                    } header: {
+                        RetroSectionHeader(title: "Mixtapes")
                     }
+                    .listRowBackground(Color.shelfCard)
                 }
                 if let errorMessage {
                     Section {
@@ -58,6 +64,7 @@ struct AddToMixtapeSheet: View {
                             Typo.supporting(Text(verbatim: errorMessage)).foregroundStyle(Color.shelfCream)
                         }
                     }
+                    .listRowBackground(Color.shelfCard)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -65,9 +72,11 @@ struct AddToMixtapeSheet: View {
             .navigationTitle("Add to Mixtape")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared Cancel (system ✕ on iOS 26+).
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.monochromeToolbarItem()
+                    SheetCancelButton { dismiss() }.monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
             }
         }
         .systemChromeTint()

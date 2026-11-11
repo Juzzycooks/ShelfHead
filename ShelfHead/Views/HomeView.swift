@@ -59,6 +59,13 @@ struct HomeView: View {
     /// when something relevant changed, because that call is O(filters × library) and
     /// must not sit on a `body` path.
     @State private var smartFilterCounts: [SmartFilter: Int] = [:]
+    /// Batch 490 (REVIEW 2026-11-11 E4): observed, not read once from `SettingsStore`, so turning
+    /// Release Radar on in Settings mounts the shelf as soon as the first check finds something.
+    @AppStorage(SettingsKeys.releaseRadarEnabled) private var releaseRadarEnabled = false
+    /// Batch 490 (REVIEW 2026-11-11 E5): the empty-library state's Upload Books.
+    @State private var showUploadSheet = false
+    /// Batch 490 (REVIEW 2026-11-11 V6): hosts Release Radar's Undo toast (see `.toast` in `body`).
+    @State private var releaseRadar = ReleaseRadarViewModel.shared
 
     /// Stable identity for a shelf so hide/show survives relaunches.
     private func shelfKey(_ shelf: PersonalizedView) -> String {
@@ -251,7 +258,7 @@ struct HomeView: View {
            !otherServersStore.mergedItems.isEmpty || otherServersStore.shelves.contains(where: { $0.state == .needsSignIn }) {
             out.append(Self.otherServersKey)
         }
-        if SettingsStore.releaseRadarEnabled && !ReleaseRadarViewModel.shared.entries.isEmpty {
+        if releaseRadarEnabled && !ReleaseRadarViewModel.shared.entries.isEmpty {
             out.append(Self.releaseRadarKey)
         }
         if HouseholdStore.shared.isSocialAvailable {   // Batch 482: not on a kid profile
@@ -354,7 +361,7 @@ struct HomeView: View {
         } else if key == Self.householdKey {
             HouseholdShelf()
         } else if key == Self.releaseRadarKey {
-            if SettingsStore.releaseRadarEnabled && !ReleaseRadarViewModel.shared.entries.isEmpty {
+            if releaseRadarEnabled && !ReleaseRadarViewModel.shared.entries.isEmpty {
                 ReleaseRadarShelf(libraryItems: libraryViewModel.items)
             }
         } else if key == Self.otherServersKey {
@@ -431,7 +438,7 @@ struct HomeView: View {
 
     /// Batch 442: at most once a day, and only when the user opted in.
     private func refreshReleaseRadarIfEnabled() async {
-        guard SettingsStore.releaseRadarEnabled else { return }
+        guard releaseRadarEnabled else { return }
         await ReleaseRadarViewModel.shared.refreshIfNeeded(items: libraryViewModel.items)
     }
 
@@ -792,6 +799,20 @@ struct HomeView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+            // Batch 490 (REVIEW 2026-11-11 E5): same sheet and library hand-off as Library's "+".
+            .sheet(isPresented: $showUploadSheet) {
+                UploadSheet(onOpenLibrary: { id in
+                    guard let library = libraryViewModel.libraries.first(where: { $0.id == id }) else { return }
+                    Task { await libraryViewModel.selectLibrary(library) }
+                })
+            }
+            // Batch 490 (REVIEW 2026-11-11 V6): Release Radar's "Not Interested" Undo. Hosted here, not
+            // on the shelf, because hiding the last entry unmounts the shelf (and its toast with it).
+            .toast(message: $releaseRadar.notInterestedToast,
+                   style: .info, duration: 4, bottomInset: bottomInset,
+                   action: ToastAction(label: LocalizedStringResource("Undo")) {
+                       releaseRadar.undoLastNotInterested()
+                   })
             .reexpandsTabBarOnAppear()
     }
 
@@ -827,11 +848,30 @@ struct HomeView: View {
         VStack(spacing: 4) {
             switch kind {
             case .genuinelyEmpty:
+                // Batch 490 (REVIEW 2026-11-11 E5): a library with no books. "Shelves will appear once
+                // you start listening" promised something that can't happen without books; say
+                // where to add them, check again after, and offer Upload when the account may.
                 EmptyStateView(
                     icon: "books.vertical",
-                    title: LocalizedStringResource("Nothing here yet"),
-                    subtitle: LocalizedStringResource("Your personalised shelves will appear once you start listening")
-                )
+                    title: LocalizedStringResource("This library is empty"),
+                    subtitle: LocalizedStringResource("Add books on your server, then check again."),
+                    actionTitle: LocalizedStringResource("Check Again")
+                ) {
+                    retryHomeLoad()
+                }
+                if authViewModel.currentUser?.canUpload == true {
+                    Button {
+                        Haptics.selection()
+                        showUploadSheet = true
+                    } label: {
+                        Text("Upload Books")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.shelfAmberText)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             case .noLibraries:
                 // Critique 2026-10-06 (clarify): the primary used to be "Open Settings", but
                 // nothing in this app's Settings adds a library. Check Again is primary (after
@@ -846,7 +886,9 @@ struct HomeView: View {
                 }
                 Button {
                     Haptics.selection()
-                    tabRouter.requestedTab = 3
+                    // Batch 490 (REVIEW 2026-11-11 N7): straight to Settings › Account (where
+                    // servers are switched and added), not the Settings root.
+                    tabRouter.requestedSettingsPage = .account
                 } label: {
                     Text("Use a Different Server")
                         .font(.subheadline.weight(.semibold))
@@ -881,10 +923,19 @@ struct HomeView: View {
         if HomeState.showsCompactLoadFailure(kind: kind, hasServerShelves: !libraryViewModel.personalizedShelves.isEmpty) {
             let hasDownloads = !downloadManager.downloadedItems.isEmpty
             VStack(alignment: .leading, spacing: 8) {
-                Typo.rowTitle(kind == .loadFailed ? Text("Couldn't refresh your shelves") : Text("Can't reach your server"))
-                    .foregroundStyle(Color.shelfCream)
-                Typo.metadata(hasDownloads ? Text("Your downloads still play.") : Text("Check your connection and try again."))
-                    .foregroundStyle(Color.shelfMuted)
+                // Batch 490 (REVIEW 2026-11-11, session ended): when the server signed this account
+                // out, "check your connection" is the wrong advice — say what actually happened.
+                if authViewModel.sessionNeedsSignIn {
+                    Typo.rowTitle(Text("Your session on this server ended."))
+                        .foregroundStyle(Color.shelfCream)
+                    Typo.metadata(Text("Sign in again to refresh your shelves."))
+                        .foregroundStyle(Color.shelfMuted)
+                } else {
+                    Typo.rowTitle(kind == .loadFailed ? Text("Couldn't refresh your shelves") : Text("Can't reach your server"))
+                        .foregroundStyle(Color.shelfCream)
+                    Typo.metadata(hasDownloads ? Text("Your downloads still play.") : Text("Check your connection and try again."))
+                        .foregroundStyle(Color.shelfMuted)
+                }
                 HStack(spacing: 16) {
                     Button {
                         retryHomeLoad()
@@ -1000,13 +1051,7 @@ struct HomeView: View {
     }
 
     private var greetingText: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 5..<12: return String(localized: "Good morning")
-        case 12..<17: return String(localized: "Good afternoon")
-        case 17..<21: return String(localized: "Good evening")
-        default: return String(localized: "Night owl mode")
-        }
+        HomeState.greeting(hour: Calendar.current.component(.hour, from: Date()))
     }
 }
 
@@ -1256,6 +1301,9 @@ struct ContinueListeningHeroCard: View {
                 .layoutPriority(1)
                 .accessibilityLabel(HomeState.heroButtonAccessibilityLabel(heroButton, title: item.title,
                                                                            anotherLoaded: playerViewModel.currentBook != nil))
+                // Batch 490 (REVIEW 2026-11-11 A1): Play starts audio, so VoiceOver keeps quiet over
+                // it; Open Player only shows the player.
+                .accessibilityAddTraits(heroButton == .play ? .startsMediaSession : [])
             }
         }
         .padding(16)
@@ -2068,6 +2116,17 @@ enum HomeState {
         }
         if let best { return .downloaded(id: best.id) }
         return .none
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 V8): Home's greeting for an hour of the day (0–23). The late
+    /// slot (9pm–5am) was "Night owl mode", which read as a setting rather than a greeting; it is
+    /// "Good evening" now, like 5pm–9pm. Pinned by `QuickWinsShellTests`.
+    static func greeting(hour: Int) -> String {
+        switch hour {
+        case 5..<12: return String(localized: "Good morning")
+        case 12..<17: return String(localized: "Good afternoon")
+        default: return String(localized: "Good evening")
+        }
     }
 
     enum EmptyKind: Equatable {

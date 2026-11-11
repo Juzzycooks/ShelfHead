@@ -45,6 +45,15 @@ final class UploadViewModel {
         case uploading(sent: Int64, total: Int64)
         case done
         case failed(String)
+
+        /// Batch 490 (REVIEW 2026-11-11 L5): an upload is running, so leaving the screen
+        /// (swipe-down, Close, Back) would cancel it and must ask first.
+        var isBusy: Bool {
+            switch self {
+            case .preparing, .uploading: return true
+            default: return false
+            }
+        }
     }
 
     /// Audio, EPUB and PDF: what Audiobookshelf's own upload accepts for books.
@@ -319,10 +328,41 @@ final class UploadViewModel {
             case .serverError:
                 return String(localized: "The server couldn't save the files. Check its disk space and permissions.")
             default:
-                return api.errorDescription ?? error.localizedDescription
+                // `APIError.errorDescription` is already one plain sentence (polish pass ST-5).
+                return api.errorDescription ?? genericMessage
             }
         }
         if error is AccountChangedError { return accountChangedMessage }   // Review 5 Low (upload error text)
-        return error.localizedDescription
+        // Batch 490 (REVIEW 2026-11-11 E6): no raw `localizedDescription` on screen. The detail
+        // goes to the log; the user gets one sentence with what to do.
+        ShelfLog.error(.network, "Upload screen error: \(error)")
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+                return String(localized: "You’re offline. Connect to the internet and try again.",
+                              comment: "Upload screen error when the device has no network")
+            case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut,
+                 .networkConnectionLost, .secureConnectionFailed, .serverCertificateUntrusted,
+                 .badServerResponse:
+                return String(localized: "Can’t reach your server. Check that it’s running and try again.",
+                              comment: "Upload screen error when the server doesn't answer")
+            default:
+                break
+            }
+        }
+        if let cocoa = error as? CocoaError {
+            if cocoa.code == .fileWriteOutOfSpace {
+                return String(localized: "This iPhone is out of space, so the upload couldn’t be prepared. Free some space and try again.",
+                              comment: "Upload screen error when the temporary upload file can't be written for lack of space")
+            }
+            return String(localized: "One of the files couldn’t be read. Remove it, add it again and try once more.",
+                          comment: "Upload screen error when a picked file can't be read or copied")
+        }
+        return genericMessage
+    }
+
+    nonisolated private static var genericMessage: String {
+        String(localized: "Something went wrong. Try again in a moment.",
+               comment: "Upload screen error for an unexpected failure")
     }
 }

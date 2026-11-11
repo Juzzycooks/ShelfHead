@@ -117,7 +117,9 @@ extension PlayerView {
     /// The flat layout passes nothing and gets exactly the branch it always did.
     @ViewBuilder
     func artworkSlot(in geometry: GeometryProxy, alwaysFlexible: Bool = false) -> some View {
-        if usesAccessibilityLayout && !alwaysFlexible {
+        // Batch 490 (REVIEW 2026-11-11 G1): the scrolling column (accessibility sizes or
+        // compact height) takes the explicitly sized branch.
+        if usesScrollingColumnLayout && !alwaysFlexible {
             // Measured off the screen rather than off the slot. The column's own width is
             // the 600pt iPad cap (or the screen, whichever is smaller) less its 2×24pt
             // side padding; the height budget deliberately keeps the cover to a minority

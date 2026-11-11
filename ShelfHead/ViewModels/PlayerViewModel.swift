@@ -638,6 +638,17 @@ final class PlayerViewModel {
                 self?.maybeAutoDownloadNextInSeries()
             }
         }
+        // Batch 490 (REVIEW 2026-11-11 F20): resuming a book a sleep timer stopped, well
+        // past where the timer was set, offers "Jump back" there. An offer only — it
+        // never seeks by itself.
+        playerService.onSleepResumeOffer = { [weak self] itemId, armedAt in
+            guard let self, self.currentBook?.id == itemId else { return }
+            let now = self.currentTime
+            self.seekUndoTime = armedAt
+            self.seekUndoReason = .sleepTimer
+            self.seekUndoTarget = now
+            self.seekUndoTargetChapterId = self.chapters.last(where: { $0.start <= now })?.id
+        }
         // Restore a queue persisted from a previous launch (assignment in init does
         // not trigger didSet, so this doesn't re-save).
         upNext = Self.loadQueue()
@@ -1499,6 +1510,9 @@ final class PlayerViewModel {
         /// mis-tapped Jump back is as recoverable as the jump it undid (critique
         /// 2026-10-05, third run).
         case undo
+        /// Batch 490 (REVIEW 2026-11-11 F20): offered on resuming a book a sleep timer
+        /// stopped, back to where the timer was set.
+        case sleepTimer
 
         var accessibilityHint: String {
             switch self {
@@ -1515,6 +1529,7 @@ final class PlayerViewModel {
             case .ask:         return String(localized: "Returns to where you were before you jumped to the passage that answered your question", comment: "VoiceOver hint on the Jump back chip after tapping a citation under an Ask the Book answer")
             case .readAlong:   return String(localized: "Returns to where you were before you listened from a spot in the ebook", comment: "VoiceOver hint on the Jump back chip after Listen from Here in the ebook reader")
             case .undo:        return String(localized: "Goes forward again to where you jumped back from", comment: "VoiceOver hint on the chip that undoes a Jump back")
+            case .sleepTimer:  return String(localized: "Returns to where you were when you set the sleep timer", comment: "VoiceOver hint on the Jump back chip offered after a sleep timer stopped playback")
             }
         }
 
@@ -1599,6 +1614,19 @@ final class PlayerViewModel {
     /// True while Driving Mode is on screen. Its full-screen cover hides the root alert, so
     /// the alert binding stands down and Driving Mode shows the failure itself.
     var isDrivingModePresented = false
+
+    /// Batch 490 (REVIEW 2026-11-11): a request from outside the player (a deep link,
+    /// shortcut or CarPlay hand-off) to open Driving Mode. `PlayerView` opens it through
+    /// `openDrivingMode()` while it's on screen — including when this was already true as
+    /// the player appeared — and sets it back to false.
+    var pendingDrivingModeRequest = false
+
+    /// Batch 490 (REVIEW 2026-11-11 P2): Driving Mode keeps the screen on while it's up.
+    /// `AudioPlayerService` stays the one writer of `isIdleTimerDisabled`.
+    func drivingModeVisibilityChanged(_ visible: Bool) {
+        isDrivingModePresented = visible
+        playerService.setDrivingModeHoldsScreenAwake(visible)
+    }
 
     /// Whether a seek from `from` to `to` is large enough to offer "Jump back". Pure so the
     /// threshold is pinned by `SeekUndoPolicyTests` rather than by a screenshot.
@@ -1712,9 +1740,12 @@ final class PlayerViewModel {
     func addBookmark(at time: Double, note: String? = nil) async -> BookmarkSaveResult? {
         guard let id = currentBook?.id else { return nil }
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Batch 490 (REVIEW 2026-11-11 V8): no note → "‹chapter› · ‹time›", shared with
+        // the lock screen and CarPlay. The chapter is the one at `time` (captured when the
+        // note prompt opened), not wherever playback has drifted to since.
+        let chapterAtTime = chapters.last(where: { $0.start <= time })?.title ?? currentChapter?.title
         let title = (trimmed?.isEmpty == false ? trimmed! : nil)
-            ?? currentChapter?.title
-            ?? time.formattedTime
+            ?? BookmarkDefaultTitle.make(chapterTitle: chapterAtTime, time: time)
         let synced = await BookmarkSyncService.shared.create(itemId: id, time: time, title: title)
         if !synced { infoMessage = String(localized: "Bookmark saved — will sync when you're back online", comment: "Toast when a bookmark is queued offline") }
         await loadBookmarks()
@@ -1876,6 +1907,12 @@ final class PlayerViewModel {
     /// Add time to a running countdown sleep timer (e.g. "+15m").
     func extendSleepTimer(by seconds: TimeInterval) {
         playerService.extendSleepTimer(by: seconds)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F20): "+1 chapter" for an end-of-chapter / +N
+    /// chapters timer.
+    func extendSleepTimerByOneChapter() {
+        playerService.extendSleepTimerByOneChapter()
     }
 
     /// Whether a sleep timer is currently armed.

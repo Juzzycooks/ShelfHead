@@ -150,15 +150,21 @@ struct ListeningPassportView: View {
     var body: some View {
         ZStack {
             Color.shelfBackground.ignoresSafeArea()
-            if catalog.books.isEmpty {
-                if catalog.isRefreshing || !catalog.hasLoaded {
-                    LoadingView("Loading your finished books\u{2026}")
-                } else {
-                    // Polish pass (ST-8): the app's one empty-state component, sentence case.
-                    EmptyStateView(icon: "airplane.departure", title: "No stamps yet",
-                                   subtitle: "Finish a book and your passport gets its first stamp.")
-                }
-            } else {
+            // Batch 490 (REVIEW 2026-11-11 E2): a failed load no longer reads as "no stamps yet".
+            switch FinishedCatalogDisplayState.resolve(isEmpty: catalog.books.isEmpty, isRefreshing: catalog.isRefreshing,
+                                                       hasLoaded: catalog.hasLoaded, lastRefreshFailed: catalog.lastRefreshFailed) {
+            case .loading:
+                LoadingView("Loading your finished books\u{2026}")
+            case .failed:
+                EmptyStateView(icon: "airplane.departure", title: LocalizedStringResource("Couldn\u{2019}t load your finished books"),
+                               subtitle: .verbatim(StatsStaleness.failureSubtitle(status: ReachabilityStore.shared.status)),
+                               actionTitle: LocalizedStringResource("Retry"),
+                               action: { Task { await catalog.refresh() } })
+            case .empty:
+                // Polish pass (ST-8): the app's one empty-state component, sentence case.
+                EmptyStateView(icon: "airplane.departure", title: "No stamps yet",
+                               subtitle: "Finish a book and your passport gets its first stamp.")
+            case .content:
                 content
             }
         }

@@ -36,10 +36,15 @@ struct YearInReviewVideoSheet: View {
             .navigationTitle("Make a Video")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                // Batch 490 (REVIEW 2026-11-11 V1): the system close button (✕ on iOS 26+), not
+                // text "Done". Disabled while exporting, like the swipe-down below: the export's
+                // own Cancel stops it first.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                         .monochromeToolbarItem()
+                        .disabled(exporter.isExporting)
                 }
+                .shelfVisibilityPriority(.high)
             }
         }
         .task { await loadCovers() }
@@ -80,13 +85,14 @@ struct YearInReviewVideoSheet: View {
     @ViewBuilder private var controls: some View {
         if let outputURL {
             // Batch 464: a share sheet without SharePlay (`ActivityView`), not `ShareLink`.
+            // Batch 490 (REVIEW 2026-11-11 V2): the primary style (Amber Ink on the accent), not
+            // `.borderedProminent`, which drew white on amber at about 2:1.
             Button { showingShareSheet = true } label: {
                 Label("Share Video", systemImage: "square.and.arrow.up")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .shelfButtonStyle()
             }
+            .buttonStyle(.plain)
             .sheet(isPresented: $showingShareSheet) { ActivityView(items: [outputURL]) }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.shelfAmber)
             Button("Make Again") { removeOutput() }
                 .frame(minHeight: 44)
         } else if exporter.isExporting {
@@ -107,11 +113,11 @@ struct YearInReviewVideoSheet: View {
             Button {
                 startExport()
             } label: {
+                // Batch 490 (REVIEW 2026-11-11 V2): the one primary, Amber Ink on the accent.
                 Label("Make Video", systemImage: "film")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .shelfButtonStyle()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.shelfAmber)
+            .buttonStyle(.plain)
             if failed {
                 Typo.metadata(Text("The video couldn\u{2019}t be made. Try again."))
                     .foregroundStyle(Color.shelfMuted)

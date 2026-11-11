@@ -453,6 +453,37 @@ final class CarPlayCoordinator: NSObject {
         return (visible, left - visible)
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 C3): `listWindow` with a leading "Earlier…" row. When
+    /// `offset > 0` the page spends one slot on "Earlier…" (as the Chapters list does), and
+    /// a trailing "Show more…" row spends another when items remain. Always shows at least
+    /// one real item when any are left, so paging can never stall. Pure and `nonisolated`.
+    nonisolated static func pagedListWindow(total: Int, offset: Int, limit: Int) -> (visible: Int, remaining: Int, hasEarlier: Bool) {
+        let start = min(max(offset, 0), max(total, 0))
+        let hasEarlier = start > 0
+        let left = max(total - start, 0)
+        guard limit > 0 else { return (0, left, hasEarlier) }
+        let slots = limit - (hasEarlier ? 1 : 0)
+        guard left > slots else { return (left, 0, hasEarlier) }
+        let visible = max(slots - 1, 1)
+        return (visible, left - visible, hasEarlier)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C3): where "Earlier…" should go back to — the start of
+    /// the page before the one starting at `offset`. Page starts follow from
+    /// `pagedListWindow` alone, so walking them from 0 gives exact, contiguous pages with no
+    /// state to carry in the row's handler. Pure and `nonisolated`.
+    nonisolated static func previousPageOffset(before offset: Int, total: Int, limit: Int) -> Int {
+        var start = 0
+        var previous = 0
+        while start < offset, start < total {
+            previous = start
+            let window = pagedListWindow(total: total, offset: start, limit: limit)
+            guard window.visible > 0 else { break }
+            start += window.visible
+        }
+        return previous
+    }
+
     /// Windows `items` into one on-screen page and applies it to `template`, replacing
     /// the flat `prefix(Self.capItemCount(Limit.browseList))` every browse list here
     /// used to apply with no notice that anything was cut. When `listWindow` says
@@ -468,8 +499,25 @@ final class CarPlayCoordinator: NSObject {
         rowBuilder: @escaping (Item) -> CPListItem
     ) {
         let limit = Self.capItemCount(Limit.browseList)
-        let window = Self.listWindow(total: items.count, offset: offset, limit: limit)
-        var rows = items[offset..<(offset + window.visible)].map(rowBuilder)
+        // Batch 490 (REVIEW 2026-11-11 C3): was forward-only (`listWindow`), so page one
+        // (the most recently played downloads) came back only on reconnect.
+        let start = min(max(offset, 0), items.count)
+        let window = Self.pagedListWindow(total: items.count, offset: start, limit: limit)
+        var rows: [CPListItem] = []
+        if window.hasEarlier {
+            let earlierItem = CPListItem(text: String(localized: "Earlier…", comment: "CarPlay list row that goes back to the previous page of items."), detailText: nil)
+            earlierItem.accessoryType = .disclosureIndicator
+            // Same `[weak self, weak template]` leak fix as the "Show more" row below.
+            earlierItem.handler = { [weak self, weak template] _, completion in
+                guard let self, let template else { completion(); return }
+                let previous = Self.previousPageOffset(before: start, total: items.count, limit: limit)
+                self.applyWindowedItems(items, offset: previous, title: title,
+                                        emptyMessage: emptyMessage, to: template, rowBuilder: rowBuilder)
+                completion()
+            }
+            rows.append(earlierItem)
+        }
+        rows += items[start..<(start + window.visible)].map(rowBuilder)
         if window.remaining > 0 {
             let moreItem = CPListItem(text: String(localized: "Show more…"), detailText: String(localized: "\(window.remaining) more", comment: "CarPlay list row detail: how many more items are hidden. %lld is the count."))
             moreItem.accessoryType = .disclosureIndicator
@@ -483,7 +531,7 @@ final class CarPlayCoordinator: NSObject {
             // calls `completion()` on every path.
             moreItem.handler = { [weak self, weak template] _, completion in
                 guard let self, let template else { completion(); return }
-                self.applyWindowedItems(items, offset: offset + window.visible, title: title,
+                self.applyWindowedItems(items, offset: start + window.visible, title: title,
                                           emptyMessage: emptyMessage, to: template, rowBuilder: rowBuilder)
                 completion()
             }
@@ -555,7 +603,9 @@ final class CarPlayCoordinator: NSObject {
                 async let inProgressFetch = try? AudiobookshelfAPI.shared.getItemsInProgress()
                 async let personalizedFetch = self.fetchPersonalizedShelves()
 
-                if let inProgress = await inProgressFetch {
+                if let fetched = await inProgressFetch {
+                    // Batch 490 (REVIEW 2026-11-11 C2): in-progress spans every library; drop podcasts.
+                    let inProgress = Self.carPlayPlayableItems(fetched)
                     if !inProgress.isEmpty {
                         shelves.append((header: String(localized: "Continue Listening"), items: Array(inProgress.prefix(Limit.homeSection))))
                     }
@@ -570,13 +620,22 @@ final class CarPlayCoordinator: NSObject {
                 }
 
                 if let personalized = await personalizedFetch {
+                    // Batch 490 (REVIEW 2026-11-11 C6): keyed so the phone's hidden/order
+                    // choices can be applied below before the shelves are appended.
+                    var keyed: [(key: String, header: String, items: [LibraryItem])] = []
                     for shelf in personalized {
                         guard shelf.isBookShelf,
+                              Self.isCarPlayBookShelf(type: shelf.type),   // Batch 490 (REVIEW 2026-11-11 C2)
                               let title = Self.homeShelfTitle(for: shelf.labelStringKey),
-                              let entities = shelf.entities, !entities.isEmpty else { continue }
+                              let entities = shelf.entities else { continue }
+                        let playable = Self.carPlayPlayableItems(entities)
+                        guard !playable.isEmpty else { continue }
                         if shelf.labelStringKey == "LabelContinueListening", !shelves.isEmpty { continue }
-                        shelves.append((header: title, items: Array(entities.prefix(Limit.homeSection))))
+                        if keyed.contains(where: { $0.key == shelf.labelStringKey }) { continue }
+                        keyed.append((key: shelf.labelStringKey, header: title, items: Array(playable.prefix(Limit.homeSection))))
                     }
+                    shelves += Self.phoneOrderedHomeShelves(
+                        keyed, hidden: SettingsStore.hiddenHomeSections, savedOrder: SettingsStore.homeSectionOrder)
                 } else {
                     loadFailed = true
                 }
@@ -623,8 +682,11 @@ final class CarPlayCoordinator: NSObject {
     /// Polish pass (CP-5): the personalised-view half of Home's fetch, run beside
     /// `getItemsInProgress`. Nil means the libraries or the view couldn't be loaded.
     private func fetchPersonalizedShelves() async -> [PersonalizedView]? {
-        guard let libraries = try? await cachedLibraries(),
-              let libraryId = Self.currentLibraryId(libraries) else { return nil }
+        guard let libraries = try? await cachedLibraries() else { return nil }
+        // Batch 490 (REVIEW 2026-11-11 C2): the libraries loaded but none is a book library
+        // (a podcast-only server, now that podcast libraries are filtered out). That is an
+        // empty answer, not a failed one, so Home must not say "You're offline".
+        guard let libraryId = Self.currentLibraryId(libraries) else { return [] }
         return try? await AudiobookshelfAPI.shared.getPersonalizedView(libraryId: libraryId)
     }
 
@@ -695,7 +757,9 @@ final class CarPlayCoordinator: NSObject {
         isConfigured: Bool, isOnline: Bool, loadFailed: Bool
     ) -> (title: [String], subtitle: [String]) {
         guard isConfigured else {
-            return ([String(localized: "Sign in")], [String(localized: "Sign in on your phone to get started")])
+            // Batch 490 (REVIEW 2026-11-11 C4): CarPlay copy states the condition; it must
+            // not ask the driver to use the phone (CarPlay Developer Guide, guideline 2).
+            return ([String(localized: "Not signed in")], [String(localized: "Sign in to ShelfHead to see your library", comment: "CarPlay Home empty state when no account is signed in. States the condition only.")])
         }
         guard isOnline, !loadFailed else {
             return ([String(localized: "You're offline")], [String(localized: "Your downloads still work — try the Downloads tab")])
@@ -712,15 +776,61 @@ final class CarPlayCoordinator: NSObject {
         return libraries.first?.id
     }
 
-    private static func homeShelfTitle(for key: String) -> String? {
+    /// Batch 490 (REVIEW 2026-11-11 C6): the same titles the phone's Home uses
+    /// (`HomeView.shelfTitle`, same catalog keys and comment), so a shelf reads the same in
+    /// the car as on the phone — "Next in Series", not "Continue Series". Kept as a copy
+    /// rather than shared because `HomeView.swift` is outside this change; keep the two in
+    /// step by hand.
+    nonisolated static func homeShelfTitle(for key: String) -> String? {
         switch key {
-        case "LabelContinueListening": return String(localized: "Continue Listening")
-        case "LabelRecentlyAdded":     return String(localized: "Recently Added")
-        case "LabelContinueSeries":    return String(localized: "Continue Series")
-        case "LabelDiscover":          return String(localized: "Discover")
-        case "LabelListenAgain":       return String(localized: "Listen Again")
+        case "LabelContinueListening": return String(localized: "Continue Listening", comment: "Home shelf title")
+        case "LabelRecentlyAdded":     return String(localized: "Recently Added", comment: "Home shelf title")
+        case "LabelContinueSeries":    return String(localized: "Next in Series", comment: "Home shelf title")
+        case "LabelDiscover":          return String(localized: "Discover", comment: "Home shelf title")
+        case "LabelListenAgain":       return String(localized: "Listen Again", comment: "Home shelf title")
         default:                       return nil
         }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C6): applies the phone's Customise Home choices
+    /// (`SettingsStore.hiddenHomeSections` / `.homeSectionOrder`, read only) to CarPlay
+    /// Home's shelves: a shelf hidden on the phone stays hidden here, and the rest follow
+    /// the phone's saved order through the same `SettingsStore.mergedHomeSectionOrder` the
+    /// phone uses. Continue Listening is never hidden (the phone pins it too and ignores a
+    /// stale hidden value for it); `publishHome`'s `promotingContinueListening` keeps it first.
+    /// Pure and `nonisolated` so it's unit-testable with plain arrays.
+    nonisolated static func phoneOrderedHomeShelves<Item>(
+        _ shelves: [(key: String, header: String, items: [Item])],
+        hidden: Set<String>, savedOrder: [String]
+    ) -> [(header: String, items: [Item])] {
+        let continueListeningKey = "LabelContinueListening"
+        let visible = shelves.filter { $0.key == continueListeningKey || !hidden.contains($0.key) }
+        let order = SettingsStore.mergedHomeSectionOrder(saved: savedOrder, available: visible.map { $0.key })
+        return order.compactMap { key in
+            visible.first { $0.key == key }.map { (header: $0.header, items: $0.items) }
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C2): CarPlay starts every row through the book path,
+    /// and podcast episodes can't be played from the car yet, so a podcast library is kept
+    /// out of the picker and out of the current-library fallback. A library with no
+    /// `mediaType` (older servers) is treated as a book library, as before. Pure and
+    /// `nonisolated` so it's unit-testable.
+    nonisolated static func carPlayBrowsableLibraries(_ libraries: [Library]) -> [Library] {
+        libraries.filter { $0.mediaType != "podcast" }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C2): the same rule for single items (Continue
+    /// Listening spans every library, so a podcast in progress on the phone would
+    /// otherwise land on CarPlay Home) and for whole personalised shelves.
+    nonisolated static func carPlayPlayableItems(_ items: [LibraryItem]) -> [LibraryItem] {
+        items.filter { !$0.isPodcast }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C2): `PersonalizedView.isBookShelf` accepts "podcast"
+    /// shelves (the phone can browse them); CarPlay can't play them, so it skips them.
+    nonisolated static func isCarPlayBookShelf(type: String?) -> Bool {
+        type != "podcast"
     }
 
     // MARK: Library tab
@@ -742,6 +852,28 @@ final class CarPlayCoordinator: NSObject {
     /// row from the limit that's meant to gate it.
     nonisolated static func shouldOfferKeyboardRows(limitedUserInterfaces: CPLimitableUserInterface) -> Bool {
         !limitedUserInterfaces.contains(.keyboard)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C1): Apple's CarPlay Developer Guide (13 October
+    /// 2026, Templates table) lists the Search template for the Audio category from
+    /// iOS 27 only, and says "Attempting to use an unsupported template triggers an
+    /// exception at runtime." The deployment floor is iOS 17.6, so the OS gate sits in
+    /// front of the keyboard gate. Below iOS 27 the row is left out entirely (the Siri
+    /// cell on Home is the search path there); on iOS 27+ the existing keyboard rule
+    /// still decides live vs "Unavailable while driving". Takes the OS answer as a
+    /// parameter so both halves stay unit-testable.
+    nonisolated static func searchRowState(
+        isSearchTemplateSupported: Bool, limitedUserInterfaces: CPLimitableUserInterface
+    ) -> (include: Bool, enabled: Bool) {
+        guard isSearchTemplateSupported else { return (false, false) }
+        return (true, shouldOfferKeyboardRows(limitedUserInterfaces: limitedUserInterfaces))
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 C1): whether this OS lets an audio app use
+    /// `CPSearchTemplate` — see `searchRowState`.
+    nonisolated static var isSearchTemplateSupported: Bool {
+        if #available(iOS 27.0, *) { return true }
+        return false
     }
 
     /// C11 (REVIEW_2026-09-04_UI.md Pass 4): this used to call `updateSections`
@@ -781,7 +913,7 @@ final class CarPlayCoordinator: NSObject {
         // declared here rather than inferred from the row's title: matching on the
         // display string would silently stop gating the moment the row is renamed or
         // localised, and would not cover a second typing-dependent row added later.
-        let rows: [(title: String, symbol: String, needsKeyboard: Bool, action: () -> Void)] = [
+        var rows: [(title: String, symbol: String, needsKeyboard: Bool, action: () -> Void)] = [
             (String(localized: "Search"),     "magnifyingglass",   true,  { [weak self] in self?.pushSearch() }),
             (String(localized: "Series"),     "books.vertical",    false, { [weak self] in self?.pushSeries() }),
             (String(localized: "Authors"),    "person.2",          false, { [weak self] in self?.pushAuthors() }),
@@ -795,8 +927,15 @@ final class CarPlayCoordinator: NSObject {
         // (`isEnabled = false`, no handler, detail text explains why) rather than
         // acting like a live control that dead-ends on a `CPSearchTemplate` the
         // driver can't type into.
-        let keyboardAvailable = Self.shouldOfferKeyboardRows(
+        // Batch 490 (REVIEW 2026-11-11 C1): below iOS 27 an audio app can't use the
+        // Search template at all, so the typing rows are left out, not disabled.
+        let searchState = Self.searchRowState(
+            isSearchTemplateSupported: Self.isSearchTemplateSupported,
             limitedUserInterfaces: sessionConfiguration?.limitedUserInterfaces ?? [])
+        if !searchState.include {
+            rows.removeAll { $0.needsKeyboard }
+        }
+        let keyboardAvailable = searchState.enabled
 
         let browseItems: [CPListItem] = rows.map { title, symbol, needsKeyboard, action in
             let rowDisabled = needsKeyboard && !keyboardAvailable
@@ -934,21 +1073,17 @@ final class CarPlayCoordinator: NSObject {
     ///   independent of whatever `offerOrApplyDrivingProfileIfNeeded()` decided on
     ///   connect, so a driver who declined the prompt (or wants Sleep/Work instead)
     ///   isn't stuck with that decision.
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 C4): the Account, Server and Downloaded status rows
+    /// and the "Manage your account on the phone" header are gone. Apple's CarPlay
+    /// guidelines say not to show unrelated settings or account status in the car, and
+    /// not to word anything as an instruction to use the phone; the server address also
+    /// doesn't belong on the car's screen. Only the two controls a driver uses remain.
     private func reloadSetup() {
-        let account = AuthStore.shared
-        let statusItem: (String, String) -> CPListItem = { title, detail in
-            let item = CPListItem(text: title, detailText: detail)
-            item.isEnabled = false   // status only — see doc comment above
-            return item
-        }
-
-        let accountItem = statusItem(String(localized: "Account"), account.isConfigured ? String(localized: "Signed in") : String(localized: "Not signed in"))
-        let serverItem = statusItem(String(localized: "Server"), account.serverURL.isEmpty ? "—" : account.serverURL)
-        let downloadedItem = statusItem(String(localized: "Downloaded"), String(localized: "\(DownloadManager.shared.downloadedItems.count) audiobooks", comment: "CarPlay Setup row detail. %lld is the number of downloaded audiobooks."))
-
         let speedItem = CPListItem(text: String(localized: "Playback Speed"),
                                    detailText: Self.formattedPlaybackRate(AudioPlayerService.shared.playbackRate))
-        speedItem.accessoryType = .disclosureIndicator
+        // Batch 490 (REVIEW 2026-11-11 C4): no disclosure chevron — a tap steps the speed
+        // in place and pushes nothing, so a chevron promised a screen that never came.
         speedItem.handler = { [weak self] _, completion in
             self?.advancePlaybackRate()
             completion()
@@ -963,8 +1098,7 @@ final class CarPlayCoordinator: NSObject {
         }
 
         setupTemplate.updateSections([
-            CPListSection(items: [accountItem, serverItem], header: String(localized: "Manage your account on the phone"), sectionIndexTitle: nil),
-            CPListSection(items: [speedItem, profileItem, downloadedItem])
+            CPListSection(items: [speedItem, profileItem])
         ])
     }
 
@@ -1177,6 +1311,12 @@ final class CarPlayCoordinator: NSObject {
     // MARK: Library drill-downs
 
     private func pushSearch() {
+        // Batch 490 (REVIEW 2026-11-11 C1): second guard. The row is not offered below
+        // iOS 27, but pushing an unsupported template raises an exception, so refuse here too.
+        guard Self.isSearchTemplateSupported else {
+            ShelfLog.error(.carplay, "CarPlay Search refused: the Search template needs iOS 27 for audio apps")
+            return
+        }
         let template = CPSearchTemplate()
         template.delegate = self
         interfaceController.pushTemplate(template, animated: true) { [weak self] _, error in
@@ -1793,7 +1933,10 @@ final class CarPlayCoordinator: NSObject {
                 return
             }
             let time = AudioPlayerService.shared.currentTime
-            let title = AudioPlayerService.shared.currentChapter?.title ?? "Bookmark"
+            // Batch 490 (REVIEW 2026-11-11 V8): the one shared default bookmark name, so a
+            // bookmark made in the car reads like one made on the phone or the Lock Screen
+            // (was the chapter title alone, or the untranslated literal "Bookmark").
+            let title = BookmarkDefaultTitle.make(chapterTitle: AudioPlayerService.shared.currentChapter?.title, time: time)
             // The car is one of the two places this app is most likely to have no usable
             // connection (the other being headphones on the move), so a bookmark made here
             // is queued rather than dropped — there is no UI on this template to report a
@@ -2486,10 +2629,8 @@ final class CarPlayCoordinator: NSObject {
             self.reloadHome(isAccountSwitch: true)
             self.reloadLibrary(isAccountSwitch: true)
             self.reloadDownloads()
-            // C6: Account/Server on Setup were the two rows `handleAccountChanged`
-            // used to skip entirely — this was the exact "sign in on the phone
-            // mid-drive, Home fills with books, Setup still says 'Not signed in'"
-            // case the review called out.
+            // C6: kept after Batch 490 (REVIEW 2026-11-11 C4) dropped Setup's Account and
+            // Server rows — the account's speed and listening profile can still differ.
             self.reloadSetup()
         }
     }
@@ -2515,10 +2656,8 @@ final class CarPlayCoordinator: NSObject {
             homeDownloadedItems = downloaded
             reloadHome()
         }
-        // C6: Setup's "Downloaded: N audiobooks" row was the other one this observer
-        // never touched — finish a download and the count on Setup was wrong for the
-        // rest of the drive.
-        reloadSetup()
+        // Batch 490 (REVIEW 2026-11-11 C4): Setup no longer shows a download count, so
+        // this observer (which fires on every progress tick) no longer rebuilds it.
     }
 
     /// C6/C7 (REVIEW_2026-09-04_UI.md Pass 4): `playbackRate` is deliberately NOT one
@@ -2553,7 +2692,9 @@ final class CarPlayCoordinator: NSObject {
     private func cachedLibraries() async throws -> [Library] {
         if let librariesCache { return librariesCache }
         let generation = accountGeneration   // Review 6 Medium 9: don't write the old account's list back
-        let libraries = try await AudiobookshelfAPI.shared.getLibraries()
+        // Batch 490 (REVIEW 2026-11-11 C2): podcast libraries never reach CarPlay — every
+        // caller (picker, switcher, current-library fallback, search) reads this cache.
+        let libraries = Self.carPlayBrowsableLibraries(try await AudiobookshelfAPI.shared.getLibraries())
         if Self.isStaleGeneration(captured: generation, current: accountGeneration) { throw CancellationError() }
         librariesCache = libraries
         return libraries

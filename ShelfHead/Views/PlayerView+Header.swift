@@ -50,6 +50,12 @@ extension PlayerView {
             Button {
                 Task { await presentShare() }
             } label: { Label("Share…", systemImage: "square.and.arrow.up") }
+            // Batch 490 (REVIEW 2026-11-11 P9): the queue had no way in from the player
+            // except the Up Next chip, which only shows while something is queued.
+            Button {
+                Haptics.selection()
+                showQueue = true
+            } label: { Label("Up Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
             // Batch 426: cut a short quote clip from the current book.
             if let book = playerViewModel.currentBook, !book.isPodcast {
                 Button {
@@ -63,7 +69,9 @@ extension PlayerView {
                     Haptics.selection()
                     showBookClub = true
                 } label: {
-                    Label("Post to Book Club at \(playerViewModel.currentTime.formattedTime)", systemImage: "person.3")
+                    // Batch 490 (REVIEW 2026-11-11 P5): the same moment wording as a bookmark
+                    // ("12:04 · Chapter 7"), chapter-relative, instead of the whole-book clock.
+                    Label("Post to Book Club at \(BookmarksSheet.momentLabel(time: playerViewModel.currentTime, chapter: playerViewModel.currentChapter))", systemImage: "person.3")
                 }
             }
             // Batch 456: listen along with someone over SharePlay (FaceTime, Messages or nearby).

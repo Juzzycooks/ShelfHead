@@ -94,13 +94,19 @@ struct RecommendBookSheet: View {
             .navigationTitle(Text("Recommend"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared Cancel/confirm pair (system ✕ and ✓
+                // on iOS 26+), as Edit Bookmark has. Cancel is monochrome; the confirm stays
+                // prominent, as the other confirm call sites leave it.
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    SheetCancelButton { dismiss() }.monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Send") { send() }
+                    SheetConfirmButton(title: "Send") { send() }
+                        .accessibilityLabel(Text("Send"))
                         .disabled(!RecommendDraft.canSend(selected: selected))
                 }
+                .shelfVisibilityPriority(.high)
             }
         }
     }

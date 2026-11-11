@@ -51,6 +51,13 @@ struct EbookReaderView: View {
     /// from both `onDisappear` and a scene-phase change) doesn't fire a redundant network
     /// request when nothing has actually moved since the last write.
     @State private var lastPersistedPageIndex = -1
+    /// Batch 490 (REVIEW 2026-11-11 F31): the PDF's table of contents (flattened
+    /// `PDFDocument.outlineRoot`), a pending page jump for `PDFKitView`, and the two sheets.
+    @State private var pdfOutline: [PDFOutlineEntry] = []
+    @State private var pdfJump: PDFJump?
+    @State private var showingContents = false
+    @State private var showingGoToPage = false
+    @State private var goToPageText = ""
 
     private var ebookFile: EbookFile? { item.media?.ebookFile }
     private var fileExtension: String { ebookFile?.metadata?.normalizedExtension ?? "" }
@@ -96,6 +103,7 @@ struct EbookReaderView: View {
                     PDFKitView(
                         document: pdfDocument,
                         initialPageIndex: initialPageIndex,
+                        jump: pdfJump,
                         onPageChanged: { pageIndex, pageCount in
                             currentPageIndex = pageIndex
                             pdfPageCount = pageCount
@@ -129,7 +137,45 @@ struct EbookReaderView: View {
                     .accessibilityHint("Closes the reader and returns to the book's details")
                 }
                 .shelfVisibilityPriority(.high)
+                // Batch 490 (REVIEW 2026-11-11 F31): Contents (only when the PDF has an outline)
+                // and Go to Page, for the PDF path only.
+                if isPDF, pdfDocument != nil, errorMessage == nil, pdfPageCount > 0 {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if !pdfOutline.isEmpty {
+                            Button { showingContents = true } label: {
+                                Label("Contents", systemImage: "list.bullet")
+                            }
+                            .monochromeToolbarItem()
+                        }
+                        Button {
+                            goToPageText = ""
+                            showingGoToPage = true
+                        } label: {
+                            Label("Go to Page…", systemImage: "number")
+                        }
+                        .monochromeToolbarItem()
+                    }
+                }
             }
+            .sheet(isPresented: $showingContents) {
+                PDFContentsSheet(entries: pdfOutline) { pageIndex in
+                    jump(toPageIndex: pageIndex)
+                }
+            }
+            .alert("Go to Page", isPresented: $showingGoToPage) {
+                TextField("Page", text: $goToPageText)
+                    .keyboardType(.numberPad)
+                Button("Go") {
+                    if let index = Self.pageIndex(fromInput: goToPageText, pageCount: pdfPageCount) {
+                        jump(toPageIndex: index)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Enter a page number from 1 to \(pdfPageCount.formatted()).",
+                     comment: "Go to Page alert; %@ is the PDF's page count, already formatted")
+            }
+            .systemChromeTint()
             .task { await load() }
             .onDisappear {
                 persistPDFProgressIfNeeded()
@@ -187,6 +233,7 @@ struct EbookReaderView: View {
             do {
                 epubFileURL = try await EbookStore.fetch(item: item)
             } catch {
+                ShelfLog.error(.storage, "EPUB fetch failed for \(ShelfLog.redact(item.id)): \(error)")  // Batch 490 (REVIEW 2026-11-11 E6)
                 errorMessage = Self.downloadFailureMessage(for: error)
             }
             isLoading = false
@@ -240,6 +287,7 @@ struct EbookReaderView: View {
                     return
                 }
                 pdfDocument = document
+                pdfOutline = Self.outlineEntries(root: document.outlineRoot, in: document)  // Batch 490 (F31)
                 // Resume where the server (or another device, or the web UI) last left
                 // off, if it recorded a page that's actually in range for this document.
                 // Best-effort: a failure here just means the reader opens at page one,
@@ -253,6 +301,7 @@ struct EbookReaderView: View {
                 }
             }
         } catch {
+            ShelfLog.error(.storage, "Ebook download failed for \(ShelfLog.redact(item.id)): \(error)")  // Batch 490 (REVIEW 2026-11-11 E6)
             errorMessage = Self.downloadFailureMessage(for: error)
         }
         isLoading = false
@@ -334,9 +383,26 @@ struct EbookReaderView: View {
     /// `nonisolated` because it's a pure `Error` → `String` mapping with no state: it
     /// stays callable (and unit-testable) from outside the main actor even though a
     /// SwiftUI `View`'s members are otherwise main-actor-isolated.
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 E6): no raw system error text and no HTTP status code on
+    /// screen any more. A transport failure is split into offline and can't-reach-the-server
+    /// (the house split, as on Series and Collections); the details go to `ShelfLog` at the
+    /// call sites instead.
     nonisolated static func downloadFailureMessage(for error: Error) -> String {
         guard let apiError = error as? APIError else {
-            return String(localized: "Couldn't download this file: \(error.localizedDescription)", comment: "%@ is a system error description")
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+                    return String(localized: "You’re offline. Connect to the internet to open this book.")
+                case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .timedOut,
+                     .networkConnectionLost, .secureConnectionFailed, .serverCertificateUntrusted,
+                     .badServerResponse:
+                    return String(localized: "Can’t reach your server. Check that it’s running and try again.")
+                default:
+                    break
+                }
+            }
+            return String(localized: "This file couldn’t be opened. Try again, or check the file on your server.")
         }
         switch apiError {
         case .unauthorized:
@@ -345,11 +411,51 @@ struct EbookReaderView: View {
             return String(localized: "You don't have permission to download this file.")
         case .notFound:
             return String(localized: "The server couldn't find this file.")
-        case .serverError(let code), .httpError(let code):
-            return String(localized: "The server couldn't provide this file (HTTP \(code)).", comment: "%lld is an HTTP status code")
-        case .invalidURL, .invalidResponse, .decodingError:
-            return String(localized: "The server couldn't provide this file.")
+        case .serverError, .httpError, .invalidURL, .invalidResponse, .decodingError:
+            return String(localized: "Your server couldn’t send this file. Try again in a moment.")
         }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F31): asks `PDFKitView` to show a page. A fresh id each
+    /// time, so jumping to the same page twice still moves the view.
+    private func jump(toPageIndex index: Int) {
+        pdfJump = PDFJump(pageIndex: index)
+        Haptics.selection()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F31): pure. A typed page number (1-based) as a 0-based
+    /// page index, clamped to the document. Nil when the text isn't a number or the
+    /// document has no pages. Pinned by `QuickWinsBookDetailTests`.
+    nonisolated static func pageIndex(fromInput input: String, pageCount: Int) -> Int? {
+        guard pageCount > 0,
+              let number = Int(input.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return min(max(number, 1), pageCount) - 1
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F31): the PDF outline flattened to rows with an indent
+    /// level, depth-first in reading order. Entries with no resolvable page are left out but
+    /// their children are kept. The invisible root itself isn't a row (`PDFOutline` docs).
+    /// Capped at four levels and 1,000 rows so a pathological outline can't stall the sheet.
+    nonisolated static func outlineEntries(root: PDFOutline?, in document: PDFDocument) -> [PDFOutlineEntry] {
+        guard let root else { return [] }
+        var entries: [PDFOutlineEntry] = []
+        func walk(_ node: PDFOutline, level: Int) {
+            guard level < 4 else { return }
+            for i in 0..<node.numberOfChildren {
+                guard entries.count < 1_000, let child = node.child(at: i) else { return }
+                let page = child.destination?.page ?? (child.action as? PDFActionGoTo)?.destination.page
+                let title = child.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if let page, !title.isEmpty {
+                    let index = document.index(for: page)
+                    if index != NSNotFound, index >= 0, index < document.pageCount {
+                        entries.append(PDFOutlineEntry(id: entries.count, title: title, level: level, pageIndex: index))
+                    }
+                }
+                walk(child, level: level + 1)
+            }
+        }
+        walk(root, level: 0)
+        return entries
     }
 
     /// Pure page → progress-fraction mapping, pinned with a test
@@ -377,6 +483,8 @@ struct EbookReaderView: View {
 private struct PDFKitView: UIViewRepresentable {
     let document: PDFDocument
     let initialPageIndex: Int?
+    /// Batch 490 (REVIEW 2026-11-11 F31): a Contents or Go to Page request, applied once per id.
+    var jump: PDFJump? = nil
     let onPageChanged: (_ pageIndex: Int, _ pageCount: Int) -> Void
 
     func makeUIView(context: Context) -> PDFView {
@@ -401,11 +509,18 @@ private struct PDFKitView: UIViewRepresentable {
         if uiView.document !== document {
             uiView.document = document
         }
+        if let jump, jump.id != context.coordinator.lastJumpId {
+            context.coordinator.lastJumpId = jump.id
+            if let page = document.page(at: jump.pageIndex) {
+                uiView.go(to: page)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject {
+        var lastJumpId: UUID?
         private weak var observedView: PDFView?
         private var onPageChanged: ((Int, Int) -> Void)?
 
@@ -431,6 +546,69 @@ private struct PDFKitView: UIViewRepresentable {
                 NotificationCenter.default.removeObserver(self, name: .PDFViewPageChanged, object: observedView)
             }
         }
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F31): one row of a PDF's table of contents.
+struct PDFOutlineEntry: Identifiable, Equatable {
+    let id: Int
+    let title: String
+    /// 0 for a top-level entry.
+    let level: Int
+    /// 0-based.
+    let pageIndex: Int
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F31): a page jump for `PDFKitView`.
+struct PDFJump: Equatable {
+    let id = UUID()
+    let pageIndex: Int
+}
+
+/// Batch 490 (REVIEW 2026-11-11 F31): the PDF's Contents, as a plain list sheet. Tapping a
+/// row jumps to its page and closes the sheet.
+private struct PDFContentsSheet: View {
+    let entries: [PDFOutlineEntry]
+    let onSelect: (Int) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(entries) { entry in
+                let pageText = (entry.pageIndex + 1).formatted()
+                Button {
+                    onSelect(entry.pageIndex)
+                    dismiss()
+                } label: {
+                    HStack(spacing: Space.s) {
+                        Typo.rowTitle(Text(verbatim: entry.title))
+                            .foregroundStyle(Color.shelfCream)
+                            .padding(.leading, CGFloat(entry.level) * Space.l)
+                        Spacer(minLength: Space.s)
+                        Typo.metadata(Text(verbatim: pageText))
+                            .foregroundStyle(Color.shelfMuted)
+                            .monospacedDigit()
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.shelfCard)
+                .accessibilityLabel(Text("\(entry.title), page \(pageText)", comment: "Contents row; first %@ is a chapter title, second the page number"))
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.shelfBackground.ignoresSafeArea())
+            .navigationTitle("Contents")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
+                        .monochromeToolbarItem()
+                }
+                .shelfVisibilityPriority(.high)
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

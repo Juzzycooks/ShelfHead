@@ -589,6 +589,20 @@ struct SeriesDetailView: View {
                 Label("Mark series unfinished", systemImage: "circle")
             }
         }
+        // Batch 490 (REVIEW 2026-11-11 F1): ABS's per-series hide from its Continue Series
+        // shelf (Home's "Next in Series", so named here), offered only while that shelf shows
+        // a book from this series.
+        // Progress is untouched; the app-wide toast offers Undo.
+        if LibraryViewModel.seriesIsInContinueSeries(
+            seriesBookIds: Set(orderedBooks.map(\.id)),
+            shelves: libraryViewModel.personalizedShelves) {
+            Button {
+                Haptics.selection()
+                Task { await libraryViewModel.removeSeriesFromContinueListening(seriesId: series.id, title: series.displayName) }
+            } label: {
+                Label("Remove from Next in Series", systemImage: "eye.slash")
+            }
+        }
     }
 
     @ToolbarContentBuilder
@@ -656,7 +670,8 @@ struct SeriesDetailView: View {
                     if isLoadedState {
                         playerViewModel.togglePlayPause()
                     } else {
-                        Task { await playerViewModel.startPlayback(for: target) }
+                        // Batch 490 (REVIEW 2026-11-11 L4): replacing the loaded book offers "Jump back".
+                        Task { await playerViewModel.startPlaybackOfferingUndo(for: target) }
                     }
                 } label: {
                     HStack(spacing: 8) {

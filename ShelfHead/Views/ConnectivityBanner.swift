@@ -94,6 +94,24 @@ enum ConnectivityCopy {
         return count > dismissedAt
     }
 
+    /// Batch 490 (REVIEW 2026-11-11 O1): whether the "Signed out of ‹host›" pill shows.
+    /// Only while the session needs signing in and the Sign In Again sheet isn't already
+    /// up (the pill is how to get it back after "Not Now"); never over App Lock; and not
+    /// while the device is offline, where the offline pill already outranks it and a
+    /// sign-in couldn't reach the server anyway. Pinned by `QuickWinsSignInTests`.
+    static func showsSessionEndedPill(sessionNeedsSignIn: Bool, isPromptPresented: Bool,
+                                      isLocked: Bool, status: ReachabilityStore.Status) -> Bool {
+        sessionNeedsSignIn && !isPromptPresented && !isLocked && status != .offline
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O1): the pill's line.
+    static func sessionEndedMessage(host: String?) -> String {
+        guard let host, !host.isEmpty else {
+            return String(localized: "Signed out of your server", comment: "Banner pill when the server ended the session and the host is unknown")
+        }
+        return String(localized: "Signed out of \(host)", comment: "Banner pill when the server ended the session; %@ is the server host")
+    }
+
     /// The brief result line after "Sync now".
     static func syncOutcomeMessage(before: Int, after: Int) -> String {
         if after <= 0 { return String(localized: "All synced", comment: "Result line after Sync now succeeded") }
@@ -160,6 +178,10 @@ struct ConnectivityBanner: View {
     // Polish pass (DL-7): routes through `ContentView.handleDeepLink`, so App Lock still gates it.
     @Environment(\.openURL) private var openURL
     @State private var downloadManager = DownloadManager.shared
+    /// Batch 490 (REVIEW 2026-11-11 O1): the session-ended pill reads these. AuthViewModel
+    /// is injected at the app root; App Lock is the shared manager ContentView also reads.
+    @Environment(AuthViewModel.self) private var authViewModel
+    @State private var appLock = AppLockManager.shared
     // AX-11: Dynamic Type-scaled glyph sizes.
     @ScaledMetric(relativeTo: .footnote) private var warningIconSize: CGFloat = 13
     @ScaledMetric(relativeTo: .caption) private var pendingSyncIconSize: CGFloat = 11
@@ -179,13 +201,25 @@ struct ConnectivityBanner: View {
             || syncOutcome != nil || isSyncing
     }
 
-    private var isShowingAnything: Bool { showsConnectivityPill || showsPendingPill }
+    /// Batch 490 (REVIEW 2026-11-11 O1).
+    private var showsSessionEndedPill: Bool {
+        ConnectivityCopy.showsSessionEndedPill(sessionNeedsSignIn: authViewModel.sessionNeedsSignIn,
+                                               isPromptPresented: authViewModel.sessionExpiredPrompt != nil,
+                                               isLocked: appLock.isLocked,
+                                               status: status)
+    }
+
+    private var isShowingAnything: Bool { showsConnectivityPill || showsSessionEndedPill || showsPendingPill }
 
     var body: some View {
         VStack(spacing: 6) {
             connectivityWarning
+            // Batch 490 (REVIEW 2026-11-11 O1): below the connectivity pill (which
+            // outranks it), above the pending-sync pill.
+            sessionEndedLine
             pendingSyncLine
         }
+        .shelfAnimation(.easeInOut(duration: 0.25), value: showsSessionEndedPill)
         // Critique 2026-10-06 (harden): the tabs get a top inset the height of this stack, and
         // scroll content could show in the gap around the capsule above the nav bar. A
         // solid page-colour band behind the stack (extended up under the status bar) covers
@@ -326,6 +360,44 @@ struct ConnectivityBanner: View {
             AccessibilityNotification.Announcement(message).post()
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             syncOutcome = nil
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O1): after "Not Now" on Sign In Again nothing said the
+    /// session had ended, and nothing brought the sheet back. A quiet pill in the pending
+    /// pill's style: orange glyph, cream words, one amber action. No dismiss: it goes when
+    /// the user signs in again (or signs out).
+    @ViewBuilder private var sessionEndedLine: some View {
+        if showsSessionEndedPill {
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: pendingSyncIconSize, weight: .semibold))
+                    .foregroundStyle(Color.shelfOrange)
+                    .accessibilityHidden(true)
+                Typo.supporting(Text(ConnectivityCopy.sessionEndedMessage(host: authViewModel.sessionEndedHost)), weight: .medium)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button {
+                    Haptics.selection()
+                    authViewModel.reopenSessionExpiredPrompt()
+                } label: {
+                    Typo.supporting(Text("Sign In"), weight: .bold)
+                        .foregroundStyle(Color.shelfAmberTextOnSurface)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .padding(.trailing, 10)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(Text("Sign in again"))
+            }
+            .foregroundStyle(Color.shelfCream)
+            .padding(.leading, 12)
+            .padding(.trailing, 2)
+            .background(Color.shelfSurface, in: Capsule())
+            .shelfElevation(.floating, in: Capsule())
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .accessibilityElement(children: .contain)
         }
     }
 

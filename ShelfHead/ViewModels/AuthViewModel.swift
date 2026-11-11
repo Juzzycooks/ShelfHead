@@ -41,6 +41,7 @@ final class AuthViewModel {
             if !isAuthenticated {
                 sessionExpiredPrompt = nil
                 sessionNeedsSignIn = false
+                snoozedSessionExpiredPrompt = nil   // Batch 490 (REVIEW 2026-11-11 O1)
             }
             guard SharedPlayback.setSignedIn(isAuthenticated) else { return }
             // `tearDownAccountScopedState`'s `WidgetLibraryPublisher.clear()` already
@@ -145,6 +146,20 @@ final class AuthViewModel {
     /// After "Not Now", the sheet stays away this long even if more requests are refused.
     nonisolated static let sessionExpiredSnooze: TimeInterval = 10 * 60
     @ObservationIgnored private var sessionExpiredDismissedAt: Date?
+    /// Batch 490 (REVIEW 2026-11-11 O1): the prompt "Not Now" put away, so the banner's
+    /// "Sign In" (`reopenSessionExpiredPrompt`) brings back the very same account rather
+    /// than rebuilding it. Cleared with the rest of the session-ended state.
+    @ObservationIgnored private var snoozedSessionExpiredPrompt: SessionExpiredPrompt?
+
+    /// Batch 490 (REVIEW 2026-11-11 O1): the host of the session that ended, for the
+    /// banner pill and the Account & Security row. `nil` unless `sessionNeedsSignIn`.
+    var sessionEndedHost: String? {
+        guard sessionNeedsSignIn else { return nil }
+        if let prompt = sessionExpiredPrompt ?? snoozedSessionExpiredPrompt { return prompt.host }
+        let server = serverURL.isEmpty ? AuthStore.shared.serverURL : serverURL
+        guard !server.isEmpty else { return nil }
+        return URL(string: server)?.host ?? server
+    }
     /// The cold-launch check owns a rejection it sees itself (it signs out, J1-2), so the
     /// in-place sheet stays out of its way while it runs.
     @ObservationIgnored private var isVerifyingRestoredSession = false
@@ -302,6 +317,7 @@ final class AuthViewModel {
             // Polish pass (J1-1, J1-2): the session a prompt or prefill was about is ending.
             sessionExpiredPrompt = nil
             sessionNeedsSignIn = false
+            snoozedSessionExpiredPrompt = nil   // Batch 490 (REVIEW 2026-11-11 O1)
             sessionEndedPrefill = nil
 
             // 1. Stop playback and transfers — `stopPlaybackAndTransfers()` below.
@@ -1570,9 +1586,40 @@ final class AuthViewModel {
     /// queues) and the sheet won't come back for `sessionExpiredSnooze`.
     func dismissSessionExpiredPrompt() {
         guard sessionExpiredPrompt != nil, !isReauthenticating else { return }
+        snoozedSessionExpiredPrompt = sessionExpiredPrompt   // Batch 490 (REVIEW 2026-11-11 O1)
         sessionExpiredPrompt = nil
         reauthErrorMessage = nil
         sessionExpiredDismissedAt = Date()
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O1): the banner pill's and Account & Security's
+    /// "Sign In". Clears the "Not Now" snooze and puts the Sign In Again sheet back up for
+    /// the same account (the snoozed prompt, so the same-account check still applies).
+    /// Does nothing unless the session really needs signing in, nobody is signed out, the
+    /// sheet isn't already up, and no sign-in is running.
+    func reopenSessionExpiredPrompt() {
+        guard Self.canReopenSessionExpiredPrompt(sessionNeedsSignIn: sessionNeedsSignIn,
+                                                 isAuthenticated: isAuthenticated,
+                                                 isPresented: sessionExpiredPrompt != nil,
+                                                 isSigningIn: isLoading || isReauthenticating || isSwitchingAccount)
+        else { return }
+        sessionExpiredDismissedAt = nil
+        reauthErrorMessage = nil
+        if let snoozed = snoozedSessionExpiredPrompt {
+            snoozedSessionExpiredPrompt = nil
+            sessionExpiredPrompt = snoozed
+        } else {
+            // No prompt kept (e.g. the flag outlived it): build it the usual way, which
+            // re-reads the account and its stored user id.
+            Task { await handleSessionExpiredSignal(generation: nil) }
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O1): pure guard for `reopenSessionExpiredPrompt`.
+    /// Pinned by `QuickWinsSignInTests`.
+    nonisolated static func canReopenSessionExpiredPrompt(sessionNeedsSignIn: Bool, isAuthenticated: Bool,
+                                                          isPresented: Bool, isSigningIn: Bool) -> Bool {
+        sessionNeedsSignIn && isAuthenticated && !isPresented && !isSigningIn
     }
 
     /// Sign in again with a password, for the account in `sessionExpiredPrompt` only. Reuses
@@ -1684,6 +1731,7 @@ final class AuthViewModel {
         sessionExpiredPrompt = nil
         sessionNeedsSignIn = false
         sessionExpiredDismissedAt = nil
+        snoozedSessionExpiredPrompt = nil   // Batch 490 (REVIEW 2026-11-11 O1)
         reauthErrorMessage = nil
         sessionEndedPrefill = nil
     }

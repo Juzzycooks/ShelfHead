@@ -73,8 +73,70 @@ final class ReleaseRadarViewModel {
     func rebuild(items: [LibraryItem], now: Date = Date(), calendar: Calendar = .current) {
         loadCache(scope: Self.currentScope())
         books = items.filter { !$0.isPodcast }.map(ReleaseRadarPlanner.LibraryBook.init(item:))
+        recomputeEntries(now: now, calendar: calendar)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 F27): `entries` from the books and cache already held, minus the
+    /// books marked Not Interested. Split out of `rebuild` so Undo can restore an entry without a snapshot.
+    private func recomputeEntries(now: Date = Date(), calendar: Calendar = .current) {
         let (targets, _) = ReleaseRadarPlanner.seriesToCheck(books: books, cap: .max)
-        entries = ReleaseRadarPlanner.plan(targets: targets, catalog: cache.catalog, today: now, calendar: calendar)
+        let planned = ReleaseRadarPlanner.plan(targets: targets, catalog: cache.catalog, today: now, calendar: calendar)
+        entries = Self.visibleEntries(planned, hiding: notInterested)
+    }
+
+    // MARK: Not Interested (Batch 490 (REVIEW 2026-11-11 F27))
+
+    /// ASINs the listener said they don't want. Global rather than per account: it's a taste, not
+    /// library state. Stored as a string array under `notInterestedKey`.
+    static let notInterestedKey = "releaseRadar.notInterestedASINs"
+    private(set) var notInterested: Set<String> = Set(UserDefaults.standard.stringArray(forKey: ReleaseRadarViewModel.notInterestedKey) ?? [])
+
+    /// The entries still shown once `hiding` is taken out. Pure, pinned by `QuickWinsShellTests`.
+    nonisolated static func visibleEntries(_ entries: [ReleaseRadarPlanner.RadarEntry],
+                                           hiding: Set<String>) -> [ReleaseRadarPlanner.RadarEntry] {
+        hiding.isEmpty ? entries : entries.filter { !hiding.contains($0.asin) }
+    }
+
+    /// The Undo toast's text after `markNotInterested`, shown by `HomeView` (the shelf itself unmounts
+    /// when its last book goes, so it can't host the toast).
+    var notInterestedToast: String?
+    private var lastHiddenASIN: String?
+
+    /// Hides `entry` now and from every later check.
+    func markNotInterested(_ entry: ReleaseRadarPlanner.RadarEntry) {
+        notInterested.insert(entry.asin)
+        saveNotInterested()
+        entries.removeAll { $0.asin == entry.asin }
+        lastHiddenASIN = entry.asin
+        notInterestedToast = String(localized: "\u{201C}\(entry.title)\u{201D} won\u{2019}t show on Release Radar.",
+                                    comment: "Toast after hiding a Release Radar book; %@ is the book title. An Undo button follows.")
+    }
+
+    /// Undo for the last `markNotInterested`.
+    func undoLastNotInterested() {
+        guard let asin = lastHiddenASIN else { return }
+        lastHiddenASIN = nil
+        guard notInterested.remove(asin) != nil else { return }
+        saveNotInterested()
+        recomputeEntries()
+    }
+
+    private func saveNotInterested() {
+        UserDefaults.standard.set(notInterested.sorted(), forKey: Self.notInterestedKey)
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 E4): the line Settings shows after a check. The count goes in
+    /// as a String (no digit grouping), and 1 has its own sentence because no plural rule exists for it yet.
+    nonisolated static func checkSummary(count: Int) -> String {
+        switch count {
+        case ..<1:
+            return String(localized: "Nothing new in your series yet", comment: "Release Radar settings: a check found no books")
+        case 1:
+            return String(localized: "1 upcoming book found \u{00B7} on Home", comment: "Release Radar settings: a check found one book, shown on the Home shelf")
+        default:
+            let n = String(count)
+            return String(localized: "\(n) upcoming books found \u{00B7} on Home", comment: "Release Radar settings: a check found books, shown on the Home shelf. %@ is the number.")
+        }
     }
 
     /// Opt-in gate + once-a-day throttle. `force` is "Check now".

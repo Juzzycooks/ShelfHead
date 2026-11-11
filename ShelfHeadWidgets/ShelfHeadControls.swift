@@ -94,3 +94,47 @@ struct ShelfHeadOpenNowPlayingControl: ControlWidget {
         .description("Jump straight to the ShelfHead player.")
     }
 }
+
+// MARK: - Skip and bookmark controls (Batch 490, REVIEW 2026-11-11 F17)
+
+@available(iOS 18.0, *)
+struct ShelfHeadSkipBackControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.shelfhead.app.skipBackControl") {
+            ControlWidgetButton(action: SkipBackControlIntent()) {
+                Label("Skip Back", systemImage: "gobackward")
+            }
+            .tint(WidgetTheme.color(hex: WidgetTheme.accentHex))
+        }
+        .displayName("Skip Back")
+        .description("Skip back in the book that is playing.")
+    }
+}
+
+@available(iOS 18.0, *)
+struct ShelfHeadSkipForwardControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.shelfhead.app.skipForwardControl") {
+            ControlWidgetButton(action: SkipForwardControlIntent()) {
+                Label("Skip Forward", systemImage: "goforward")
+            }
+            .tint(WidgetTheme.color(hex: WidgetTheme.accentHex))
+        }
+        .displayName("Skip Forward")
+        .description("Skip forward in the book that is playing.")
+    }
+}
+
+@available(iOS 18.0, *)
+struct ShelfHeadAddBookmarkControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.shelfhead.app.addBookmarkControl") {
+            ControlWidgetButton(action: AddBookmarkControlIntent()) {
+                Label("Add Bookmark", systemImage: "bookmark")
+            }
+            .tint(WidgetTheme.color(hex: WidgetTheme.accentHex))
+        }
+        .displayName("Add Bookmark")
+        .description("Bookmark the current position in your book.")
+    }
+}

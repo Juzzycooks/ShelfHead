@@ -848,10 +848,15 @@ struct MediaProgress: Codable, Identifiable {
     let lastUpdate: Int?
     let startedAt: Int?
     let finishedAt: Int?
+    /// Batch 490 (REVIEW 2026-11-11 F1): true once the listener removed this book from the
+    /// server's Continue Listening shelf. A `var` with a default so the memberwise initializer
+    /// `DownloadedBook.asLibraryItem()` and the tests use keeps its shape.
+    var hideFromContinueListening: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, libraryItemId, episodeId, duration, progress, currentTime
         case isFinished, lastUpdate, startedAt, finishedAt
+        case hideFromContinueListening
     }
 }
 
@@ -901,6 +906,8 @@ extension MediaProgress {
         lastUpdate = c.lenientInt(.lastUpdate)
         startedAt = c.lenientInt(.startedAt)
         finishedAt = c.lenientInt(.finishedAt)
+        // Batch 490 (REVIEW 2026-11-11 F1): absent on older servers; lenient like `isFinished`.
+        hideFromContinueListening = c.lenientBool(.hideFromContinueListening)
     }
 }
 

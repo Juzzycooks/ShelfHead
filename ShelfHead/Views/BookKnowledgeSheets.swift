@@ -16,6 +16,9 @@ struct XRaySheet: View {
     let itemId: String
     let title: String
     var onSeek: KnowledgeSeek? = nil
+    /// Batch 490 (REVIEW 2026-11-11 P5): the book's chapters, for a presenter whose book may not be
+    /// the loaded one (Book Detail). Nil uses the player's when this is the loaded book.
+    var chapters: [Chapter]? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(PlayerViewModel.self) private var playerViewModel
@@ -48,11 +51,12 @@ struct XRaySheet: View {
             .navigationTitle("X-Ray")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button, as the player's sheets use.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                         .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
             }
         }
         .systemChromeTint()
@@ -106,6 +110,10 @@ struct XRaySheet: View {
     }
 
     private var trimmedSearch: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Batch 490 (REVIEW 2026-11-11 P5): chapters to name moments by (none when this sheet is for
+    /// a book other than the loaded one and the presenter passed none, which keeps plain time).
+    private var momentChapters: [Chapter] { chapters ?? BookMoment.chapters(for: itemId, player: playerViewModel) }
 
     private func ready(_ entries: [XRayEntry]) -> some View {
         let presentKinds = NoteEntityKind.allCases.filter { kind in entries.contains { $0.kind == kind } }
@@ -166,7 +174,7 @@ struct XRaySheet: View {
         VStack(alignment: .leading, spacing: 8) {
             // Batch 432: the name and notes open the detail page; "First mentioned" stays a separate button.
             NavigationLink {
-                XRayDetailView(itemId: itemId, entry: entry) { time in seek(to: time) }
+                XRayDetailView(itemId: itemId, entry: entry, chapters: momentChapters) { time in seek(to: time) }
             } label: {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -195,8 +203,9 @@ struct XRaySheet: View {
                 Haptics.selection()
                 seek(to: entry.firstMention)
             } label: {
-                Text(String(localized: "First mentioned at \(RecapPlanner.timestamp(entry.firstMention))",
-                            comment: "Button on an X-Ray entry. %@ is a time like 1:12:40; it jumps to where the name first came up"))
+                // Batch 490 (REVIEW 2026-11-11 P5): the moment as the player names it.
+                Text(String(localized: "First mentioned at \(BookMoment.label(time: entry.firstMention, chapters: momentChapters))",
+                            comment: "Button on an X-Ray entry. %@ is a moment like 12:40 · Chapter 3 (a plain time like 1:12:40 when the book has no chapters); it jumps to where the name first came up"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.shelfAmberTextOnSurface)
                     .multilineTextAlignment(.leading)
@@ -207,7 +216,7 @@ struct XRaySheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
     }
 
     private func seek(to time: Double) {
@@ -227,6 +236,8 @@ struct XRaySheet: View {
 struct XRayDetailView: View {
     let itemId: String
     let entry: XRayEntry
+    /// Batch 490 (REVIEW 2026-11-11 P5): names each mention as the player would ("12:44 · Chapter 3").
+    var chapters: [Chapter] = []
     let onSeek: (Double) -> Void
 
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -323,7 +334,7 @@ struct XRayDetailView: View {
                                              comment: "Footer on the Ask the Book sheet: answers are generated on device and may be wrong"))
             }
             .padding(16)
-            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
         case .failed(let reason):
             IntelligenceFailureView(reason: reason) { attempt += 1 }
                 .padding(.horizontal, -Space.xl)
@@ -347,7 +358,7 @@ struct XRayDetailView: View {
     }
 
     private func mentionRow(_ mention: XRayMention) -> some View {
-        let stamp = RecapPlanner.timestamp(mention.time)
+        let stamp = BookMoment.label(time: mention.time, chapters: chapters)   // Batch 490 (REVIEW 2026-11-11 P5)
         return Button {
             Haptics.selection()
             onSeek(mention.time)
@@ -365,7 +376,7 @@ struct XRayDetailView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(12)
-            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8): a row
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -411,9 +422,12 @@ struct AskBookSheet: View {
     let title: String
     let author: String
     var onSeek: KnowledgeSeek? = nil
+    /// Batch 490 (REVIEW 2026-11-11 P5): as `XRaySheet.chapters`.
+    var chapters: [Chapter]? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(PlayerViewModel.self) private var playerViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var draft = ""
     @State private var history: [AskExchange] = []
@@ -437,11 +451,12 @@ struct AskBookSheet: View {
             .navigationTitle("Ask the Book")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
+                // Batch 490 (REVIEW 2026-11-11 V1): the shared close button, as the player's sheets use.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                         .monochromeToolbarItem()
                 }
+                .shelfVisibilityPriority(.high)   // iPhone Duo (§2)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { inputBar }
         }
@@ -472,11 +487,12 @@ struct AskBookSheet: View {
                 .padding(.vertical, 16)
             }
             .scrollDismissesKeyboard(.interactively)
+            // Batch 490 (REVIEW 2026-11-11 A5): no animated scroll under Reduce Motion.
             .onChange(of: history.count) { _, _ in
-                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: inFlight?.question) { _, _ in
-                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
     }
@@ -496,7 +512,7 @@ struct AskBookSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .padding(16)
-            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
     }
 
     private func exchangeView(_ exchange: AskExchange) -> some View {
@@ -506,7 +522,7 @@ struct AskBookSheet: View {
             if !exchange.citations.isEmpty {
                 Typo.fine(Text("Where it comes from"))
                     .foregroundStyle(Color.shelfMuted)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 8, alignment: .leading)],
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8, alignment: .leading)],
                           alignment: .leading, spacing: 8) {
                     ForEach(Array(exchange.citations.enumerated()), id: \.offset) { _, passage in
                         citationChip(passage)
@@ -517,13 +533,17 @@ struct AskBookSheet: View {
     }
 
     private func citationChip(_ passage: Passage) -> some View {
-        let stamp = RecapPlanner.timestamp(passage.start)
+        // Batch 490 (REVIEW 2026-11-11 P5): the moment as the player names it. It can now carry a
+        // chapter title, so the chip may wrap to two lines (the grid's columns are wider for it).
+        let stamp = BookMoment.label(time: passage.start, chapters: chapters ?? BookMoment.chapters(for: itemId, player: playerViewModel))
         return Button {
             Haptics.selection()
             seek(to: passage.start)
         } label: {
             Text(verbatim: stamp)
                 .monospacedDigit()
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
@@ -564,7 +584,7 @@ struct AskBookSheet: View {
                 .foregroundStyle(Color.shelfCream)
                 .padding(.horizontal, 14)
                 .frame(minHeight: 44)
-                .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.shelfCard, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))   // Batch 490 (REVIEW 2026-11-11 V8)
             Button {
                 ask(draft)
             } label: {

@@ -46,7 +46,11 @@ struct StandaloneLibraryView: View {
     @ViewBuilder
     private var libraryContent: some View {
         if store.libraries.isEmpty {
-            WatchStandaloneErrorState(message: "No libraries found on this server.") {
+            // Batch 490 (REVIEW 2026-11-11 W11): podcast libraries are left out, so say
+            // why the list is empty rather than "none found".
+            WatchStandaloneErrorState(message: store.hasOnlyPodcastLibraries
+                                      ? "This server\u{2019}s libraries hold podcasts. Podcasts play on iPhone."
+                                      : "No libraries found on this server.") {
                 Task { await store.reloadLibraries() }
             }
         } else {

@@ -93,6 +93,9 @@ struct WatchNowPlayingActions {
     /// stops claiming "Saved" for a bookmark that never landed.
     var addBookmark: ((@escaping (WatchBookmarkOutcome) -> Void) -> Void)? = nil
     var setSleepTimer: ((WatchSleepTimerOption) -> Void)? = nil
+    /// Batch 490 (REVIEW 2026-11-11 F29): "Add 15 Minutes" in the Sleep sheet. Shown
+    /// only while a countdown runs (`WatchSleepExtend.isAvailable`).
+    var extendSleepTimer: (() -> Void)? = nil
     /// Companion mode seeks by chapter id (`seekToChapter`), standalone by time.
     var seekToChapter: ((WatchChapterRow) -> Void)? = nil
     var seekToBookmark: ((WatchBookmarkRow) -> Void)? = nil
@@ -102,8 +105,7 @@ struct WatchNowPlayingActions {
 
 /// The one Now Playing layout. `notice` sits between the time row and the transport (the
 /// standalone route warning, an error, a loading spinner); `moreActions` fills the "⋯"
-/// sheet below Bookmarks and Downloads (companion's Mark as Finished, standalone's Stop
-/// Playing).
+/// sheet below Bookmarks (companion's Mark as Finished, standalone's Stop Playing).
 struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     let model: WatchNowPlayingModel
     let actions: WatchNowPlayingActions
@@ -132,6 +134,9 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     @State private var crownPosition: Double = 0
     @State private var isScrubbingWithCrown = false
     @State private var crownSeekTask: Task<Void, Never>?
+    /// Batch 490 (REVIEW 2026-11-11 W9): hands the Crown back to volume after
+    /// `WatchCrownScrub.releaseAfterIdle` with no movement. Restarted by every turn.
+    @State private var crownReleaseTask: Task<Void, Never>?
     @State private var programmaticCrownValue: Double?
     @FocusState private var isScrubFocused: Bool
     /// The Bookmark button's outcome after a tap ("Saving…", "Saved", "Not Saved"),
@@ -219,7 +224,12 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
             commitCrownSeek(to: newValue)
         }
         .onChange(of: isScrubFocused) { _, focused in
-            if !focused { volumeFocusRequest += 1 }
+            if focused {
+                scheduleCrownRelease()
+            } else {
+                crownReleaseTask?.cancel()
+                volumeFocusRequest += 1
+            }
         }
         .onAppear {
             programmaticCrownValue = model.elapsed
@@ -233,6 +243,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
         }
         .onDisappear {
             crownSeekTask?.cancel()
+            crownReleaseTask?.cancel()
             bookmarkResetTask?.cancel()
             jumpBackExpiry?.cancel()
         }
@@ -248,7 +259,9 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
                             remainingText: model.sleepText,
                             unavailableReason: model.sleepUnavailableReason,
                             hasChapters: !model.chapters.isEmpty,
-                            onSelect: { actions.setSleepTimer?($0) })
+                            onSelect: { actions.setSleepTimer?($0) },
+                            onExtend: WatchSleepExtend.isAvailable(option: model.sleepOption, secondsLeft: model.sleepSecondsLeft)
+                                ? actions.extendSleepTimer : nil)
         case .chapters:
             WatchChaptersSheet(chapters: model.chapters,
                                currentTime: model.elapsed,
@@ -417,6 +430,10 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
             ) {
                 actions.togglePlayPause()
             }
+            // Batch 490 (REVIEW 2026-11-11 W2): double tap (Apple Watch Series 9 / Ultra 2
+            // and later) plays or pauses, like Apple's Now Playing. Off while a tool sheet
+            // is up, so a sheet never shares the gesture with it.
+            .modifier(WatchPrimaryActionShortcut(isEnabled: sheet == nil && model.isReady))
             WatchControlButton(
                 systemImage: SkipLabels.symbolName(backward: false, seconds: model.skipForwardSeconds),
                 label: .verbatim(SkipLabels.accessibilityLabel(backward: false, seconds: model.skipForwardSeconds)),
@@ -469,7 +486,8 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     private func bookmarkTool(addBookmark: @escaping (@escaping (WatchBookmarkOutcome) -> Void) -> Void) -> some View {
         let add = {
             guard bookmarkOutcome != .saving else { return }
-            WatchHaptics.tap()
+            // Batch 490 (REVIEW 2026-11-11 W8): no tap haptic here; the outcome plays the
+            // one haptic a bookmark add gets (`WatchFeedbackHaptic.forBookmark`).
             show(bookmarkOutcome: .saving)
             addBookmark { outcome in show(bookmarkOutcome: outcome) }
         }
@@ -519,7 +537,12 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     /// Shows `outcome` on the Bookmark button, then returns it to "Bookmark".
     private func show(bookmarkOutcome outcome: WatchBookmarkOutcome) {
         bookmarkOutcome = outcome
-        if outcome == .failed { WatchHaptics.failure() }
+        // Batch 490 (REVIEW 2026-11-11 W8): success too now, since nothing else plays one.
+        switch WatchFeedbackHaptic.forBookmark(outcome) {
+        case .success: WatchHaptics.success()
+        case .failure: WatchHaptics.failure()
+        case nil: break
+        }
         // Critique 2026-10-06 (polish): the result only changed the button's label, which
         // VoiceOver doesn't re-read by itself. `AccessibilityNotification.Announcement` is
         // watchOS 10.0 (Apple docs), this target's floor.
@@ -587,18 +610,34 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     // MARK: - Crown commit
 
     /// Shared by a real crown turn (once its debounce elapses) and the VoiceOver
-    /// adjustable action. A still-turning crown keeps resetting the debounce, so focus
-    /// only drops once the user stops for 350ms and the seek commits.
+    /// adjustable action. A still-turning crown keeps resetting the debounce, so the
+    /// seek commits once the user stops for 350ms.
+    ///
+    /// Batch 490 (REVIEW 2026-11-11 W9): committing no longer drops focus. A pause to
+    /// check the time used to hand the Crown back to volume, so the next turn changed the
+    /// volume instead. The Crown now stays on the scrubber until the row is tapped again
+    /// or `WatchCrownScrub.releaseAfterIdle` passes with no movement.
     private func commitCrownSeek(to newValue: Double) {
         isScrubbingWithCrown = true
+        if isScrubFocused { scheduleCrownRelease() }
         crownSeekTask?.cancel()
         crownSeekTask = Task {
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            try? await Task.sleep(nanoseconds: WatchCrownScrub.nanoseconds(WatchCrownScrub.seekDebounce))
             guard !Task.isCancelled else { return }
             programmaticCrownValue = newValue
             crownPosition = newValue
             actions.seek(newValue)
             isScrubbingWithCrown = false
+        }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 W9): (re)starts the idle countdown that returns the
+    /// Crown to volume.
+    private func scheduleCrownRelease() {
+        crownReleaseTask?.cancel()
+        crownReleaseTask = Task {
+            try? await Task.sleep(nanoseconds: WatchCrownScrub.nanoseconds(WatchCrownScrub.releaseAfterIdle))
+            guard !Task.isCancelled else { return }
             isScrubFocused = false
         }
     }
@@ -608,6 +647,21 @@ extension WatchNowPlayingScreen where MoreActions == EmptyView {
     init(model: WatchNowPlayingModel, actions: WatchNowPlayingActions,
          @ViewBuilder notice: @escaping () -> Notice) {
         self.init(model: model, actions: actions, notice: notice, moreActions: { EmptyView() })
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 W2): makes Play/Pause the scene's double-tap primary
+/// action. `handGestureShortcut(_:isEnabled:)` is watchOS 11.0 (Apple docs), above this
+/// target's watchOS 10 floor, so earlier systems get the control unchanged.
+private struct WatchPrimaryActionShortcut: ViewModifier {
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if #available(watchOS 11.0, *) {
+            content.handGestureShortcut(.primaryAction, isEnabled: isEnabled)
+        } else {
+            content
+        }
     }
 }
 

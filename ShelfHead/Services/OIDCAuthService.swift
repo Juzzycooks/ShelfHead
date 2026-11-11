@@ -55,6 +55,10 @@ enum OIDCAuthService {
     /// server and to word the `.noCodeInCallback` error message.
     private static let callbackHost = "oauth"
     private static let callbackURLString = "\(callbackScheme)://\(callbackHost)"
+    /// Batch 490 (REVIEW 2026-11-11 O4): the exact `redirect_uri` this app sends, for the
+    /// screens that tell an admin what to add to Audiobookshelf's Allowed Mobile Redirect
+    /// URIs (and the Copy button beside it). Read-only view of `callbackURLString`.
+    static var redirectURI: String { callbackURLString }
     /// Sent as `client_id`. Audiobookshelf's docs note this parameter is currently
     /// unused server-side but may become mandatory — sending a stable, recognizable
     /// value now costs nothing and avoids a future breakage.
@@ -76,6 +80,12 @@ enum OIDCAuthService {
         /// `AuthViewModel.signInErrorMessage` can say which, instead of the raw
         /// `localizedDescription` `sessionFailed`/`tokenExchangeFailed` used to show.
         case connectionFailed(URLError)
+        /// Batch 490 (REVIEW 2026-11-11 O4): the server refused to start sign-in because
+        /// this app's `redirect_uri` isn't in its Allowed Mobile Redirect URIs. ABS
+        /// answers `GET /auth/openid` with HTTP 400 and the plain-text body
+        /// "Invalid redirect_uri" (`OidcAuthStrategy.getAuthorizationUrl`). See
+        /// `initiationFailure(statusCode:body:)`.
+        case redirectURINotAllowed
 
         var errorDescription: String? {
             switch self {
@@ -101,8 +111,35 @@ enum OIDCAuthService {
                 return String(localized: "SSO sign-in failed to generate a secure random value. Please try again.")
             case .connectionFailed:
                 return String(localized: "Can\u{2019}t reach your server. Check your connection and try again.")
+            case .redirectURINotAllowed:
+                return OIDCAuthService.redirectURINotAllowedMessage
             }
         }
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O4): the one sentence naming the server setting and
+    /// the exact URI, shared by the error below and the SSO help text on the sign-in form.
+    static var redirectURISetupInstruction: String {
+        String(localized: "In Audiobookshelf, go to Settings \u{203A} Authentication and add \(redirectURI) to Allowed Mobile Redirect URIs.", comment: "SSO setup sentence, used in the SSO help text and error; %@ is the redirect URI the admin must allow")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O4): `.redirectURINotAllowed`'s message. What
+    /// happened, then the setup sentence, then what to do.
+    static var redirectURINotAllowedMessage: String {
+        String(localized: "Your server doesn\u{2019}t allow this app\u{2019}s sign-in address yet. \(redirectURISetupInstruction) Then try again.", comment: "SSO error when the server refused the redirect URI; %@ is the setup sentence naming the setting and the URI")
+    }
+
+    /// Batch 490 (REVIEW 2026-11-11 O4): what a non-redirect answer to the initiation
+    /// request means. Only the server's own "Invalid redirect_uri" 400 maps to
+    /// `.redirectURINotAllowed`; every other answer keeps the generic
+    /// `.noAuthorizationRedirect`. Pure, pinned by `QuickWinsSignInTests`.
+    nonisolated static func initiationFailure(statusCode: Int?, body: Data) -> OIDCError {
+        guard statusCode == 400,
+              let text = String(data: body.prefix(1024), encoding: .utf8),
+              text.range(of: "invalid redirect_uri", options: .caseInsensitive) != nil else {
+            return .noAuthorizationRedirect
+        }
+        return .redirectURINotAllowed
     }
 
     /// The tokens Audiobookshelf's OIDC callback exchange handed back. Mirrors the
@@ -175,12 +212,14 @@ enum OIDCAuthService {
             var currentRequest = initiationRequest
             var resolved: URL?
             for _ in 0..<5 {
-                let (_, response) = try await urlSession.data(for: currentRequest)
+                let (body, response) = try await urlSession.data(for: currentRequest)
                 guard let http = response as? HTTPURLResponse,
                       (300..<400).contains(http.statusCode),
                       let location = http.value(forHTTPHeaderField: "Location"),
                       let next = URL(string: location, relativeTo: currentRequest.url)?.absoluteURL else {
-                    throw OIDCError.noAuthorizationRedirect
+                    // Batch 490 (REVIEW 2026-11-11 O4): name the redirect-URI allow-list
+                    // when that is what the server refused.
+                    throw initiationFailure(statusCode: (response as? HTTPURLResponse)?.statusCode, body: body)
                 }
                 // SEC-2: a server reached over HTTPS that redirects to a *plain HTTP*
                 // address — same host or not — must be treated as a hard failure, not

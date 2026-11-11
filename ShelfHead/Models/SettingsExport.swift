@@ -10,6 +10,9 @@ enum SettingsExportValue: Codable, Equatable {
     case double(Double)
     case bool(Bool)
     case stringArray([String])
+    /// Batch 490 (REVIEW 2026-11-11 D7): `seriesAutoDownload`'s `[seriesName: Bool]`,
+    /// which was on `exportedKeys` but never written because no case could hold it.
+    case boolDictionary([String: Bool])
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -20,6 +23,7 @@ enum SettingsExportValue: Codable, Equatable {
         if let v = try? container.decode(Double.self) { self = .double(v); return }
         if let v = try? container.decode(String.self) { self = .string(v); return }
         if let v = try? container.decode([String].self) { self = .stringArray(v); return }
+        if let v = try? container.decode([String: Bool].self) { self = .boolDictionary(v); return }
         throw DecodingError.dataCorruptedError(
             in: container, debugDescription: "Unsupported SettingsExportValue")
     }
@@ -32,15 +36,26 @@ enum SettingsExportValue: Codable, Equatable {
         case .double(let v): try container.encode(v)
         case .bool(let v): try container.encode(v)
         case .stringArray(let v): try container.encode(v)
+        case .boolDictionary(let v): try container.encode(v)
         }
     }
 
     /// Maps a `UserDefaults.object(forKey:)` result into a typed export value, or nil for
-    /// a shape this export format doesn't support (e.g. `seriesAutoDownload`'s
-    /// `[String: Bool]`, which is intentionally left out of `SettingsExport.exportedKeys`).
+    /// a shape this export format doesn't support. Batch 490 (REVIEW 2026-11-11 D7):
+    /// `[String: Bool]` is supported now, so `seriesAutoDownload` round-trips.
     init?(any: Any) {
         if let arr = any as? [String] {
             self = .stringArray(arr)
+            return
+        }
+        if let dict = any as? [String: Any] {
+            // Only a dictionary whose every value is a real Bool (not a number).
+            var out: [String: Bool] = [:]
+            for (key, value) in dict {
+                guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
+                out[key] = number.boolValue
+            }
+            self = .boolDictionary(out)
             return
         }
         if let number = any as? NSNumber {
@@ -67,6 +82,7 @@ enum SettingsExportValue: Codable, Equatable {
         case .double(let v): return v
         case .bool(let v): return v
         case .stringArray(let v): return v
+        case .boolDictionary(let v): return v
         }
     }
 }
@@ -147,9 +163,25 @@ enum SettingsExport {
         SettingsKeys.playerShowsCaptions,
         SettingsKeys.captionTranslationLanguage,
         SettingsKeys.classicNowPlaying,
+        // Batch 490 (REVIEW 2026-11-11 D7): keys added since this list was last audited.
+        // `QuickWinsSettingsTests` now fails when a `SettingsKeys` constant is on neither list.
+        SettingsKeys.deckSkin,                     // appearance only; an unknown value falls back to Classic
+        SettingsKeys.releaseRadarRegion,           // harmless alone: Release Radar itself is excluded below
+        SettingsKeys.readingSiteSyncProgress,      // only acts once Hardcover is connected, which isn't exported
+        SettingsKeys.readingSiteMarkFinished,
+        SettingsKeys.readingSiteAskRating,
+        SettingsKeys.speedMode,                    // "wpm" or "multiplier" (sanitized below)
+        SettingsKeys.targetWPM,                    // clamped to NarratorPace.targetRange below
+        SettingsKeys.spatialAudioEnabled,          // changes how audio sounds, like the volume/EQ keys; starts nothing
+        SettingsKeys.dialogueEnhance,              // same
+        SettingsKeys.matchLoudness,                // same
         // Preference keys owned by other stores, not `SettingsKeys` itself.
         "shelfhead_favoriteAuthors",               // FavoritesStore: starred authors (global, not per-account)
         "shelfhead_favoriteNarrators",              // FavoritesStore: starred narrators (global, not per-account)
+        "downloadsPageSortOrder",                  // DownloadsView sort; an unknown value falls back to Title
+        "epubReader.fontScale",                    // EPUBReaderView text size (0 = automatic), clamped below
+        "epubReader.serif",                        // EPUBReaderView typeface
+        "settings_booksPerYearGoal",               // StatsView books-this-year goal (Batch 490 F27)
     ]
 
     /// Keys deliberately left out of `exportedKeys`, each excluded for account/device
@@ -166,6 +198,29 @@ enum SettingsExport {
         SettingsKeys.seenHomeBrowseSections,               // one-time Home migration bookkeeping
         SettingsKeys.homeBrowseSeenMigrated,                // one-time Home migration bookkeeping
         SettingsKeys.homeShelfSeedVersion,                   // one-time Home shelf seed/migration bookkeeping
+        // Batch 490 (REVIEW 2026-11-11 D7): every remaining key, each with its reason.
+        SettingsKeys.ambientBed,                           // sound: an import must never start sound
+        SettingsKeys.ambientLevel,                         // sound: goes with the bed above
+        SettingsKeys.deckButtonSounds,                     // sound: key clicks stay off until chosen on this device
+        SettingsKeys.cloudPositionSync,                    // privacy: sends positions to iCloud; each device opts in
+        SettingsKeys.releaseRadarEnabled,                  // privacy: contacts Audible; each device opts in
+        SettingsKeys.readingSiteConnected,                 // account state: the Hardcover token is in this device's Keychain
+        SettingsKeys.householdShareNowListening,           // privacy: publishes what you're playing to the household
+        SettingsKeys.householdDisplayName,                 // personal: your name in a household, not a device preference
+        SettingsKeys.householdAvatarSymbol,                // personal: as above
+        SettingsKeys.householdAvatarColor,                 // personal: as above
+        SettingsKeys.householdDismissedRecommendations,    // per-device inbox state
+        SettingsKeys.householdNotifiedRecommendations,     // per-device inbox state
+        SettingsKeys.showProfilePickerAtLaunch,            // goes with this device's child profiles, which aren't exported
+        "settings_kidProfiles",                            // child profiles: keyed by this device's saved account ids
+        "settings_listeningProfileBaseline",               // internal: the values a listening profile restores
+        "settings_schemaVersion",                          // migration bookkeeping
+        "settings_homeDefaultsV2Applied",                  // migration bookkeeping
+        "settings_homeDefaultOrderV3Applied",              // migration bookkeeping
+        "settings_alternateIconRevertApplied",             // migration bookkeeping
+        "settings_iconVariant",                            // removed setting, only ever deleted now
+        "settings_whatsNewLastSeenVersion",                // per-device: which What's New this device has shown
+        "bookDetail.siriTipVisible",                       // per-device tip state
     ]
 
     /// Builds an export file from whatever `exportedKeys` currently have a stored value.
@@ -232,6 +287,20 @@ enum SettingsExport {
              SettingsKeys.scheduledSleepTimerEndMinute: return clampedInt(0...59)
         case SettingsKeys.defaultSleepTimerMinutes: return clampedInt(1...180)
         case SettingsKeys.dailyListeningGoalMinutes: return clampedInt(0...1440)
+        // Batch 490 (REVIEW 2026-11-11 D7): rules for the keys newly on `exportedKeys`.
+        case SettingsKeys.targetWPM: return clampedInt(NarratorPace.targetRange)
+        case "epubReader.fontScale": return clamped(0...2.5)
+        case SettingsKeys.speedMode:
+            if case .string(let mode) = value, mode == "wpm" || mode == "multiplier" { return value }
+            return nil
+        case SettingsKeys.seriesAutoDownload:
+            if case .boolDictionary = value { return value }
+            return nil
+        case SettingsKeys.spatialAudioEnabled, SettingsKeys.dialogueEnhance, SettingsKeys.matchLoudness,
+             SettingsKeys.readingSiteSyncProgress, SettingsKeys.readingSiteMarkFinished,
+             SettingsKeys.readingSiteAskRating, "epubReader.serif":
+            if case .bool = value { return value }
+            return nil
         case SettingsKeys.dailyReminder, SettingsKeys.appLockEnabled, SettingsKeys.wifiOnlyDownloads,
              SettingsKeys.smartRewind, SettingsKeys.keepScreenAwake:
             if case .bool = value { return value }

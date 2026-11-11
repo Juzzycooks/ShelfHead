@@ -212,8 +212,10 @@ struct DrivingModeView: View {
         // cover, so there's no swipe-down).
         .accessibilityAction(.escape) { dismiss() }
         // Tells the root alert to stand down while this cover is up (fourth run).
-        .onAppear { playerViewModel.isDrivingModePresented = true }
-        .onDisappear { playerViewModel.isDrivingModePresented = false }
+        // Batch 490 (REVIEW 2026-11-11 P2): also keeps the screen on while Driving Mode
+        // is up (through the player service, the one owner of the idle timer).
+        .onAppear { playerViewModel.drivingModeVisibilityChanged(true) }
+        .onDisappear { playerViewModel.drivingModeVisibilityChanged(false) }
     }
 
     // MARK: Layouts

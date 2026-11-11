@@ -13,6 +13,16 @@
               "Go back to a part of my book in ${applicationName}"
             ]
           }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "machine_translated",
+            "values" : [
+              "在 ${applicationName} 中查找片段",
+              "在 ${applicationName} 中搜索我的有声书",
+              "在 ${applicationName} 中回到书里的某一段"
+            ]
+          }
         }
       }
     },
