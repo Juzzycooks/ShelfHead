@@ -691,18 +691,19 @@ struct QueueSheet: View {
                     List {
                         // Batch 490 (REVIEW 2026-11-11 P9): the footer says when the queue plays.
                         Section {
-                            ForEach(playerViewModel.upNext) { item in
+                            ForEach(playerViewModel.upNext) { entry in
                                 Button {
                                     Haptics.selection()
-                                    playerViewModel.playFromQueue(item)
+                                    playerViewModel.playFromQueue(entry)
                                     dismiss()
                                 } label: {
                                     HStack(spacing: 12) {
-                                        CoverImageView(itemId: item.id, width: 44, height: 44)
+                                        CoverImageView(itemId: entry.item.id, width: 44, height: 44)
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Typo.rowTitle(Text(item.title))
+                                            // An episode shows its own title over the show's name.
+                                            Typo.rowTitle(Text(entry.title))
                                                 .foregroundStyle(Color.shelfCream).lineLimit(2)
-                                            Typo.rowSubtitle(Text(item.authorName))
+                                            Typo.rowSubtitle(Text(entry.subtitle))
                                                 .foregroundStyle(Color.shelfMuted).lineLimit(1)
                                         }
                                         Spacer()
@@ -716,20 +717,20 @@ struct QueueSheet: View {
                                 .contextMenu {
                                     Button {
                                         Haptics.selection()
-                                        detailItem = item
+                                        detailItem = entry.item
                                     } label: {
                                         Label("View Book Details", systemImage: "info.circle")
                                     }
-                                    if playerViewModel.upNext.first?.id != item.id {
+                                    if playerViewModel.upNext.first?.id != entry.id {
                                         Button {
                                             Haptics.selection()
-                                            playerViewModel.playNext(item)
+                                            playerViewModel.playNext(entry)
                                         } label: {
                                             Label("Move to Top", systemImage: "arrow.up.to.line")
                                         }
                                     }
                                     Button(role: .destructive) {
-                                        playerViewModel.removeFromQueueWithUndo(item)
+                                        playerViewModel.removeFromQueueWithUndo(entry)
                                     } label: {
                                         Label("Remove", systemImage: "trash")
                                     }
@@ -739,7 +740,7 @@ struct QueueSheet: View {
                                 // full swipe, and an Undo toast (below), like the bookmark rows.
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button(role: .destructive) {
-                                        playerViewModel.removeFromQueueWithUndo(item)
+                                        playerViewModel.removeFromQueueWithUndo(entry)
                                     } label: {
                                         Label("Remove", systemImage: "trash")
                                     }

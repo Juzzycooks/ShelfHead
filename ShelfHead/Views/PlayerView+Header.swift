@@ -43,139 +43,157 @@ extension PlayerView {
 
     var playerHeaderMenu: some View {
         Menu {
-            Button {
-                Haptics.selection()
-                showBookDetails = true
-            } label: { Label("Book Details", systemImage: "info.circle") }
-            Button {
-                Task { await presentShare() }
-            } label: { Label("Share…", systemImage: "square.and.arrow.up") }
-            // Batch 490 (REVIEW 2026-11-11 P9): the queue had no way in from the player
-            // except the Up Next chip, which only shows while something is queued.
-            Button {
-                Haptics.selection()
-                showQueue = true
-            } label: { Label("Up Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
-            // Batch 426: cut a short quote clip from the current book.
-            if let book = playerViewModel.currentBook, !book.isPodcast {
+            // Batch 492 (REVIEW 2026-11-11 P1): the menu was 15 undivided rows. It is now short
+            // sections: an icon row, the Explore the Story submenu, then grouped settings.
+            // Section 1: Book Details, Share and Clip as one row of icons (`ControlGroup` in a
+            // menu, as Book Detail's ⋯ menu does).
+            ControlGroup {
                 Button {
                     Haptics.selection()
-                    showClipEditor = true
-                } label: { Label("Clip\u{2026}", systemImage: "scissors") }
-            }
-            // Batch 455: post to this book's household club, pinned to where you are now.
-            if HouseholdStore.shared.isSocialAvailable, let book = playerViewModel.currentBook, !book.isPodcast {
+                    showBookDetails = true
+                } label: { Label("Book Details", systemImage: "info.circle") }
                 Button {
-                    Haptics.selection()
-                    showBookClub = true
-                } label: {
-                    // Batch 490 (REVIEW 2026-11-11 P5): the same moment wording as a bookmark
-                    // ("12:04 · Chapter 7"), chapter-relative, instead of the whole-book clock.
-                    Label("Post to Book Club at \(BookmarksSheet.momentLabel(time: playerViewModel.currentTime, chapter: playerViewModel.currentChapter))", systemImage: "person.3")
+                    Task { await presentShare() }
+                } label: { Label("Share\u{2026}", systemImage: "square.and.arrow.up") }
+                // Batch 426: cut a short quote clip from the current book.
+                if let book = playerViewModel.currentBook, !book.isPodcast {
+                    Button {
+                        Haptics.selection()
+                        showClipEditor = true
+                    } label: { Label("Clip\u{2026}", systemImage: "scissors") }
                 }
             }
-            // Batch 456: listen along with someone over SharePlay (FaceTime, Messages or nearby).
-            if let book = playerViewModel.currentBook, !book.isPodcast {
-                ListenTogetherButton(item: book)
-            }
-            // Moved here from the bottom toolbar so that row holds only the five
-            // core actions (Speed/Sleep/Chapters/Marks/Output) per the redesign —
-            // Driving Mode is used far less often than those.
-            Button {
-                Haptics.selection()
-                openDrivingMode()
-            } label: { Label("Driving Mode", systemImage: "car.fill") }
-            Button {
-                Haptics.selection()
-                showChapterSkip = true
-            } label: { Label("Chapter Skip\u{2026}", systemImage: "forward.end") }
-            // Batch 424: only when the book has transcript text to search.
+
+            // Section 2: everything that needs the book's transcript. Same condition the rows
+            // had before (Batch 424); the whole group stays hidden without transcript text.
             if let book = playerViewModel.currentBook, !book.isPodcast,
                Self.hasSearchableTranscript(TranscriptionCenter.shared.state(for: book.id)) {
-                Button {
-                    Haptics.selection()
-                    showTranscriptSearch = true
-                } label: { Label("Search in Book\u{2026}", systemImage: "text.magnifyingglass") }
-                // Batch 425: live captions in place of the cover.
-                Button {
-                    Haptics.selection()
-                    showsCaptions.toggle()
-                } label: {
-                    if showsCaptions {
-                        Label("Hide Captions", systemImage: "captions.bubble.fill")
-                    } else {
-                        Label("Show Captions", systemImage: "captions.bubble")
-                    }
-                }
-                // Batch 428: on-device recap and "I zoned out" (iOS 26+). Shown even when Apple
-                // Intelligence is off; the sheet then says why (HIG: explain, don't hide).
-                if #available(iOS 26.0, *) {
-                    Button {
-                        Haptics.selection()
-                        showRecap = true
-                    } label: { Label("Previously On\u{2026}", systemImage: "sparkles") }
-                    Button {
-                        Haptics.selection()
-                        showZonedOut = true
-                    } label: { Label("I Zoned Out", systemImage: "arrow.counterclockwise") }
-                    // Batch 429: X-Ray (people, places, terms) and Ask the Book.
-                    Button {
-                        Haptics.selection()
-                        showXRay = true
-                    } label: { Label("X-Ray", systemImage: "person.2") }
-                    Button {
-                        Haptics.selection()
-                        showAskBook = true
-                    } label: { Label("Ask the Book\u{2026}", systemImage: "questionmark.circle") }
-                    // Batch 431: the ebook, highlighting the sentence being spoken.
-                    if book.media?.ebookFile?.metadata?.normalizedExtension == "epub" {
+                Section {
+                    Menu {
+                        // Batch 424: only when the book has transcript text to search.
                         Button {
                             Haptics.selection()
-                            showReadAlong = true
-                        } label: { Label("Read Along", systemImage: "book") }
+                            showTranscriptSearch = true
+                        } label: { Label("Search in Book\u{2026}", systemImage: "text.magnifyingglass") }
+                        // Batch 428: on-device recap and "I zoned out" (iOS 26+). Shown even when Apple
+                        // Intelligence is off; the sheet then says why (HIG: explain, don't hide).
+                        if #available(iOS 26.0, *) {
+                            Button {
+                                Haptics.selection()
+                                showRecap = true
+                            } label: { Label("Previously On\u{2026}", systemImage: "sparkles") }
+                            Button {
+                                Haptics.selection()
+                                showZonedOut = true
+                            } label: { Label("I Zoned Out", systemImage: "arrow.counterclockwise") }
+                            // Batch 429: X-Ray (people, places, terms) and Ask the Book.
+                            Button {
+                                Haptics.selection()
+                                showXRay = true
+                            } label: { Label("X-Ray", systemImage: "person.2") }
+                            Button {
+                                Haptics.selection()
+                                showAskBook = true
+                            } label: { Label("Ask the Book\u{2026}", systemImage: "questionmark.circle") }
+                            // Batch 431: the ebook, highlighting the sentence being spoken.
+                            if book.media?.ebookFile?.metadata?.normalizedExtension == "epub" {
+                                Button {
+                                    Haptics.selection()
+                                    showReadAlong = true
+                                } label: { Label("Read Along", systemImage: "book") }
+                            }
+                        }
+                    } label: { Label("Explore the Story", systemImage: "sparkles") }
+                    // Batch 425: live captions in place of the cover.
+                    Toggle(isOn: Binding(
+                        get: { showsCaptions },
+                        set: { newValue in
+                            Haptics.selection()
+                            showsCaptions = newValue
+                        }
+                    )) {
+                        Label("Show Captions", systemImage: showsCaptions ? "captions.bubble.fill" : "captions.bubble")
                     }
                 }
             }
 
-            // Batch 439: quiet rain/fire/train/brown-noise bed under the narration.
-            Button {
-                Haptics.selection()
-                AmbientBedEngine.shared.pickerRequested = true
-            } label: {
-                Label("Ambient Sound", systemImage: AmbientBedEngine.shared.bed?.icon ?? "waveform")
+            // Section 3: Driving Mode (moved here from the bottom toolbar so that row holds only
+            // the five core actions), Up Next (Batch 490, REVIEW 2026-11-11 P9: the queue had no
+            // way in from the player except the Up Next chip, which only shows while something is
+            // queued) and the Listening Profile switcher.
+            Section {
+                Button {
+                    Haptics.selection()
+                    openDrivingMode()
+                } label: { Label("Driving Mode", systemImage: "car.fill") }
+                Button {
+                    Haptics.selection()
+                    showQueue = true
+                } label: { Label("Up Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+                // P-14 (REVIEW_2026-09-14_DESIGN.md): the Listening Profile switcher lived
+                // only at Settings → Playback & Appearance → scroll, which is three levels
+                // away from the one screen whose settings it changes — and the moments it
+                // exists for ("I'm about to drive", "I'm going to sleep") are precisely the
+                // moments nobody is going to go looking for it in Settings.
+                //
+                // A `Picker` inside a `Menu` renders as a submenu with the current choice
+                // checked, so this stays one row in the "…" menu rather than four. Labels and
+                // icons come from `ListeningProfile` itself, which is also what
+                // `PlaybackSettingsSection` renders from — so the two surfaces can't drift.
+                Picker(selection: Binding(
+                    get: { listeningProfileManager.activeProfile },
+                    set: { profile in
+                        guard profile != listeningProfileManager.activeProfile else { return }
+                        Haptics.selection()
+                        listeningProfileManager.activate(profile)
+                        // Critique 2026-10-05 (adapt): picking Commute here means "I'm about
+                        // to drive", and Driving Mode is the screen for that — it used to be a
+                        // separate trip back into this same menu, in its hardest-to-reach
+                        // corner. Only from the player: Settings and CarPlay's auto-switch
+                        // change the profile without opening anything.
+                        if profile == .driving { openDrivingMode() }
+                    }
+                )) {
+                    ForEach(ListeningProfile.offered(active: listeningProfileManager.activeProfile)) { profile in
+                        Label(profile.label, systemImage: profile.icon).tag(profile)
+                    }
+                } label: {
+                    Label("Listening Profile", systemImage: listeningProfileManager.activeProfile.icon)
+                }
             }
 
-            Divider()
-
-            // P-14 (REVIEW_2026-09-14_DESIGN.md): the Listening Profile switcher lived
-            // only at Settings → Playback & Appearance → scroll, which is three levels
-            // away from the one screen whose settings it changes — and the moments it
-            // exists for ("I'm about to drive", "I'm going to sleep") are precisely the
-            // moments nobody is going to go looking for it in Settings.
-            //
-            // A `Picker` inside a `Menu` renders as a submenu with the current choice
-            // checked, so this stays one row in the "…" menu rather than four. Labels and
-            // icons come from `ListeningProfile` itself, which is also what
-            // `PlaybackSettingsSection` renders from — so the two surfaces can't drift.
-            Picker(selection: Binding(
-                get: { listeningProfileManager.activeProfile },
-                set: { profile in
-                    guard profile != listeningProfileManager.activeProfile else { return }
+            // Section 4: sound and skipping.
+            Section {
+                // Batch 439: quiet rain/fire/train/brown-noise bed under the narration.
+                Button {
                     Haptics.selection()
-                    listeningProfileManager.activate(profile)
-                    // Critique 2026-10-05 (adapt): picking Commute here means "I'm about
-                    // to drive", and Driving Mode is the screen for that — it used to be a
-                    // separate trip back into this same menu, in its hardest-to-reach
-                    // corner. Only from the player: Settings and CarPlay's auto-switch
-                    // change the profile without opening anything.
-                    if profile == .driving { openDrivingMode() }
+                    AmbientBedEngine.shared.pickerRequested = true
+                } label: {
+                    Label("Ambient Sound", systemImage: AmbientBedEngine.shared.bed?.icon ?? "waveform")
                 }
-            )) {
-                ForEach(ListeningProfile.allCases) { profile in
-                    Label(profile.label, systemImage: profile.icon).tag(profile)
+                Button {
+                    Haptics.selection()
+                    showChapterSkip = true
+                } label: { Label("Chapter Skip\u{2026}", systemImage: "forward.end") }
+            }
+
+            // Section 5: sharing with other people. Rows keep their own conditions.
+            Section {
+                // Batch 455: post to this book's household club, pinned to where you are now.
+                if HouseholdStore.shared.isSocialAvailable, let book = playerViewModel.currentBook, !book.isPodcast {
+                    Button {
+                        Haptics.selection()
+                        showBookClub = true
+                    } label: {
+                        // Batch 490 (REVIEW 2026-11-11 P5): the same moment wording as a bookmark
+                        // ("12:04 · Chapter 7"), chapter-relative, instead of the whole-book clock.
+                        Label("Post to Book Club at \(BookmarksSheet.momentLabel(time: playerViewModel.currentTime, chapter: playerViewModel.currentChapter))", systemImage: "person.3")
+                    }
                 }
-            } label: {
-                Label("Listening Profile", systemImage: listeningProfileManager.activeProfile.icon)
+                // Batch 456: listen along with someone over SharePlay (FaceTime, Messages or nearby).
+                if let book = playerViewModel.currentBook, !book.isPodcast {
+                    ListenTogetherButton(item: book)
+                }
             }
         } label: {
             // iOS 26/27 Liquid Glass polish pass (26 August 2026): this button used to

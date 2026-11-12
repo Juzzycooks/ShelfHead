@@ -1,5 +1,6 @@
 import SwiftUI
 import Intents
+import UniformTypeIdentifiers
 
 /// The Playback page's sections: Listening Profile, Playback, Up Next, While Playing.
 /// Split out of `SettingsView`'s single giant `playbackAppearancePage` List (UI-12,
@@ -36,7 +37,7 @@ struct PlaybackSettingsSection: View {
     var body: some View {
         Group {
             Section {
-                ForEach(ListeningProfile.allCases) { profile in
+                ForEach(ListeningProfile.offered(active: listeningProfileManager.activeProfile)) { profile in
                     Button {
                         Haptics.selection()
                         listeningProfileManager.activate(profile)
@@ -215,7 +216,6 @@ struct PlaybackSettingsSection: View {
 /// Bindings, keys and side effects are unchanged from their old homes.
 struct SystemPrivacySettingsSection: View {
     var bottomInset: CGFloat = 0
-    @Environment(LibraryViewModel.self) private var libraryViewModel
 
     @AppStorage(SettingsKeys.spotlightIndexing) private var spotlightIndexing = true
     @AppStorage(SettingsKeys.liveActivities) private var liveActivities = true
@@ -388,11 +388,110 @@ struct SystemPrivacySettingsSection: View {
                 RetroSectionHeader(title: "Privacy")
             }
             .listRowBackground(Color.shelfCard)
+        }
+    }
+}
 
-            // Batch 442: the one feature that asks an outside service (Audible's catalog).
-            ReleaseRadarSettingsSection(libraryItems: libraryViewModel.items)
-                .settingsRowAnchor(SettingsRow.releaseRadar)
-                .listRowBackground(Color.shelfCard)
+/// Batch 492 (REVIEW 2026-11-11 N2): Export/Import Settings, moved here from Account & Security. The
+/// behaviour is unchanged: preferences only, never credentials (see `SettingsExport`).
+struct SettingsBackupSection: View {
+    @State private var exportPayload: SharePayload?
+    @State private var showImportPicker = false
+    @State private var importError: String?
+    @State private var importResultMessage: String?
+
+    var body: some View {
+        Section {
+            Button {
+                let file = SettingsExport.snapshot(
+                    appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                exportPayload = SettingsExport.writeExportFile(file).map { SharePayload(url: $0) }
+            } label: {
+                settingRow("slider.horizontal.3", "Export Settings")
+            }
+            .settingsRowAnchor(SettingsRow.exportSettings)
+
+            Button {
+                showImportPicker = true
+            } label: {
+                settingRow("square.and.arrow.down.on.square", "Import Settings")
+            }
+        } header: {
+            RetroSectionHeader(title: "Export & Import")
+        } footer: {
+            Typo.supporting(Text("Carries your app preferences (playback, downloads, appearance, favourites) to another device, without any credentials."))
+                .foregroundStyle(Color.shelfMuted)
+        }
+        .listRowBackground(Color.shelfCard)
+        .sheet(item: $exportPayload) { payload in
+            ActivityView(items: [payload.url])
+        }
+        .fileImporter(isPresented: $showImportPicker, allowedContentTypes: [.json]) { result in
+            handleImport(result)
+        }
+        .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
+        .alert("Import Failed", isPresented: Binding(
+            get: { importError != nil }, set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "")
+        }
+        .systemChromeTint()
+        .tint(Color.shelfAmberText) // CO-7
+        .alert("Import Settings", isPresented: Binding(
+            get: { importResultMessage != nil }, set: { if !$0 { importResultMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importResultMessage ?? "")
+        }
+        .systemChromeTint()
+    }
+
+    private func handleImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let file = SettingsExport.parseImportFile(at: url) else {
+                importError = String(localized: "That file isn\u{2019}t a ShelfHead settings export.")
+                return
+            }
+            let applied = SettingsExport.apply(file)
+            // Review 7 Low (reminder): the toggle's onChange only fires from the UI, so an
+            // imported "on" was never scheduled. Ask permission and schedule; off if denied.
+            if UserDefaults.standard.bool(forKey: SettingsKeys.dailyReminder) {
+                Task {
+                    let d = UserDefaults.standard
+                    if await NotificationManager.requestAuthorization() {
+                        let hour = d.object(forKey: SettingsKeys.dailyReminderHour) as? Int ?? 19
+                        let minute = d.object(forKey: SettingsKeys.dailyReminderMinute) as? Int ?? 0
+                        NotificationManager.scheduleDailyReminder(hour: hour, minute: minute)
+                    } else {
+                        d.set(false, forKey: SettingsKeys.dailyReminder)
+                    }
+                }
+            }
+            // ThemeStore's `appearanceRaw`/`accentHex` only re-derive their cached
+            // colors on their own `didSet` — `apply` writes UserDefaults directly, so
+            // re-assign them here from the imported values to pick up immediately.
+            if let appearance = file.settings[SettingsKeys.appearance], case .string(let raw) = appearance {
+                ThemeStore.shared.appearanceRaw = raw
+            }
+            if let accent = file.settings[SettingsKeys.accentColor], case .string(let hex) = accent {
+                ThemeStore.shared.accentHex = hex
+            }
+            FavoritesStore.shared.reload()
+            importResultMessage = applied == 0
+                ? String(localized: "That file doesn\u{2019}t contain any settings this version of ShelfHead can import.")
+                : (applied == 1
+                    ? String(localized: "Imported 1 setting. Appearance and favourites update immediately; some playback settings apply the next time you play.")
+                    : String(localized: "Imported \(applied) settings. Appearance and favourites update immediately; some playback settings apply the next time you play.", comment: "%lld is the number of settings imported."))
+        case .failure(let error):
+            // Polish pass (ST-5): friendly sentence; raw error goes to the log.
+            ShelfLog.error(.servers, "Couldn't read the settings import file: \(error.localizedDescription)")
+            importError = String(localized: "Couldn\u{2019}t open that file. Choose a ShelfHead export and try again.")
         }
     }
 }

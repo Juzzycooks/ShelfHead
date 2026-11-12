@@ -28,9 +28,6 @@ struct AccountSecuritySettingsView: View {
     @State private var importedConnections: [ExportedConnection] = []
     @State private var showImportChooser = false
     @State private var importError: String?
-    /// Settings export/import (preferences only — see `SettingsExport`).
-    @State private var showSettingsImportPicker = false
-    @State private var settingsImportResultMessage: String?
     /// The connection chosen from an imported file, prefilling Add Server.
     @State private var prefillConnection: ExportedConnection?
     /// Custom HTTP headers for the *current* connection's reverse proxy (Cloudflare
@@ -167,28 +164,8 @@ struct AccountSecuritySettingsView: View {
                 }
                 .settingsRowAnchor(SettingsRow.activeSessions)
 
-                // Critique 2026-10-06 (distill): moved here from Diagnostics, next to the
-                // server it backs up. `ServerBackupsView` handles non-admin users itself
-                // (Diagnostics showed it ungated).
-                NavigationLink(destination: ServerBackupsView(bottomInset: bottomInset)) {
-                    settingRow("externaldrive.badge.timemachine", "Server backups")
-                }
-                .settingsRowAnchor(SettingsRow.serverBackups)
-
-                // Batch 441: admins, or accounts allowed to update items.
-                if authViewModel.currentUser?.canUpdateLibrary == true {
-                    NavigationLink(destination: LibraryDoctorView(bottomInset: bottomInset)) {
-                        settingRow("stethoscope", "Library Doctor")
-                    }
-                    .settingsRowAnchor(SettingsRow.libraryDoctor)
-                }
-                // Batch 444: accounts with the server's Upload permission.
-                if authViewModel.currentUser?.canUpload == true {
-                    NavigationLink(destination: UploadView(bottomInset: bottomInset)) {
-                        settingRow("square.and.arrow.up", "Upload")
-                    }
-                    .settingsRowAnchor(SettingsRow.upload)
-                }
+                // Batch 492 (REVIEW 2026-11-11 N2): Server backups, Library Doctor and Upload
+                // moved to Settings > Server Tools (`ServerToolsSettingsSection`).
             } header: {
                 RetroSectionHeader(title: "Current Account")
             }
@@ -314,36 +291,11 @@ struct AccountSecuritySettingsView: View {
                             .foregroundStyle(Color.shelfCream)
                     }
                 }
-
-                Button {
-                    let file = SettingsExport.snapshot(
-                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
-                    exportPayload = SettingsExport.writeExportFile(file).map { SharePayload(url: $0) }
-                } label: {
-                    HStack {
-                        Image(systemName: "slider.horizontal.3")
-                            .foregroundStyle(Color.shelfAmberText)
-                            .frame(width: 24)
-                        Text("Export Settings")
-                            .foregroundStyle(Color.shelfCream)
-                    }
-                }
-
-                Button {
-                    showSettingsImportPicker = true
-                } label: {
-                    HStack {
-                        Image(systemName: "square.and.arrow.down.on.square")
-                            .foregroundStyle(Color.shelfAmberText)
-                            .frame(width: 24)
-                        Text("Import Settings")
-                            .foregroundStyle(Color.shelfCream)
-                    }
-                }
             } header: {
                 RetroSectionHeader(title: "Import & Export")
             } footer: {
-                Typo.supporting(Text("Exports server addresses and usernames only — never passwords or custom HTTP headers. Importing prefills the Add Server form; you’ll still need to enter that account’s password, and re-add any reverse-proxy header by hand if that server needs one. Export/Import Settings carries your app preferences (playback, downloads, appearance, favourites) the same way, also without any credentials."))
+                // Batch 492 (N2): Export/Import Settings now lives on System & Privacy.
+                Typo.supporting(Text("Exports server addresses and usernames only — never passwords or custom HTTP headers. Importing prefills the Add Server form; you’ll still need to enter that account’s password, and re-add any reverse-proxy header by hand if that server needs one."))
                     .foregroundStyle(Color.shelfMuted)
             }
             .listRowBackground(Color.shelfCard)
@@ -726,61 +678,6 @@ struct AccountSecuritySettingsView: View {
             Text(importError ?? "")
         }
         .systemChromeTint()
-        // Import Settings: preferences only, never credentials — see `SettingsExport`.
-        .fileImporter(isPresented: $showSettingsImportPicker, allowedContentTypes: [.json]) { result in
-            switch result {
-            case .success(let url):
-                let accessed = url.startAccessingSecurityScopedResource()
-                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                guard let file = SettingsExport.parseImportFile(at: url) else {
-                    importError = String(localized: "That file isn\u{2019}t a ShelfHead settings export.")
-                    return
-                }
-                let applied = SettingsExport.apply(file)
-                // Review 7 Low (reminder): the toggle's onChange only fires from the UI, so an
-                // imported "on" was never scheduled. Ask permission and schedule; off if denied.
-                if UserDefaults.standard.bool(forKey: SettingsKeys.dailyReminder) {
-                    Task {
-                        let d = UserDefaults.standard
-                        if await NotificationManager.requestAuthorization() {
-                            let hour = d.object(forKey: SettingsKeys.dailyReminderHour) as? Int ?? 19
-                            let minute = d.object(forKey: SettingsKeys.dailyReminderMinute) as? Int ?? 0
-                            NotificationManager.scheduleDailyReminder(hour: hour, minute: minute)
-                        } else {
-                            d.set(false, forKey: SettingsKeys.dailyReminder)
-                        }
-                    }
-                }
-                // ThemeStore's `appearanceRaw`/`accentHex` only re-derive their cached
-                // colors on their own `didSet` — `apply` writes UserDefaults directly, so
-                // re-assign them here from the imported values to pick up immediately.
-                if let appearance = file.settings[SettingsKeys.appearance], case .string(let raw) = appearance {
-                    ThemeStore.shared.appearanceRaw = raw
-                }
-                if let accent = file.settings[SettingsKeys.accentColor], case .string(let hex) = accent {
-                    ThemeStore.shared.accentHex = hex
-                }
-                FavoritesStore.shared.reload()
-                settingsImportResultMessage = applied == 0
-                    ? String(localized: "That file doesn\u{2019}t contain any settings this version of ShelfHead can import.")
-                    : (applied == 1
-                        ? String(localized: "Imported 1 setting. Appearance and favourites update immediately; some playback settings apply the next time you play.")
-                        : String(localized: "Imported \(applied) settings. Appearance and favourites update immediately; some playback settings apply the next time you play.", comment: "%lld is the number of settings imported."))
-            case .failure(let error):
-                // Polish pass (ST-5): friendly sentence; raw error goes to the log.
-                ShelfLog.error(.servers, "Couldn't read the settings import file: \(error.localizedDescription)")
-                importError = String(localized: "Couldn\u{2019}t open that file. Choose a ShelfHead export and try again.")
-            }
-        }
-        .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
-        .alert("Import Settings", isPresented: Binding(
-            get: { settingsImportResultMessage != nil }, set: { if !$0 { settingsImportResultMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(settingsImportResultMessage ?? "")
-        }
-        .systemChromeTint()
         // Switching to a saved account that's a plain-HTTP, non-local connection and
         // hasn't been acknowledged yet is blocked the same way a brand-new Add Server
         // attempt is — see `AuthViewModel.pendingInsecureConnection`. Its alert, and the
@@ -935,5 +832,51 @@ struct AccountSecuritySettingsView: View {
             let saved = await authViewModel.updateCustomHeaders(result)
             headerSaveFailed = !saved
         }
+    }
+}
+
+/// Batch 492 (REVIEW 2026-11-11 N2): the Settings > Server Tools page. Server backups, Library
+/// Doctor and Upload used to sit in Account & Security's "Current Account" section; the rows,
+/// destinations and permission checks are unchanged. Like `TranscriptsSettingsView`, the body is
+/// a `Section` for `SettingsCategoryPage` to host.
+struct ServerToolsSettingsSection: View {
+    var bottomInset: CGFloat = 0
+    @Environment(AuthViewModel.self) private var authViewModel
+
+    /// Whether the Settings root offers the page at all: an account that can update the library
+    /// (admins always can) or upload. Server backups additionally needs an admin.
+    static func isAvailable(canUpdateLibrary: Bool, canUpload: Bool) -> Bool {
+        canUpdateLibrary || canUpload
+    }
+
+    var body: some View {
+        let user = authViewModel.currentUser
+        Section {
+            // Critique 2026-10-06 (distill): moved here from Diagnostics, next to the server it
+            // backs up. `ServerBackupsView` also handles non-admins itself.
+            if user?.isAdmin == true {
+                NavigationLink(destination: ServerBackupsView(bottomInset: bottomInset)) {
+                    settingRow("externaldrive.badge.timemachine", "Server backups")
+                }
+                .settingsRowAnchor(SettingsRow.serverBackups)
+            }
+            // Batch 441: admins, or accounts allowed to update items.
+            if user?.canUpdateLibrary == true {
+                NavigationLink(destination: LibraryDoctorView(bottomInset: bottomInset)) {
+                    settingRow("stethoscope", "Library Doctor")
+                }
+                .settingsRowAnchor(SettingsRow.libraryDoctor)
+            }
+            // Batch 444: accounts with the server's Upload permission.
+            if user?.canUpload == true {
+                NavigationLink(destination: UploadView(bottomInset: bottomInset)) {
+                    settingRow("square.and.arrow.up", "Upload")
+                }
+                .settingsRowAnchor(SettingsRow.upload)
+            }
+        } header: {
+            RetroSectionHeader(title: "Server Tools")
+        }
+        .listRowBackground(Color.shelfCard)
     }
 }

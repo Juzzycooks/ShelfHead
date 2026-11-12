@@ -50,7 +50,9 @@ struct SettingsView: View {
     // whole report (including scanning the in-memory log buffer) every time ANY
     // `@AppStorage` toggle anywhere in Settings changed, not just when the user
     // actually taps Export.
-    @State private var diagnosticsReport = ""
+    /// Batch 493 (N3): the report being shared; built when the row is tapped.
+    @State private var diagnosticsShare: DiagnosticsShare?
+    @State private var isBuildingDiagnostics = false
 
     /// Critique 2026-10-06 (clarify): filtered by live state — "Remove All Servers from
     /// This Device" is only offered when that row is shown (more than one saved server).
@@ -62,6 +64,7 @@ struct SettingsView: View {
             savedServerCount: authViewModel.accounts.count,
             canUpload: user?.canUpload == true,
             canUpdateLibrary: user?.canUpdateLibrary == true,
+            isAdmin: user?.isAdmin == true,
             isInHousehold: HouseholdStore.shared.isInHousehold,
             transcriptsSupported: TranscriptionCenter.shared.isSupportedOS)
         return SettingsSearchIndex.results(for: searchText, state: state)
@@ -69,9 +72,16 @@ struct SettingsView: View {
 
     /// Batch 490 (REVIEW 2026-11-11 N3): public pages for the About section.
     private static let privacyPolicyURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/blob/main/ShelfHead/AppStore/PRIVACY.md")!
-    private static let issuesURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/issues")!
+    private static let issuesURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/issues/new")!
     private static let licenceURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/blob/main/LICENSE")!
     @State private var showsWhatsNew = false
+
+    /// Batch 493 (N3): the server's version from `/status`, or nil when it can't be reached.
+    private static func fetchServerVersion(rawURL: String) async -> String? {
+        guard !rawURL.isEmpty else { return nil }
+        let result = await ReachabilityStore.testConnection(rawURL: rawURL)
+        return result.serverStatus?.serverVersion
+    }
 
     /// One About row: muted glyph, cream title, optional muted subtitle (IC-3).
     private func aboutRow(_ icon: String, _ title: LocalizedStringResource,
@@ -116,6 +126,78 @@ struct SettingsView: View {
     private func categoryLink(_ page: SettingsPage, icon: String, subtitle: LocalizedStringResource?) -> some View {
         NavigationLink { destination(for: page) } label: {
             menuRow(icon, LocalizedStringResource(stringLiteral: page.title), subtitle: subtitle)
+        }
+    }
+
+    // MARK: - Root groups (Batch 492, REVIEW 2026-11-11 N2)
+
+    struct RootGroup: Identifiable, Equatable {
+        let title: LocalizedStringResource
+        let pages: [SettingsPage]
+        var id: String { String(localized: title) }
+        static func == (lhs: RootGroup, rhs: RootGroup) -> Bool { lhs.pages == rhs.pages && lhs.id == rhs.id }
+    }
+
+    /// The Settings root, as data so a test can pin it. No group has more than four rows. Server
+    /// Tools is left out for an account that has none of the permissions its rows need.
+    static func rootGroups(showsServerTools: Bool) -> [RootGroup] {
+        [
+            RootGroup(title: "Server",
+                      pages: [.account, .downloads] + (showsServerTools ? [.serverTools] : []) + [.kids]),
+            RootGroup(title: "Listening", pages: [.playback, .sleepTimer, .sound, .transcripts]),
+            RootGroup(title: "Sharing & Services", pages: [.household, .readingSites, .releaseRadar]),
+            RootGroup(title: "App", pages: [.appearance, .systemPrivacy, .recentChanges, .diagnostics]),
+        ]
+    }
+
+    private var showsServerTools: Bool {
+        let user = authViewModel.currentUser
+        return ServerToolsSettingsSection.isAvailable(canUpdateLibrary: user?.canUpdateLibrary == true,
+                                                      canUpload: user?.canUpload == true)
+    }
+
+    @ViewBuilder
+    private func rootRow(_ page: SettingsPage) -> some View {
+        switch page {
+        case .account:
+            categoryLink(.account, icon: "person.crop.circle.fill",
+                         subtitle: LocalizedStringResource(stringLiteral: authViewModel.username))  // user data, shown verbatim
+        case .downloads:
+            // Batch 266: one Downloads row (was two look-alike rows). Critique 2026-10-06
+            // (distill): preferences and storage; the books themselves are on the Downloads
+            // page, linked from there.
+            categoryLink(.downloads, icon: "arrow.down.circle.fill", subtitle: "Preferences and storage")
+        case .serverTools:
+            categoryLink(.serverTools, icon: "wrench.and.screwdriver.fill",
+                         subtitle: "Backups, Library Doctor, Upload")
+        case .kids:
+            categoryLink(.kids, icon: "figure.and.child.holdinghands",
+                         subtitle: "Child accounts and the profile picker")
+        case .playback:
+            categoryLink(.playback, icon: "play.circle.fill", subtitle: "Speed, skips, Up Next")
+        case .sleepTimer:
+            categoryLink(.sleepTimer, icon: "moon.zzz.fill", subtitle: "Fade, bedtime window, shake")
+        case .sound:
+            categoryLink(.sound, icon: "speaker.wave.2.fill", subtitle: "Volume boost, bass, treble")
+        case .transcripts:
+            categoryLink(.transcripts, icon: "text.quote", subtitle: "On-device, search and captions")
+        case .household:
+            categoryLink(.household, icon: "person.2.fill", subtitle: "Recommendations and book clubs")
+        case .readingSites:
+            categoryLink(.readingSites, icon: "books.vertical.fill", subtitle: "Hardcover, Goodreads, StoryGraph")
+        case .releaseRadar:
+            categoryLink(.releaseRadar, icon: "calendar.badge.clock", subtitle: "Upcoming books in your series")
+        case .appearance:
+            categoryLink(.appearance, icon: "circle.lefthalf.filled", subtitle: "Theme, accent colour")
+        case .systemPrivacy:
+            categoryLink(.systemPrivacy, icon: "lock.shield", subtitle: "Spotlight, iCloud, reminders")
+        case .recentChanges:
+            categoryLink(.recentChanges, icon: "arrow.uturn.backward.circle", subtitle: "Undo a position change")
+        case .diagnostics:
+            categoryLink(.diagnostics, icon: "stethoscope", subtitle: "Server and download health")
+        case .featuresTips:
+            // Not a root row: reached from the About section below.
+            EmptyView()
         }
     }
 
@@ -177,61 +259,22 @@ struct SettingsView: View {
                         }
                         .listRowBackground(Color.shelfCard)
                     } else {
-                    // Critique 2026-10-06 (distill): "Playback & Appearance" (~30 controls)
-                    // is split into five pages, and the root regrouped into three short
-                    // groups by what the user is deciding: where the books come from and
-                    // live, how they play, and how the app itself behaves. Recent Changes
-                    // (an undo log, not a diagnostic) moved here from Diagnostics.
-                    //
-                    // P-7 (REVIEW_2026-09-14_DESIGN.md) → Critique 2026-10-06 (distill):
-                    // the tiles no longer pass an amber `tint`; `menuRow`'s quiet tile is
-                    // the default for every row (DESIGN.md, One Light Rule).
-                    Section {
-                        categoryLink(.account, icon: "person.crop.circle.fill",
-                                     subtitle: LocalizedStringResource(stringLiteral: authViewModel.username))  // user data, shown verbatim
-                        // Batch 266: one Downloads row (was two look-alike rows). Critique
-                        // 2026-10-06 (distill): preferences and storage; the books
-                        // themselves are on the Downloads page, linked from there.
-                        categoryLink(.downloads, icon: "arrow.down.circle.fill",
-                                     subtitle: "Preferences and storage")
-                    } header: {
-                        RetroSectionHeader(title: "Account & Storage")
+                    // Batch 492 (REVIEW 2026-11-11 N2): four groups of at most four rows, by what
+                    // the user is deciding (`rootGroups`): the server and who uses it, how books
+                    // play, what is shared or looked up elsewhere, and how the app itself behaves.
+                    // Earlier history: Critique 2026-10-06 (distill) split "Playback & Appearance"
+                    // into five pages; P-7 (REVIEW_2026-09-14_DESIGN.md) → the tiles carry no amber
+                    // `tint`, `menuRow`'s quiet tile is the default (DESIGN.md, One Light Rule).
+                    ForEach(Self.rootGroups(showsServerTools: showsServerTools)) { group in
+                        Section {
+                            ForEach(group.pages, id: \.self) { page in
+                                rootRow(page)
+                            }
+                        } header: {
+                            RetroSectionHeader(title: group.title)
+                        }
+                        .listRowBackground(Color.shelfCard)
                     }
-                    .listRowBackground(Color.shelfCard)
-
-                    Section {
-                        categoryLink(.playback, icon: "play.circle.fill",
-                                     subtitle: "Speed, skips, Up Next")
-                        categoryLink(.sleepTimer, icon: "moon.zzz.fill",
-                                     subtitle: "Fade, bedtime window, shake")
-                        categoryLink(.sound, icon: "speaker.wave.2.fill",
-                                     subtitle: "Volume boost, bass, treble")
-                        categoryLink(.transcripts, icon: "text.quote",
-                                     subtitle: "On-device, search and captions")
-                        categoryLink(.readingSites, icon: "books.vertical.fill",
-                                     subtitle: "Hardcover, Goodreads, StoryGraph")
-                        categoryLink(.household, icon: "person.2.fill",
-                                     subtitle: "Recommendations and book clubs")
-                        categoryLink(.recentChanges, icon: "arrow.uturn.backward.circle",
-                                     subtitle: "Undo a position change")
-                    } header: {
-                        RetroSectionHeader(title: "Listening")
-                    }
-                    .listRowBackground(Color.shelfCard)
-
-                    Section {
-                        categoryLink(.appearance, icon: "circle.lefthalf.filled",
-                                     subtitle: "Theme, accent colour")
-                        categoryLink(.systemPrivacy, icon: "lock.shield",
-                                     subtitle: "Spotlight, iCloud, reminders")
-                        categoryLink(.diagnostics, icon: "stethoscope",
-                                     subtitle: "Server and download health")
-                        // 16 September 2026: Listening (`StatsView`) is a top-level tab
-                        // again, so its Settings-root shortcut row is gone.
-                    } header: {
-                        RetroSectionHeader(title: "App")
-                    }
-                    .listRowBackground(Color.shelfCard)
 
                     aboutSection
                     }
@@ -269,7 +312,6 @@ struct SettingsView: View {
             }
             .task {
                 await authViewModel.loadAccounts()
-                diagnosticsReport = ShelfLog.exportDiagnostics()
             }
             .reexpandsTabBarOnAppear()
     }
@@ -305,23 +347,46 @@ struct SettingsView: View {
                 WhatsNewSheet()
             }
 
-            ShareLink(item: diagnosticsReport) {
+            // Batch 493 (N3): the short, redacted `FeedbackDiagnostics` report, not the raw log.
+            // Built on tap, so the one `/status` request for the server version is made only
+            // when the listener asks to share, not every time Settings opens.
+            Button {
+                guard !isBuildingDiagnostics else { return }
+                isBuildingDiagnostics = true
+                Task {
+                    let serverURL = authViewModel.serverURL
+                    let serverVersion = await Self.fetchServerVersion(rawURL: serverURL)
+                    diagnosticsShare = DiagnosticsShare(text: FeedbackDiagnostics.report(serverVersion: serverVersion,
+                                                                                        serverURL: serverURL))
+                    isBuildingDiagnostics = false
+                }
+            } label: {
                 HStack {
                     Image(systemName: "square.and.arrow.up")
                         .foregroundStyle(Color.shelfMuted)
                         .frame(width: 24)
-                    Text("Export Diagnostics")
+                    Text("Share Diagnostics")
                         .foregroundStyle(Color.shelfCream)
                     Spacer()
+                    if isBuildingDiagnostics { ProgressView() }
                 }
             }
-            .accessibilityLabel("Export diagnostics")
+            .accessibilityLabel("Share diagnostics")
+            .sheet(item: $diagnosticsShare) { share in
+                ActivityView(items: [share.text])
+            }
 
             // Batch 490 (REVIEW 2026-11-11 N3): where to report a problem, the privacy
             // policy the App Store links to, and the licence. All open in Safari.
             Link(destination: Self.issuesURL) {
-                aboutRow("exclamationmark.bubble", "Report a Problem",
-                         subtitle: "On GitHub. You can attach the exported diagnostics; they’re redacted.")
+                HStack {
+                    aboutRow("exclamationmark.bubble", "Send Feedback",
+                             subtitle: "Opens a GitHub issue. Share Diagnostics first if you want to paste a report; it leaves out your server address.")
+                    Image(systemName: "arrow.up.right")
+                        .scaledFont(13, relativeTo: .footnote)
+                        .foregroundStyle(Color.shelfMuted)
+                        .accessibilityHidden(true)
+                }
             }
             .accessibilityHint("Opens in Safari")
             Link(destination: Self.privacyPolicyURL) {
@@ -368,4 +433,110 @@ struct SettingsView: View {
     SettingsView()
         .environment(AuthViewModel())
         .environment(PlayerViewModel())
+}
+
+// MARK: - Feedback diagnostics (Batch 493, REVIEW 2026-11-11 N3)
+
+/// The plain-text report behind About › Share Diagnostics. It is short on purpose: the app and
+/// iOS versions, the device model, the server version and a handful of setting states. It has no
+/// log lines, no account or server details beyond the version, and every value is passed through
+/// `ShelfLog.redact` and has any host replaced by "your server", so it is safe to paste into a
+/// public GitHub issue. Pure and parameterised, so a test can pin it.
+enum FeedbackDiagnostics {
+    /// The setting states included, as (label, defaults key). Booleans print On/Off, a missing
+    /// value prints "default".
+    static let settingKeys: [(String, String)] = [
+        ("Wi-Fi only downloads", SettingsKeys.wifiOnlyDownloads),
+        ("Download while charging", SettingsKeys.downloadWhileCharging),
+        ("Auto-download Continue Listening", SettingsKeys.autoDownloadContinueListening),
+        ("Auto-delete finished", SettingsKeys.autoDeleteFinished),
+        ("Stream on cellular", SettingsKeys.allowCellularStreaming),
+        ("Token in stream URL", SettingsKeys.streamWithURLToken),
+        ("Stay signed in (password stored)", SettingsKeys.storePassword),
+        ("Smart rewind", SettingsKeys.smartRewind),
+        ("Autoplay next", SettingsKeys.autoplayNext),
+        ("Auto-continue series", SettingsKeys.autoContinueSeries),
+        ("Transcripts", SettingsKeys.transcriptsEnabled),
+        ("Live Activities", SettingsKeys.liveActivities),
+        ("Spotlight indexing", SettingsKeys.spotlightIndexing),
+        ("Default speed", SettingsKeys.defaultPlaybackSpeed),
+    ]
+
+    /// Replaces any `http(s)://host[:port]` and the given server's bare host with "your server".
+    static func scrubHosts(_ input: String, serverURL: String) -> String {
+        var result = input
+        if let regex = try? NSRegularExpression(pattern: #"https?://[^/\s"']+"#) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "your server")
+        }
+        let trimmed = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        if let url = URL(string: candidate), let host = url.host, !host.isEmpty {
+            if let port = url.port {
+                result = result.replacingOccurrences(of: "\(host):\(port)", with: "your server")
+            }
+            result = result.replacingOccurrences(of: host, with: "your server")
+        }
+        return result
+    }
+
+    /// "iPhone16,2" style identifier; the simulator reports its host model, which is fine.
+    static var deviceModel: String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    static func stateText(_ value: Any?) -> String {
+        switch value {
+        case let number as NSNumber:
+            // UserDefaults hands booleans back as NSNumber; 1.0 must not read as "On".
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "On" : "Off" }
+            return number.stringValue
+        case let text as String: return text
+        default: return "default"
+        }
+    }
+
+    /// Builds the report. `settings` is (label, value text) pairs; pass `currentSettings()` live.
+    static func report(appVersion: String, build: String, osVersion: String, deviceModel: String,
+                       serverVersion: String?, serverURL: String, settings: [(String, String)],
+                       now: Date = Date()) -> String {
+        var lines = [
+            "ShelfHead feedback diagnostics",
+            "App: \(appVersion) (\(build))",
+            "iOS: \(osVersion)",
+            "Device: \(deviceModel)",
+            "Audiobookshelf server: \(serverVersion ?? "unknown")",
+            "Generated: \(ISO8601DateFormatter().string(from: now))",
+            "",
+            "Settings:",
+        ]
+        lines += settings.map { "\($0.0): \($0.1)" }
+        lines += ["", "Left out on purpose: your server address, account, tokens and passwords, and the app log."]
+        return scrubHosts(ShelfLog.redact(lines.joined(separator: "\n")), serverURL: serverURL)
+    }
+
+    static func currentSettings(_ defaults: UserDefaults = .standard) -> [(String, String)] {
+        settingKeys.map { ($0.0, stateText(defaults.object(forKey: $0.1))) }
+    }
+
+    /// The live report for this device.
+    static func report(serverVersion: String?, serverURL: String) -> String {
+        let info = Bundle.main.infoDictionary
+        return report(appVersion: info?["CFBundleShortVersionString"] as? String ?? "?",
+                      build: info?["CFBundleVersion"] as? String ?? "?",
+                      osVersion: UIDevice.current.systemVersion,
+                      deviceModel: deviceModel,
+                      serverVersion: serverVersion, serverURL: serverURL,
+                      settings: currentSettings())
+    }
+}
+
+/// Batch 493 (N3): a built diagnostics report waiting for the share sheet.
+struct DiagnosticsShare: Identifiable {
+    let id = UUID()
+    let text: String
 }

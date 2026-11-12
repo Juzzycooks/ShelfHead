@@ -946,8 +946,8 @@ private struct UpNextChip: View {
         .buttonStyle(.plain)
         // Batch 403: "Up Next, 1 books" read wrong in English too.
         .accessibilityLabel(playerViewModel.upNext.count == 1
-            ? String(localized: "Up Next, 1 book", comment: "VoiceOver label of the Up Next button with one book queued")
-            : String(localized: "Up Next, \(playerViewModel.upNext.count) books", comment: "VoiceOver label of the Up Next button; %lld is the number of queued books"))
+            ? String(localized: "Up Next, 1 item", comment: "VoiceOver label of the Up Next button with one entry queued (a book or a podcast episode)")
+            : String(localized: "Up Next, \(playerViewModel.upNext.count) items", comment: "VoiceOver label of the Up Next button; %lld is the number of queued entries (books or podcast episodes)"))
     }
 }
 

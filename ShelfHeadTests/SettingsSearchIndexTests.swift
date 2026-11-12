@@ -198,6 +198,8 @@ final class SettingsSearchIndexTests: XCTestCase {
             .sound: "sound.", .appearance: "appearance.", .systemPrivacy: "system.",
             .downloads: "downloads.", .diagnostics: "diagnostics.", .featuresTips: "features.",
             .transcripts: "transcripts.", .readingSites: "readingSites.", .household: "household.",
+            // Batch 492 (REVIEW 2026-11-11 N2/N1): the pages the rows moved to.
+            .serverTools: "serverTools.", .kids: "kids.", .releaseRadar: "releaseRadar.",
         ]
         for entry in SettingsSearchIndex.entries(includesClassicLockScreen: true) {
             guard let row = entry.row else { continue }

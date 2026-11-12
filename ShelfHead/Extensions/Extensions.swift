@@ -148,6 +148,9 @@ enum LibraryRoute: Hashable {
     case series(Series)
     case author(NamedEntity)
     case narrator(String)
+    /// Batch 492 (REVIEW 2026-11-11 L1): a genre or tag from Library search.
+    case genre(String)
+    case tag(String)
     case collection(BookCollection)
     case playlist(Playlist)
     case downloads
@@ -158,6 +161,8 @@ enum LibraryRoute: Hashable {
         case .series(let series): "series:\(series.id)"
         case .author(let author): "author:\(author.id)"
         case .narrator(let name): "narrator:\(name)"
+        case .genre(let name): "genre:\(name)"
+        case .tag(let name): "tag:\(name)"
         case .collection(let collection): "collection:\(collection.id)"
         case .playlist(let playlist): "playlist:\(playlist.id)"
         case .downloads: "downloads"
@@ -176,6 +181,10 @@ enum LibraryRoute: Hashable {
             AuthorBooksView(author: author)
         case .narrator(let name):
             NarratorBooksView(narrator: name)
+        case .genre(let name):
+            GenreBooksView(genre: name)
+        case .tag(let name):
+            GenreBooksView(genre: name, filterGroup: "tags")
         case .collection(let collection):
             BookCollectionDetailView(title: collection.displayName, books: collection.books ?? [], source: .collection(collection.id))
         case .playlist(let playlist):
@@ -331,12 +340,30 @@ struct BookContextMenu: ViewModifier {
     @Environment(\.librarySelectAction) private var librarySelectAction
     @Environment(PlayerViewModel.self) private var playerViewModel
     @Environment(LibraryViewModel.self) private var libraryViewModel
+    @Environment(AuthViewModel.self) private var authViewModel
+    @State private var addToListKind: AddToListSheet.Kind?
     @State private var downloadManager = DownloadManager.shared
     /// Critique 2026-10-06 (harden): Remove Download from this menu used to delete at once;
     /// the List swipe and Book Detail already confirmed. Same dialog and copy now.
     @State private var confirmRemoveDownload = false
 
+    /// Batch 492 (REVIEW 2026-11-11 L2): a podcast show is not a book. Play, Download, Mark as
+    /// Finished and the queue actions are episode-level (Mark as Finished on a show wrote a
+    /// book-type progress record with no episode), so a show gets no book menu; tapping it
+    /// opens the show, whose page has the episode actions.
+    nonisolated static func offersBookActions(isPodcast: Bool) -> Bool { !isPodcast }
+
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if !Self.offersBookActions(isPodcast: item.isPodcast) {
+            content
+        } else {
+            bookMenu(content)
+        }
+    }
+
+    @ViewBuilder
+    private func bookMenu(_ content: Content) -> some View {
         let finished = libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished
         let progressPercent = libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent
         // CO-7 (Batch 353): item glyphs in the label colour on the menu's glass, as the
@@ -389,6 +416,17 @@ struct BookContextMenu: ViewModifier {
                 Label(finished ? "Mark as Not Finished" : "Mark as Finished",
                       systemImage: finished ? "circle" : "checkmark.circle")
             }
+            // REVIEW 2026-11-11 F2: Add to Playlist / Collection (collections need update permission).
+            if ListEditing.offersAddToPlaylist(isPodcast: item.isPodcast) {
+                Button { addToListKind = .playlist } label: {
+                    Label("Add to Playlist…", systemImage: "music.note.list")
+                }
+            }
+            if ListEditing.offersAddToCollection(user: authViewModel.currentUser, isPodcast: item.isPodcast) {
+                Button { addToListKind = .collection } label: {
+                    Label("Add to Collection…", systemImage: "rectangle.stack.badge.plus")
+                }
+            }
             // Batch 490 (REVIEW 2026-11-11 F1): ABS's "Remove from Continue Listening", only for
             // a started, unfinished book. Not destructive: progress is kept, and the toast offers Undo.
             if LibraryViewModel.shouldOfferRemoveFromContinueListening(
@@ -413,6 +451,11 @@ struct BookContextMenu: ViewModifier {
         }
         .systemChromeTint()
         .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
+        .sheet(item: $addToListKind) { kind in
+            AddToListSheet(item: item, kind: kind)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .confirmationDialog(RemoveDownloadConfirmation.title,
                             isPresented: $confirmRemoveDownload, titleVisibility: .visible) {
             Button(RemoveDownloadConfirmation.button, role: .destructive) {

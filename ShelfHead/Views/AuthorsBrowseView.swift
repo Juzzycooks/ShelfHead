@@ -1050,6 +1050,9 @@ struct NarratorBooksView: View {
 /// book detail screen.
 struct GenreBooksView: View {
     let genre: String
+    /// Batch 492 (REVIEW 2026-11-11 L1): `"genres"` (default) or `"tags"`, the ABS filter group
+    /// the name is matched in; Library search opens a tag through the same page.
+    var filterGroup: String = "genres"
     @Environment(LibraryViewModel.self) private var libraryViewModel
     @State private var books: [LibraryItem] = []
     @State private var isLoading = true
@@ -1113,7 +1116,7 @@ struct GenreBooksView: View {
     private func load() async {
         isLoading = true
         loadFailed = false
-        let filter = APIFilter.encode(group: "genres", value: genre)
+        let filter = APIFilter.encode(group: filterGroup, value: genre)
         if let result = await libraryViewModel.items(filteredBy: filter) {
             books = result
         } else {

@@ -218,6 +218,29 @@ struct Library: Codable, Identifiable {
     let folders: [LibraryFolder]?
 }
 
+extension Library {
+    /// Batch 492 (REVIEW 2026-11-11 L2): a podcast library lists shows, not books.
+    var isPodcastLibrary: Bool { mediaType == "podcast" }
+
+    /// Batch 492 (REVIEW 2026-11-11 L2): an SF Symbol for the library's own ABS `icon` name
+    /// (`database`, `books-1`, `microphone-2`, `radio`, `podcast`, `headphones`, `music`, …),
+    /// or nil when the name isn't one with an obvious match (the switcher keeps its default).
+    var symbolName: String? { Self.symbolName(forIcon: icon) }
+
+    nonisolated static func symbolName(forIcon icon: String?) -> String? {
+        guard let icon = icon?.lowercased(), !icon.isEmpty else { return nil }
+        if icon.hasPrefix("microphone") { return "mic" }
+        if icon.hasPrefix("book") { return "books.vertical" }
+        switch icon {
+        case "podcast": return "antenna.radiowaves.left.and.right"
+        case "radio": return "radio"
+        case "headphones": return "headphones"
+        case "music": return "music.note"
+        default: return nil
+        }
+    }
+}
+
 struct LibraryFolder: Codable, Identifiable {
     let id: String
     let fullPath: String?
@@ -519,6 +542,9 @@ struct MediaMetadata: Codable {
     let authorName: String?
     let narratorName: String?
     let seriesName: String?
+    /// Batch 492 (REVIEW 2026-11-11 L2): a podcast's metadata carries `author`, not `authorName`.
+    /// A `var` with a default so the memberwise initialiser callers don't need it.
+    var author: String? = nil
     let description: String?
     let publishedYear: String?
     let publisher: String?
@@ -532,7 +558,7 @@ struct MediaMetadata: Codable {
 
     enum CodingKeys: String, CodingKey {
         case title, subtitle, description
-        case authorName, narratorName, seriesName
+        case authorName, narratorName, seriesName, author
         case publishedYear, publisher, language
         case genres, isbn, asin, series
     }
@@ -574,6 +600,7 @@ extension MediaMetadata {
         authorName = string(.authorName)
         narratorName = string(.narratorName)
         seriesName = string(.seriesName)
+        author = string(.author)
         publishedYear = string(.publishedYear)
         publisher = string(.publisher)
         language = string(.language)
@@ -1246,7 +1273,8 @@ extension LibraryItem {
 
     /// Same empty-string gap as `title` above, fixed the same way.
     var authorName: String {
-        guard let raw = media?.metadata?.authorName,
+        // Batch 492 (REVIEW 2026-11-11 L2): a podcast show carries `author`; `authorName` is a book field.
+        guard let raw = media?.metadata?.authorName ?? media?.metadata?.author,
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return String(localized: "Unknown Author", comment: "Fallback author name for a book with no author metadata")
         }

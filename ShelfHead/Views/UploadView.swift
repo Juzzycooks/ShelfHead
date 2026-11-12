@@ -144,7 +144,8 @@ struct UploadView: View {
             .listRowBackground(Color.shelfCard)
 
             Section {
-                TextField("Title", text: $model.title)
+                // Batch 493: in a podcast library the "title" is the show's folder name.
+                TextField(model.isPodcastLibrary ? "Show Name" : "Title", text: $model.title)
                     .onChange(of: model.title) { _, _ in model.markEdited("title") }
                 if !model.isPodcastLibrary {
                     TextField("Author", text: $model.author)
@@ -159,7 +160,9 @@ struct UploadView: View {
             } header: {
                 RetroSectionHeader(title: "Details")
             } footer: {
-                Typo.supporting(Text("Suggested from the files. The server stores them in a folder named after the author, series and title."))
+                Typo.supporting(model.isPodcastLibrary
+                    ? Text("The server stores the episodes in a folder named after the show. Use an existing show\u{2019}s exact name to add to it.")
+                    : Text("Suggested from the files. The server stores them in a folder named after the author, series and title."))
                     .foregroundStyle(Color.shelfMuted)
             }
             .listRowBackground(Color.shelfCard)
@@ -226,9 +229,13 @@ struct UploadView: View {
             Image(systemName: "checkmark.circle.fill").font(.system(size: min(doneGlyphSize, 72))).foregroundStyle(Color.shelfCream)
                 .accessibilityHidden(true)
             Text("Uploaded").font(.title3.weight(.semibold)).foregroundStyle(Color.shelfCream)
-            Typo.supporting(Text(model.scanned
-                                 ? "Scan started. The book will appear in the library in a moment."
-                                 : "The book shows up in the library after the server scans it."))
+            Typo.supporting(model.isPodcastLibrary
+                            ? Text(model.scanned
+                                   ? "Scan started. The episodes will appear in the library in a moment."
+                                   : "The episodes show up in the library after the server scans it.")
+                            : Text(model.scanned
+                                   ? "Scan started. The book will appear in the library in a moment."
+                                   : "The book shows up in the library after the server scans it."))
                 .foregroundStyle(Color.shelfMuted)
                 .multilineTextAlignment(.center)
             if model.isAdmin && !model.scanned {

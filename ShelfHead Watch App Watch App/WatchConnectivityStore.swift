@@ -242,7 +242,10 @@ final class WatchConnectivityStore: NSObject {
     var estimatedCurrentTime: Double {
         guard let playbackState else { return 0 }
         _ = tick   // establish an observation dependency so this recomputes each tick
-        return WatchProgressEstimator.estimatedCurrentTime(state: playbackState)
+        // W3: a stale snapshot (phone out of range) stops counting and shows the last known position.
+        let at = WatchPhoneLinkDecision.extrapolationDate(now: Date(), lastUpdated: playbackState.lastUpdated,
+                                                          isStateStale: isStateStale)
+        return WatchProgressEstimator.estimatedCurrentTime(state: playbackState, now: at)
     }
 
     var estimatedProgress: Double {

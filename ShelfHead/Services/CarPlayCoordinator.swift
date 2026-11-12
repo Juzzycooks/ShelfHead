@@ -1110,7 +1110,7 @@ final class CarPlayCoordinator: NSObject {
     /// "Current", tap applies and pops back to Setup with the new selection reflected.
     private func pushListeningProfilePicker() {
         let current = ListeningProfileManager.shared.activeProfile
-        let items = ListeningProfile.allCases.map { profile -> CPListItem in
+        let items = ListeningProfile.offered(active: current).map { profile -> CPListItem in
             let item = CPListItem(text: profile.label,
                                   detailText: profile == current ? String(localized: "Current", comment: "CarPlay: marks the currently selected item") : profile.subtitle,
                                   image: UIImage(systemName: profile.icon))

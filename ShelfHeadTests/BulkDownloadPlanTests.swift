@@ -47,10 +47,14 @@ final class BulkDownloadPlanTests: XCTestCase {
         XCTAssertNil(plan([item("a", size: 600_000_000)], free: nil).refusal)
     }
 
-    func testWifiOnlyRefusesOffWifiOnly() {
-        XCTAssertEqual(plan([item("a")], wifiOnly: true, onWiFi: false).refusal, .wifiOnlyBlocked)
-        XCTAssertNil(plan([item("a")], wifiOnly: true, onWiFi: true).refusal)
-        XCTAssertNil(plan([item("a")], wifiOnly: false, onWiFi: false).refusal)
+    /// D1 (review, 12 Nov 2026): Wi-Fi-only off Wi-Fi no longer refuses; the books queue and wait.
+    func testWifiOnlyOffWifiQueuesAndWaits() {
+        let off = plan([item("a")], wifiOnly: true, onWiFi: false)
+        XCTAssertNil(off.refusal)
+        XCTAssertEqual(off.toDownload.map(\.id), ["a"])
+        XCTAssertTrue(off.waitsForWiFi)
+        XCTAssertFalse(plan([item("a")], wifiOnly: true, onWiFi: true).waitsForWiFi)
+        XCTAssertFalse(plan([item("a")], wifiOnly: false, onWiFi: false).waitsForWiFi)
     }
 
     func testCapQueuesFirstNAndReportsRestOverCap() {

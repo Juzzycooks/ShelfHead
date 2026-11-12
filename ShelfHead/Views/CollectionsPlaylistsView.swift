@@ -198,6 +198,13 @@ struct BookCollectionDetailView: View {
     var source: Source? = nil
     @Environment(LibraryViewModel.self) private var libraryViewModel
     @Environment(PlayerViewModel.self) private var playerViewModel
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var showRename = false
+    @State private var renameText = ""
+    @State private var showDeleteConfirm = false
+    @State private var showItemsEditor = false
+    @State private var editNotice: String?
 
     /// Critique 2026-10-06 (shape → distill): was a static array with no refresh. Reads
     /// the view model's current copy by id, so pull-to-refresh shows server changes.
@@ -210,6 +217,16 @@ struct BookCollectionDetailView: View {
         case nil:
             return books
         }
+    }
+
+    /// L3: grid rows with unique ids (item id + episode id). Collections and the static
+    /// snapshot carry no episode ids.
+    private var entries: [PlaylistEntry] {
+        if case .playlist(let id)? = source,
+           let playlist = libraryViewModel.playlists.first(where: { $0.id == id }) {
+            return playlist.entries
+        }
+        return items.map { PlaylistEntry(item: $0, episodeId: nil) }
     }
 
     private var isLoading: Bool {
@@ -270,7 +287,34 @@ struct BookCollectionDetailView: View {
                 ScrollView {
                     header(current)
                     LazyVGrid(columns: bookGridColumns, spacing: 20) {
-                        ForEach(current) { item in
+                        ForEach(entries) { entry in
+                            let item = entry.item
+                            if let episode = entry.episode {
+                                // L3: a playlist episode plays that episode (it used to open the
+                                // whole show, and two episodes of one show shared an id).
+                                Button {
+                                    Haptics.selection()
+                                    Task { await playerViewModel.startPlaybackOfferingUndo(for: item, episode: episode) }
+                                } label: {
+                                    BookGridTile(item: item)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint(String(localized: "Plays this episode"))
+                                .contextMenu {
+                                    Button {
+                                        Haptics.selection()
+                                        playerViewModel.playNext(item, episode: episode)
+                                    } label: {
+                                        Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                    }
+                                    Button {
+                                        Haptics.selection()
+                                        playerViewModel.addToQueue(item, episode: episode)
+                                    } label: {
+                                        Label("Add to Up Next", systemImage: "text.badge.plus")
+                                    }
+                                }
+                            } else {
                             BookLink(item) {
                                 // Critique 2026-10-05 (Library): progress/download/finished state.
                                 BookGridTile(item: item)
@@ -282,6 +326,7 @@ struct BookCollectionDetailView: View {
                             // aren't declared on this view — `BookContextMenu` reads them
                             // itself from the environment, which is injected at app root.
                             .bookContextMenu(item)
+                            }
                         }
                     }
                     // VD-2 (docs/design-review.md, Round 6): was `.padding(16)`, a
@@ -294,10 +339,137 @@ struct BookCollectionDetailView: View {
             }
         }
         .shelfAnimation(.easeInOut(duration: 0.25), value: showsSkeleton)
-        .navigationTitle(title)
+        .navigationTitle(currentTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if canEditAnything {
+                ToolbarItem(placement: .topBarTrailing) { editMenu }
+            }
+        }
+        .alert(isPlaylist ? String(localized: "Rename Playlist") : String(localized: "Rename Collection"), isPresented: $showRename) {
+            TextField("Name", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { rename() }
+                .disabled(ListEditing.trimmedName(renameText) == nil)
+        }
+        .confirmationDialog(isPlaylist ? String(localized: "Delete this playlist?") : String(localized: "Delete this collection?"),
+                            isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button(isPlaylist ? String(localized: "Delete Playlist") : String(localized: "Delete Collection"), role: .destructive) { deleteList() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The books stay in your library.")
+        }
+        .sheet(isPresented: $showItemsEditor) { itemsEditor }
+        .toast(message: $editNotice)
         .refreshable { await reload() }
         .reexpandsTabBarOnAppear()
+    }
+
+    // MARK: Editing (REVIEW 2026-11-11 F2)
+
+    /// The live name (a rename shows at once); the pushed `title` until the list is found.
+    private var currentTitle: String {
+        switch source {
+        case .collection(let id)?: return libraryViewModel.collections.first { $0.id == id }?.displayName ?? title
+        case .playlist(let id)?: return libraryViewModel.playlists.first { $0.id == id }?.displayName ?? title
+        case nil: return title
+        }
+    }
+
+    private var canEditAnything: Bool {
+        switch source {
+        case .collection?: return ListEditing.canEditCollection(user: authViewModel.currentUser)
+        case .playlist?: return true
+        case nil: return false
+        }
+    }
+
+    private var editMenu: some View {
+        Menu {
+            Button {
+                renameText = currentTitle
+                showRename = true
+            } label: { Label("Rename\u{2026}", systemImage: "pencil") }
+            Button { showItemsEditor = true } label: {
+                Label(isPlaylist ? String(localized: "Edit Items\u{2026}") : String(localized: "Remove Books\u{2026}"), systemImage: "list.bullet")
+            }
+            .disabled(entries.isEmpty)
+            if isPlaylist || ListEditing.canDeleteCollection(user: authViewModel.currentUser) {
+                Divider()
+                Button(role: .destructive) { showDeleteConfirm = true } label: {
+                    Label(isPlaylist ? String(localized: "Delete Playlist\u{2026}") : String(localized: "Delete Collection\u{2026}"), systemImage: "trash")
+                }
+            }
+        } label: {
+            Label("Edit", systemImage: "ellipsis")
+        }
+        .monochromeToolbarItem()
+    }
+
+    private var editorRows: [ListItemsEditor.Row] {
+        entries.map { entry in
+            ListItemsEditor.Row(ref: PlaylistItemRef(libraryItemId: entry.item.id, episodeId: entry.episodeId),
+                                title: entry.episode?.title ?? entry.item.title)
+        }
+    }
+
+    private var itemsEditor: some View {
+        // Re-ordering sends every row, so it needs each playlist row to be one the app decoded.
+        var canReorder = false
+        if case .playlist(let id)? = source, let playlist = libraryViewModel.playlists.first(where: { $0.id == id }) {
+            canReorder = playlist.entries.count == (playlist.items?.count ?? -1)
+        }
+        return ListItemsEditor(rows: editorRows, canReorder: canReorder) { edited in
+            await saveItems(edited)
+        }
+        .presentationDetents([.large])
+    }
+
+    private func saveItems(_ edited: [ListItemsEditor.Row]) async -> Bool {
+        let outcome = ListEditing.editOutcome(original: editorRows.map(\.ref), edited: edited.map(\.ref))
+        do {
+            switch source {
+            case .collection(let id)?:
+                try await libraryViewModel.removeFromCollection(id: id, bookIds: outcome.removed.map(\.libraryItemId))
+            case .playlist(let id)?:
+                try await libraryViewModel.updatePlaylistItems(id: id, removed: outcome.removed, order: outcome.order)
+                // The server deletes a playlist whose last item is removed.
+                if edited.isEmpty { dismiss() }
+            case nil: break
+            }
+            Haptics.success()
+            return true
+        } catch {
+            editNotice = ListEditing.failureMessage
+            return false
+        }
+    }
+
+    private func rename() {
+        guard let name = ListEditing.trimmedName(renameText) else { return }
+        Task {
+            do {
+                switch source {
+                case .collection(let id)?: try await libraryViewModel.renameCollection(id: id, name: name)
+                case .playlist(let id)?: try await libraryViewModel.renamePlaylist(id: id, name: name)
+                case nil: break
+                }
+            } catch { editNotice = ListEditing.failureMessage }
+        }
+    }
+
+    private func deleteList() {
+        Task {
+            do {
+                switch source {
+                case .collection(let id)?: try await libraryViewModel.deleteCollection(id: id)
+                case .playlist(let id)?: try await libraryViewModel.deletePlaylist(id: id)
+                case nil: break
+                }
+                Haptics.success()
+                dismiss()
+            } catch { editNotice = ListEditing.failureMessage }
+        }
     }
 
     private func reload() async {
@@ -423,5 +595,254 @@ struct BookCollectionDetailView: View {
         let base = isPlaylist ? playlistItemsPhrase(count) : collectionBooksPhrase(count)
         guard totalDuration >= 60 else { return base }
         return String(localized: "\(base) \u{00B7} \(totalDuration.formattedDuration)", comment: "Collection/playlist header; first %@ is a count phrase like '6 books', second %@ is the total duration like '42h 10m'")
+    }
+}
+
+// MARK: - Editing lists (REVIEW 2026-11-11 F2)
+
+/// Pure decisions behind Add to Playlist / Collection and the list editor, pinned by
+/// `ShelfHeadTests/Top10PlaylistEditTests.swift`.
+enum ListEditing {
+    /// A name the server will accept: trimmed, non-empty. Nil means keep the Save button disabled.
+    static func trimmedName(_ raw: String) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    /// ABS answers 403 to collection POST/PATCH unless the user `canUpdate` (admins always can), so
+    /// "Add to Collection" is offered only then. A podcast show is not a book (collections are books only).
+    static func offersAddToCollection(user: User?, isPodcast: Bool) -> Bool {
+        !isPodcast && user?.canUpdateLibrary == true
+    }
+
+    /// Playlists are the user's own, so any signed-in user may add a book. Shows are excluded: a
+    /// playlist takes episodes, which Book Detail does not pick.
+    static func offersAddToPlaylist(isPodcast: Bool) -> Bool { !isPodcast }
+
+    /// Collection DELETE needs `canDelete` on the server (admins always have it).
+    static func canDeleteCollection(user: User?) -> Bool {
+        user?.isAdmin == true || user?.permissions?.delete == true
+    }
+
+    /// Renaming and removing books are PATCH/POST on the server, so they need update permission.
+    static func canEditCollection(user: User?) -> Bool { user?.canUpdateLibrary == true }
+
+    /// The rows of a playlist as write payloads; nil if any row lacks a library item id (re-ordering
+    /// needs every row, so the editor then offers removal only).
+    static func playlistRefs(_ items: [PlaylistItem]) -> [PlaylistItemRef]? {
+        var refs: [PlaylistItemRef] = []
+        for row in items {
+            guard let id = row.libraryItemId ?? row.libraryItem?.id else { return nil }
+            refs.append(PlaylistItemRef(libraryItemId: id, episodeId: row.episodeId))
+        }
+        return refs
+    }
+
+    /// What Done should send: the rows removed, and, only when the survivors' order differs from the
+    /// original order, the full survivor list for the re-order PATCH.
+    static func editOutcome(original: [PlaylistItemRef], edited: [PlaylistItemRef])
+        -> (removed: [PlaylistItemRef], order: [PlaylistItemRef]?) {
+        let kept = Set(edited.map { $0.libraryItemId + "#" + ($0.episodeId ?? "") })
+        let removed = original.filter { !kept.contains($0.libraryItemId + "#" + ($0.episodeId ?? "")) }
+        let editedKeys = Set(edited.map { $0.libraryItemId + "#" + ($0.episodeId ?? "") })
+        let survivorsInOriginalOrder = original.filter { editedKeys.contains($0.libraryItemId + "#" + ($0.episodeId ?? "")) }
+        return (removed, survivorsInOriginalOrder == edited ? nil : edited)
+    }
+
+    static var failureMessage: String {
+        String(localized: "Couldn\u{2019}t save that change. Check your connection and permissions, then try again.",
+               comment: "Toast when adding to, editing or deleting a playlist or collection fails")
+    }
+}
+
+/// "Add to Playlist…" / "Add to Collection…": existing lists for the library, tap to add, or make a new
+/// one holding this book. Standard List plus an alert with a text field.
+struct AddToListSheet: View {
+    enum Kind: String, Identifiable { case playlist, collection; var id: String { rawValue } }
+
+    let item: LibraryItem
+    let kind: Kind
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var showNewAlert = false
+    @State private var newName = ""
+    @State private var busy = false
+    @State private var errorMessage: String?
+
+    private struct Row: Identifiable { let id: String; let name: String; let count: Int; let contains: Bool }
+
+    private var rows: [Row] {
+        switch kind {
+        case .playlist:
+            return libraryViewModel.playlists.map { p in
+                Row(id: p.id, name: p.displayName, count: p.items?.count ?? 0,
+                    contains: (p.items ?? []).contains { ($0.libraryItemId ?? $0.libraryItem?.id) == item.id })
+            }
+        case .collection:
+            return libraryViewModel.collections.map { c in
+                Row(id: c.id, name: c.displayName, count: c.bookCount,
+                    contains: (c.books ?? []).contains { $0.id == item.id })
+            }
+        }
+    }
+
+    private var isLoading: Bool {
+        kind == .playlist ? libraryViewModel.isLoadingPlaylists : libraryViewModel.isLoadingCollections
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        newName = ""
+                        showNewAlert = true
+                    } label: {
+                        Label(kind == .playlist ? String(localized: "New Playlist\u{2026}") : String(localized: "New Collection\u{2026}"), systemImage: "plus")
+                    }
+                    .disabled(busy)
+                }
+                Section {
+                    if rows.isEmpty && isLoading {
+                        ProgressView().frame(maxWidth: .infinity)
+                    }
+                    ForEach(rows) { row in
+                        Button {
+                            add(to: row.id)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: row.name).foregroundStyle(Color.shelfCream)
+                                    Text(kind == .playlist ? playlistItemsPhrase(row.count) : collectionBooksPhrase(row.count))
+                                        .font(.caption).foregroundStyle(Color.shelfMuted)
+                                }
+                                Spacer()
+                                if row.contains {
+                                    Image(systemName: "checkmark").foregroundStyle(Color.shelfAmberText)
+                                        .accessibilityLabel("Already added")
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(row.contains || busy)
+                    }
+                }
+            }
+            .navigationTitle(kind == .playlist ? String(localized: "Add to Playlist") : String(localized: "Add to Collection"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .alert(kind == .playlist ? String(localized: "New Playlist") : String(localized: "New Collection"), isPresented: $showNewAlert) {
+                TextField("Name", text: $newName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { create() }
+                    .disabled(ListEditing.trimmedName(newName) == nil)
+            } message: {
+                Text("It starts with this book.")
+            }
+            .alert("Couldn\u{2019}t Add", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+            .task {
+                switch kind {
+                case .playlist: if !libraryViewModel.playlistsLoaded { await libraryViewModel.loadPlaylists() }
+                case .collection: if !libraryViewModel.collectionsLoaded { await libraryViewModel.loadCollections() }
+                }
+            }
+        }
+    }
+
+    private func add(to id: String) {
+        busy = true
+        Task {
+            do {
+                switch kind {
+                case .playlist: try await libraryViewModel.addToPlaylist(id: id, item: item)
+                case .collection: try await libraryViewModel.addToCollection(id: id, item: item)
+                }
+                Haptics.success()
+                dismiss()
+            } catch {
+                errorMessage = ListEditing.failureMessage
+            }
+            busy = false
+        }
+    }
+
+    private func create() {
+        guard let name = ListEditing.trimmedName(newName) else { return }
+        busy = true
+        Task {
+            do {
+                switch kind {
+                case .playlist: try await libraryViewModel.createPlaylist(name: name, with: item)
+                case .collection: try await libraryViewModel.createCollection(name: name, with: item)
+                }
+                Haptics.success()
+                dismiss()
+            } catch {
+                errorMessage = ListEditing.failureMessage
+            }
+            busy = false
+        }
+    }
+}
+
+/// Edit Items for a collection or playlist: swipe (or the red minus) to remove, drag handles to
+/// re-order a playlist. Nothing is sent until Done.
+struct ListItemsEditor: View {
+    struct Row: Identifiable, Equatable {
+        let ref: PlaylistItemRef
+        let title: String
+        var id: String { ref.libraryItemId + "#" + (ref.episodeId ?? "") }
+    }
+
+    let rows: [Row]
+    let canReorder: Bool
+    /// Returns true when the save worked (the editor then closes).
+    let onSave: ([Row]) async -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var edited: [Row] = []
+    @State private var saving = false
+
+    private var moveAction: ((IndexSet, Int) -> Void)? {
+        guard canReorder else { return nil }
+        return { from, to in edited.move(fromOffsets: from, toOffset: to) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(edited) { row in
+                    Text(verbatim: row.title).foregroundStyle(Color.shelfCream)
+                }
+                .onDelete { edited.remove(atOffsets: $0) }
+                .onMove(perform: moveAction)
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Edit Items")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(saving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        saving = true
+                        Task {
+                            if await onSave(edited) { dismiss() }
+                            saving = false
+                        }
+                    }
+                    .disabled(saving || edited == rows)
+                }
+            }
+            .onAppear { if edited.isEmpty { edited = rows } }
+        }
     }
 }

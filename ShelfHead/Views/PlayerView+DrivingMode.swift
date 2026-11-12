@@ -214,8 +214,15 @@ struct DrivingModeView: View {
         // Tells the root alert to stand down while this cover is up (fourth run).
         // Batch 490 (REVIEW 2026-11-11 P2): also keeps the screen on while Driving Mode
         // is up (through the player service, the one owner of the idle timer).
-        .onAppear { playerViewModel.drivingModeVisibilityChanged(true) }
-        .onDisappear { playerViewModel.drivingModeVisibilityChanged(false) }
+        // REVIEW G1: the app is portrait-locked; Driving Mode alone may rotate.
+        .onAppear {
+            playerViewModel.drivingModeVisibilityChanged(true)
+            OrientationLock.setDrivingMode(true)
+        }
+        .onDisappear {
+            playerViewModel.drivingModeVisibilityChanged(false)
+            OrientationLock.setDrivingMode(false)
+        }
     }
 
     // MARK: Layouts

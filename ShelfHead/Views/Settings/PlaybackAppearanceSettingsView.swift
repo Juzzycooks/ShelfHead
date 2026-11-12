@@ -17,6 +17,7 @@ struct SettingsDestinationView: View {
     let page: SettingsPage
     var bottomInset: CGFloat = 0
     var focusRow: String? = nil
+    @Environment(LibraryViewModel.self) private var libraryViewModel
 
     var body: some View {
         switch page {
@@ -49,6 +50,8 @@ struct SettingsDestinationView: View {
         case .systemPrivacy:
             SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
                 SystemPrivacySettingsSection(bottomInset: bottomInset)
+                // Batch 492 (N2): Export/Import Settings moved here from Account & Security.
+                SettingsBackupSection()
             }
         case .downloads:
             DownloadsSettingsView(bottomInset: bottomInset, focusRow: focusRow)
@@ -59,8 +62,24 @@ struct SettingsDestinationView: View {
         case .household:
             SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
                 HouseholdSettingsView()
+            }
+        // Batch 492 (REVIEW 2026-11-11 N2): Kids was the bottom half of the Household page; it is
+        // its own page now, linked from the Settings root.
+        case .kids:
+            SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
                 KidsSettingsView()
                     .settingsRowAnchor(SettingsRow.kids)
+            }
+        case .serverTools:
+            SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
+                ServerToolsSettingsSection(bottomInset: bottomInset)
+            }
+        // Batch 492 (N1 part 3): Release Radar's own page (was a section of System & Privacy).
+        case .releaseRadar:
+            SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
+                ReleaseRadarSettingsSection(libraryItems: libraryViewModel.items)
+                    .settingsRowAnchor(SettingsRow.releaseRadar)
+                    .listRowBackground(Color.shelfCard)
             }
         case .transcripts:
             SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {

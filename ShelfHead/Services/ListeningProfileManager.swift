@@ -24,6 +24,19 @@ enum ListeningProfile: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    /// Batch 492 (REVIEW 2026-11-11 N2): the profiles worth offering. Bedtime Story is a child's
+    /// profile, so it is listed only once a child profile exists on this device, or while it is
+    /// the active profile (so a picker never shows a selection it doesn't list). `allCases` stays
+    /// the full synthesised list; the Settings picker, the player menu and CarPlay read `offered`.
+    nonisolated static func available(hasChildProfile: Bool, active: ListeningProfile? = nil) -> [ListeningProfile] {
+        allCases.filter { $0 != .bedtimeStory || hasChildProfile || active == .bedtimeStory }
+    }
+
+    /// What the pickers list right now (`KidProfileStore.hasAnyKid` is a synchronous defaults read).
+    static func offered(active: ListeningProfile) -> [ListeningProfile] {
+        available(hasChildProfile: KidProfileStore.standard.hasAnyKid, active: active)
+    }
+
     var label: String {
         switch self {
         // T2 (REVIEW_2026-09-04_UI.md): renamed from "Driving" — it shared a name and

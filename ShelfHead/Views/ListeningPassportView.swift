@@ -92,7 +92,7 @@ struct PassportCardView: View {
             Text("Listening Passport")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(Color.shelfCream)
-            Text("\(booksFinished) books finished \u{00B7} \(stamps.count) stamps")
+            Text(verbatim: "\(String(localized: "\(booksFinished) books finished")) \u{00B7} \(String(localized: "\(stamps.count) stamps"))")
                 .font(.footnote).foregroundStyle(Color.shelfMuted)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Space.s), count: 3), spacing: Space.s) {
                 ForEach(Array(stamps.prefix(9))) { stamp in

@@ -23,6 +23,7 @@ struct NowPlayingView: View {
     // screen, which owns the sheets that trigger it.
     @Environment(WatchConnectivityStore.self) private var store
     @Environment(WatchStore.self) private var watchStore
+    @State private var playHere: PlayHereTarget?
 
     var body: some View {
         Group {
@@ -31,7 +32,12 @@ struct NowPlayingView: View {
                     model: model(for: state),
                     actions: actions,
                     notice: { phoneNotice(for: state) },
-                    moreActions: { MarkFinishedRow(title: state.title) }
+                    moreActions: {
+                        if canPlayOnWatch(state) {
+                            PlayOnWatchRow { playOnWatch(state) }
+                        }
+                        MarkFinishedRow(title: state.title)
+                    }
                 )
             } else if store.hasReceivedAnySnapshot {
                 WatchOpenOniPhoneEmptyState(systemImage: "play.slash", message: "Nothing playing on iPhone")
@@ -41,22 +47,46 @@ struct NowPlayingView: View {
                     .containerBackground(WatchTheme.nowPlayingBackground, for: .navigation)
             }
         }
+        .navigationDestination(item: $playHere) { target in
+            StandaloneNowPlayingView(itemId: target.itemId, title: target.title, author: target.author,
+                                     coverItemId: target.itemId)
+        }
     }
 
-    /// Polish pass (WA-6): an inline, self-clearing status where a "Command Failed" alert used to
-    /// cover the screen, with a way out when this Watch can play the book itself.
+    /// W3 (REVIEW 2026-11-11): whether this Watch can take the current book itself.
+    private func canPlayOnWatch(_ state: WatchPlaybackState) -> Bool {
+        WatchPhoneLinkDecision.canPlayOnWatch(
+            isDownloaded: watchStore.localDownloads.isDownloaded(itemId: state.itemId),
+            hasWatchSession: watchStore.authState == .active)
+    }
+
+    private func isOutOfRange() -> Bool {
+        WatchPhoneLinkDecision.isOutOfRange(isReachable: store.isReachable, isStateStale: store.isStateStale)
+    }
+
+    /// Starts the book on this Watch through the same screen Details' "Play on Watch"
+    /// pushes (`StandaloneNowPlayingView`), so the iPhone is paused or asked about and the
+    /// engine resumes from the iPhone's position exactly as it does from Details. Only a tap
+    /// gets here; nothing starts by itself.
+    private func playOnWatch(_ state: WatchPlaybackState) {
+        playHere = PlayHereTarget(itemId: state.itemId, title: state.title, author: state.author)
+    }
+
+    /// Polish pass (WA-6), W3: a persistent "iPhone out of range" line while the phone has
+    /// stopped answering (no timeout), or the short "not reachable" status after a failed
+    /// command, each with "Play on this Watch" when this Watch can play the book.
     @ViewBuilder
     private func phoneNotice(for state: WatchPlaybackState) -> some View {
-        if store.phoneUnreachableNotice {
+        if let notice = WatchPhoneLinkDecision.notice(
+            isOutOfRange: isOutOfRange(), failedCommandNotice: store.phoneUnreachableNotice,
+            canPlayOnWatch: canPlayOnWatch(state)) {
             VStack(spacing: 4) {
-                Label("iPhone not reachable", systemImage: "iphone.slash")
+                Label(notice.isOutOfRange ? "iPhone out of range" : "iPhone not reachable", systemImage: "iphone.slash")
                     .font(WatchMetrics.captionFont(weight: .medium))
                     .foregroundStyle(WatchTheme.secondaryText)
-                if watchStore.authState == .active {
+                if notice.offersPlayOnWatch {
                     Button {
-                        Task {
-                            await watchStore.standalone.play(itemId: state.itemId, title: state.title, author: state.author)
-                        }
+                        playOnWatch(state)
                     } label: {
                         Label("Play on this Watch", systemImage: "applewatch")
                             .font(WatchMetrics.captionFont(weight: .semibold))
@@ -94,6 +124,7 @@ struct NowPlayingView: View {
             sleepSecondsLeft: sleepLeft,
             source: .iPhone,
             isStale: store.isStateStale,
+            isPhoneOutOfRange: isOutOfRange(),
             itemId: state.itemId,
             chapters: store.chapters.map { WatchChapterRow(id: $0.id, title: $0.title, start: $0.start, end: $0.end) },
             // Critique 2026-10-06 (clarify): "not synced yet" and "no chapters" read differently.
@@ -124,6 +155,29 @@ struct NowPlayingView: View {
                 store.seekToBookmark(WatchBookmarkSummary(id: row.id, title: row.title, time: row.time))
             }
         )
+    }
+}
+
+private struct PlayHereTarget: Hashable {
+    let itemId: String
+    let title: String
+    let author: String
+}
+
+/// "Play on This Watch" in the "⋯" sheet (W3). Closes the sheet, then the adapter pushes the
+/// Watch's own Now Playing for the same book.
+private struct PlayOnWatchRow: View {
+    @Environment(\.dismiss) private var dismiss
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            dismiss()
+            action()
+        } label: {
+            Label("Play on This Watch", systemImage: "applewatch")
+        }
+        .accessibilityHint("Starts this book on the Watch instead of your iPhone")
     }
 }
 

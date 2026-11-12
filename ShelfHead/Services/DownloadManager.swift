@@ -206,6 +206,8 @@ final class DownloadManager {
     var downloadedItems: Set<String> = []
     /// Surfaced to the UI (as a toast) when a download fails, so failures aren't silent.
     var downloadError: String?
+    /// D1 (REVIEW 2026-11-11): a non-error note ("Will download on Wi‑Fi."), shown as an info toast.
+    var downloadInfo: String?
     /// Set by `reconcile(serverProgress:)` when a downloaded book's local and server
     /// progress diverge too much to resolve silently via last-write-wins — see that
     /// method's doc comment. `MainTabView` presents this as an alert regardless of
@@ -729,18 +731,21 @@ final class DownloadManager {
 
     // MARK: - Public API
 
-    func downloadBook(_ item: LibraryItem, automatic: Bool = false) {
+    func downloadBook(_ item: LibraryItem, automatic: Bool = false, announceWait: Bool = true) {
         guard activeDownloads[item.id] == nil, !isDownloaded(itemId: item.id) else { return }
         // Review Low (auto-download, 30 October 2026): a manual download lifts the
         // "user removed this" mark so auto-download treats the book normally again.
         if !automatic { markUserRemoved([item.id], false) }
         // Honor the "Download on Wi-Fi only" setting for manual downloads too
         // (previously it only gated auto-downloads).
-        if SettingsStore.wifiOnlyDownloads && !NetworkMonitor.shared.isOnWiFi {
-            // Review 7 Low (auto toast): automatic starts fail silently.
-            if !automatic { downloadError = String(localized: "Wi-Fi-only downloads are on. Connect to Wi-Fi, or turn this off in Settings.") }
-            return
-        }
+        // D1 (REVIEW 2026-11-11): an automatic start is still held back (it re-runs on the
+        // next pass), but a manual one is accepted and waits: its tasks are created with
+        // `allowsCellularAccess = false`, which the background session holds until Wi-Fi.
+        let waitsForWiFi = DownloadPolicyStatus.waitsForWiFi(wifiOnly: SettingsStore.wifiOnlyDownloads,
+                                                             onWiFi: NetworkMonitor.shared.isOnWiFi,
+                                                             cellularOverridden: false)
+        if automatic && waitsForWiFi { return }
+        clearCellularOverride(itemId: item.id)   // a fresh start never inherits an old override
         // Check free space up front when the server told us the book's size — without
         // this, a multi-GB audiobook on a nearly-full device only fails after the
         // entire file has downloaded (at the final move-into-place step).
@@ -750,7 +755,9 @@ final class DownloadManager {
             return
         }
         let startedTask = DownloadTask(itemId: item.id, title: item.title)
+        if let sizeBytes = item.size, sizeBytes > 0 { startedTask.knownSizeBytes = Int64(sizeBytes) }
         activeDownloads[item.id] = startedTask
+        if waitsForWiFi && announceWait { downloadInfo = DownloadPolicyStatus.willDownloadOnWiFiMessage }
         // Review 2 Low (cancel-then-restart, 30 October 2026): this start's token.
         let runId = startedTask.runId
         // Fix 9 (REVIEW-2026-09-09.md), superseded by Item 27 (perf review):
@@ -813,13 +820,12 @@ final class DownloadManager {
         var refusal: BulkDownloadPlan.Refusal?
         if toDownload.isEmpty {
             refusal = .nothingToDownload
-        } else if wifiOnly && !onWiFi {
-            refusal = .wifiOnlyBlocked
         } else if let free = freeBytes, totalBytes > 0, free <= totalBytes + 10_000_000 {
             refusal = .insufficientSpace
         }
         return BulkDownloadPlan(toDownload: toDownload, skipped: skipped, totalKnownBytes: totalBytes,
-                                unknownSizeCount: unknown, wifiOnly: wifiOnly, refusal: refusal)
+                                unknownSizeCount: unknown, wifiOnly: wifiOnly, refusal: refusal,
+                                waitsForWiFi: wifiOnly && !onWiFi)
     }
 
     /// Convenience that feeds the planner from live state.
@@ -844,7 +850,7 @@ final class DownloadManager {
         var failures = 0
         for item in plan.toDownload {
             downloadError = nil
-            downloadBook(item)
+            downloadBook(item, announceWait: false)
             if downloadError != nil { failures += 1 }
         }
         if failures > 0 {
@@ -852,6 +858,8 @@ final class DownloadManager {
                                           : String(localized: "\(failures) books couldn't be queued for download.", comment: "%lld is a number of books (2 or more)")
         } else {
             downloadError = prior
+            // D1: the whole selection was accepted; say once that it will wait.
+            if plan.waitsForWiFi { downloadInfo = DownloadPolicyStatus.willDownloadOnWiFiMessage }
         }
     }
 
@@ -922,7 +930,51 @@ final class DownloadManager {
         downloadBook(item, automatic: true)
     }
 
+    // MARK: - D1 per-book mobile-data override
+
+    /// Book ids the user chose to download on mobile data despite Wi-Fi-only. Read from the
+    /// nonisolated task-creation paths, so guarded by `cacheLock`. Never persisted.
+    @ObservationIgnored private nonisolated(unsafe) var cellularOverrideIds = Set<String>()
+
+    nonisolated func allowsCellularAccess(forItem itemId: String) -> Bool {
+        let overridden = withCacheLock { cellularOverrideIds.contains(itemId) }
+        return DownloadPolicyStatus.allowsCellularAccess(wifiOnly: SettingsStore.wifiOnlyDownloads, cellularOverridden: overridden)
+    }
+
+    private func clearCellularOverride(itemId: String) {
+        withCacheLock { _ = cellularOverrideIds.remove(itemId) }
+        activeDownloads[itemId]?.cellularOverride = false
+    }
+
+    /// D1: lets this one book use mobile data. Cancels its live tasks without resume data
+    /// (a resume blob keeps the original request, cellular disallowed) and recreates the
+    /// missing tracks from their URLs with cellular allowed. The global setting is untouched.
+    func downloadNowOnCellular(itemId: String) {
+        guard let task = activeDownloads[itemId], !task.isPaused else { return }
+        withCacheLock { _ = cellularOverrideIds.insert(itemId) }
+        task.cellularOverride = true
+        downloadSession.getAllTasks { tasks in
+            for t in tasks where Self.parseTaskKey(t.taskDescription)?.id == itemId { t.cancel() }
+            Task { @MainActor in
+                guard let current = self.activeDownloads[itemId], current.cellularOverride, !current.isCancelled,
+                      let manifest = self.manifest(for: itemId) else { return }
+                for idx in manifest.tracks.indices {
+                    if self.fileManager.fileExists(atPath: self.trackFileURL(itemId: itemId, trackIndex: idx).path) { continue }
+                    let key = "\(itemId)|\(idx)"
+                    guard let url = self.withCacheLock({ self.trackURLs[key] }) else { continue }
+                    self.withCacheLock { self.pausedResumeData[key] = nil }
+                    var request = AuthStore.shared.authorizedRequest(url: url)
+                    request.allowsCellularAccess = true
+                    let newTask = self.downloadSession.downloadTask(with: request)
+                    newTask.taskDescription = self.taskDesc(itemId: itemId, track: idx)
+                    newTask.resume()
+                }
+            }
+        }
+    }
+
     func cancelDownload(itemId: String) {
+        clearCellularOverride(itemId: itemId)
         // Mark cancelled synchronously so any in-flight finalize/retry callbacks bail out.
         activeDownloads[itemId]?.isCancelled = true
         // Read before the async hop below — the task is removed from `activeDownloads`
@@ -1018,7 +1070,7 @@ final class DownloadManager {
                 withCacheLock { pausedResumeData[key] = nil }
             } else if let url = withCacheLock({ trackURLs[key] }) {
                 var request = AuthStore.shared.authorizedRequest(url: url)
-                request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+                request.allowsCellularAccess = allowsCellularAccess(forItem: itemId)
                 newTask = downloadSession.downloadTask(with: request)
             } else {
                 continue
@@ -1909,7 +1961,7 @@ final class DownloadManager {
             let key = "\(itemId)|\(index)"
             withCacheLock { trackURLs[key] = url }
             var request = AuthStore.shared.authorizedRequest(url: url)
-            request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+            request.allowsCellularAccess = allowsCellularAccess(forItem: itemId)
             let downloadTask = downloadSession.downloadTask(with: request)
             downloadTask.taskDescription = taskDesc(itemId: itemId, track: index)
             downloadTask.resume()
@@ -2755,7 +2807,7 @@ final class DownloadManager {
                 // "Download on Wi-Fi only" was only checked once at enqueue time, so a
                 // download that started on Wi-Fi kept going over cellular after the user
                 // left the house. Per-request is the fix that also covers retries below.
-                request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+                request.allowsCellularAccess = allowsCellularAccess(forItem: item.id)
                 let task = session.downloadTask(with: request)
                 task.taskDescription = taskDesc(itemId: item.id, track: index)
                 task.resume()
@@ -3013,7 +3065,7 @@ final class DownloadManager {
                         }
                     }
                     var request = AuthStore.shared.authorizedRequest(url: url)
-                    request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+                    request.allowsCellularAccess = allowsCellularAccess(forItem: itemId)
                     task = self.downloadSession.downloadTask(with: request)
                 } else {
                     self.failPermanently(itemId: itemId, message: message)
@@ -3051,7 +3103,7 @@ final class DownloadManager {
                 return
             }
             var request = AuthStore.shared.authorizedRequest(url: url)
-            request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+            request.allowsCellularAccess = allowsCellularAccess(forItem: itemId)
             let task = downloadSession.downloadTask(with: request)
             task.taskDescription = taskDesc(itemId: itemId, track: trackIndex)
             task.resume()
@@ -3136,7 +3188,7 @@ final class DownloadManager {
                     return
                 }
                 var request = AuthStore.shared.authorizedRequest(url: url)
-                request.allowsCellularAccess = !SettingsStore.wifiOnlyDownloads
+                request.allowsCellularAccess = allowsCellularAccess(forItem: itemId)
                 let task = downloadSession.downloadTask(with: request)
                 task.taskDescription = taskDesc(itemId: itemId, track: trackIndex)
                 task.resume()
@@ -4027,11 +4079,46 @@ enum DownloadPolicyStatus {
     /// honest thing to say is "network". The charging-only setting only gates *starting*
     /// automatic downloads (`autoDownloadPolicyAllows`), never one already running, so
     /// there is no "Waiting for power" for an active row.
-    nonisolated static func waitReason(isPaused: Bool, wifiOnly: Bool, isConnected: Bool, isOnWiFi: Bool) -> DownloadWaitReason? {
+    nonisolated static func waitReason(isPaused: Bool, wifiOnly: Bool, isConnected: Bool, isOnWiFi: Bool,
+                                       cellularOverridden: Bool = false) -> DownloadWaitReason? {
         guard !isPaused else { return nil }
         if !isConnected { return .network }
-        if wifiOnly && !isOnWiFi { return .wifi }
+        if wifiOnly && !cellularOverridden && !isOnWiFi { return .wifi }
         return nil
+    }
+
+    /// D1 (REVIEW 2026-11-11): whether a request made now will sit waiting for Wi-Fi (true)
+    /// rather than start moving bytes. The same condition `waitReason` turns into the row's
+    /// "Waiting for Wi-Fi" status, so the row says so from the first moment.
+    nonisolated static func waitsForWiFi(wifiOnly: Bool, onWiFi: Bool, cellularOverridden: Bool) -> Bool {
+        wifiOnly && !cellularOverridden && !onWiFi
+    }
+
+    /// D1: the `allowsCellularAccess` value for a track request. Wi-Fi-only disallows
+    /// cellular unless the user chose "Download Now" for this one book.
+    nonisolated static func allowsCellularAccess(wifiOnly: Bool, cellularOverridden: Bool) -> Bool {
+        !wifiOnly || cellularOverridden
+    }
+
+    /// D1: the informational toast shown when a request is accepted but will wait.
+    nonisolated static var willDownloadOnWiFiMessage: String {
+        String(localized: "Will download on Wi\u{2011}Fi.", comment: "Toast: a download was accepted while Wi-Fi-only is on and the device isn't on Wi-Fi")
+    }
+
+    /// D1: "Download Now on Mobile Data (412 MB)"; without a known size, no parenthetical.
+    nonisolated static func downloadNowTitle(bytes: Int64) -> String {
+        guard bytes > 0 else { return String(localized: "Download Now on Mobile Data", comment: "Downloads row action: override Wi-Fi-only for one book") }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return String(localized: "Download Now on Mobile Data (\(size))", comment: "Downloads row action: override Wi-Fi-only for one book. %@ is a file size such as 412 MB")
+    }
+
+    /// D1: the confirmation message that names the size before using mobile data.
+    nonisolated static func downloadNowMessage(title: String, bytes: Int64) -> String {
+        guard bytes > 0 else {
+            return String(localized: "This will use mobile data to download \u{201C}\(title)\u{201D}, even though Wi-Fi-only is on.", comment: "Confirmation. %@ is the book title")
+        }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return String(localized: "This will use about \(size) of mobile data to download \u{201C}\(title)\u{201D}, even though Wi-Fi-only is on.", comment: "Confirmation. First %@ is a file size such as 412 MB, second is the book title")
     }
 
     /// Polish pass (DL-3): the single source of the auto-download gates (Wi-Fi, then power).
@@ -4129,6 +4216,10 @@ final class DownloadTask: Identifiable {
     /// Polish pass (DL-2): in-memory byte counts for "120 MB of 1.4 GB" (0 = unknown),
     /// published together with `progress` so they share its 0.25 s throttle.
     var bytesWritten: Int64 = 0
+    /// D1: the server-reported total (0 = unknown), set at start so "Download Now on Mobile Data (412 MB)" can name a size before any track reports.
+    var knownSizeBytes: Int64 = 0
+    /// D1: the user chose "Download Now" for this book, so its tasks may use mobile data. Observable mirror of the manager's lock-protected set.
+    var cellularOverride = false
     var bytesExpected: Int64 = 0
     /// Polish pass (DL-2): smoothed bytes/second and the sample bookkeeping behind it.
     /// Ignored by Observation: only the published `etaSeconds` is view state.
@@ -4172,11 +4263,10 @@ struct BulkDownloadPlan: Equatable {
         let reason: Reason
     }
     enum Refusal: Equatable {
-        case wifiOnlyBlocked, insufficientSpace, nothingToDownload
+        case insufficientSpace, nothingToDownload
 
         var message: String {
             switch self {
-            case .wifiOnlyBlocked: return String(localized: "Wi-Fi-only downloads are on. Connect to Wi-Fi, or turn this off in Settings.")
             case .insufficientSpace: return String(localized: "Not enough free space for these downloads.")
             case .nothingToDownload: return String(localized: "Nothing to download. These books are already downloaded or downloading.")
             }
@@ -4192,11 +4282,15 @@ struct BulkDownloadPlan: Equatable {
     let unknownSizeCount: Int
     let wifiOnly: Bool
     let refusal: Refusal?
+    /// D1: true when Wi-Fi-only is on and the device isn't on Wi-Fi: the books are queued
+    /// and wait, rather than the whole selection being refused.
+    var waitsForWiFi: Bool = false
 
     static func == (lhs: BulkDownloadPlan, rhs: BulkDownloadPlan) -> Bool {
         lhs.toDownload.map(\.id) == rhs.toDownload.map(\.id) && lhs.skipped == rhs.skipped
             && lhs.totalKnownBytes == rhs.totalKnownBytes && lhs.unknownSizeCount == rhs.unknownSizeCount
             && lhs.wifiOnly == rhs.wifiOnly && lhs.refusal == rhs.refusal
+            && lhs.waitsForWiFi == rhs.waitsForWiFi
     }
 
     var needsConfirmation: Bool { toDownload.count > Self.confirmationThreshold }

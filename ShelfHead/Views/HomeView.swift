@@ -795,7 +795,15 @@ struct HomeView: View {
             // UX-4 audit (Batch 355): the library error alert moved to `MainTabView`, its one
             // owner; this tab and Library both used to present it.
             .sheet(isPresented: $showCustomize) {
-                HomeCustomizeSheet(availableSections: customizableSections, hidden: $hiddenSections, order: $sectionOrder)
+                HomeCustomizeSheet(availableSections: customizableSections, hidden: $hiddenSections, order: $sectionOrder,
+                                   moreShelves: HomeMoreShelves.rows(releaseRadarEnabled: releaseRadarEnabled,
+                                                                     releaseRadarHasEntries: !ReleaseRadarViewModel.shared.entries.isEmpty,
+                                                                     isInHousehold: HouseholdStore.shared.isInHousehold,
+                                                                     isKidProfile: KidProfileStore.standard.isKid(AccountStore.currentAccountId)),
+                                   openSettings: { page in
+                                       showCustomize = false
+                                       tabRouter.requestedSettingsPage = page
+                                   })
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -1993,6 +2001,10 @@ struct HomeCustomizeSheet: View {
     let availableSections: [(key: String, title: String)]
     @Binding var hidden: Set<String>
     @Binding var order: [String]
+    /// N1 (REVIEW 2026-11-11): the opt-in shelves, which `availableSections` leaves out while they have no content.
+    var moreShelves: [HomeMoreShelves.Row] = []
+    /// Dismisses the sheet and opens that Settings page.
+    var openSettings: (SettingsPage) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @State private var rows: [(key: String, title: String)] = []
 
@@ -2023,6 +2035,38 @@ struct HomeCustomizeSheet: View {
                             .foregroundStyle(Color.shelfMuted)
                     }
                     .listRowBackground(Color.shelfCard)
+                    if !moreShelves.isEmpty {
+                        Section {
+                            ForEach(moreShelves) { shelf in
+                                Button {
+                                    Haptics.selection()
+                                    openSettings(shelf.settingsPage)
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Typo.rowTitle(Text(shelf.title)).foregroundStyle(Color.shelfCream)
+                                            Typo.supporting(Text(shelf.stateText)).foregroundStyle(Color.shelfMuted)
+                                        }
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "chevron.right")
+                                            .font(.footnote.weight(.semibold))
+                                            .foregroundStyle(Color.shelfMuted)
+                                            .accessibilityHidden(true)
+                                    }
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint(shelf.hint)
+                            }
+                        } header: {
+                            RetroSectionHeader(title: LocalizedStringResource("More Shelves", comment: "Section header in the Customize Home sheet: opt-in shelves that only appear once switched on"))
+                        } footer: {
+                            Text("These shelves are off until you set them up. Release Radar asks Audible\u{2019}s public catalogue about series names in your library.")
+                                .foregroundStyle(Color.shelfMuted)
+                        }
+                        .listRowBackground(Color.shelfCard)
+                    }
                 }
                 .scrollContentBackground(.hidden)
                 // Reorder handles only render while a List is in edit mode; there's no
@@ -2057,6 +2101,56 @@ struct HomeCustomizeSheet: View {
         order = newOrder
         SettingsStore.setHomeSectionOrder(newOrder)
         Haptics.selection()
+    }
+}
+
+// MARK: - More Shelves (N1, REVIEW 2026-11-11)
+
+/// The opt-in Home shelves that Customise Home's main list can't show while they are empty, and
+/// where each is switched on. Pure so `Top10HomeShelvesTests` can pin it. Release Radar needs more
+/// than a switch (it runs a check against Audible), and Household needs an iCloud group, so each
+/// row opens its Settings page rather than carrying a bare toggle.
+enum HomeMoreShelves {
+    struct Row: Identifiable, Equatable {
+        enum Kind: Equatable { case releaseRadar, household }
+        let kind: Kind
+        let stateText: String
+        var id: Kind { kind }
+        var settingsPage: SettingsPage { kind == .releaseRadar ? .releaseRadar : .household }
+        var title: String {
+            switch kind {
+            case .releaseRadar: return String(localized: "Release Radar", comment: "Home shelf title: upcoming books in the user's series")
+            case .household: return String(localized: "Household", comment: "Home shelf title: what household members are listening to and recommend")
+            }
+        }
+        var hint: String {
+            switch kind {
+            case .releaseRadar: return String(localized: "Opens Release Radar settings", comment: "VoiceOver hint on a Customise Home row")
+            case .household: return String(localized: "Opens Household settings", comment: "VoiceOver hint on a Customise Home row")
+            }
+        }
+    }
+
+    /// Release Radar is always listed (Off, On with nothing yet, or On and shown above). Household is
+    /// listed only while there is no household to show (once in one it is in the main list), and never
+    /// on a kid profile, where the shelf is unavailable.
+    static func rows(releaseRadarEnabled: Bool, releaseRadarHasEntries: Bool,
+                     isInHousehold: Bool, isKidProfile: Bool) -> [Row] {
+        var out: [Row] = []
+        let radarState: String
+        if !releaseRadarEnabled {
+            radarState = String(localized: "Off \u{00B7} Set up in Settings", comment: "Customise Home: Release Radar is off")
+        } else if releaseRadarHasEntries {
+            radarState = String(localized: "On \u{00B7} Shown above", comment: "Customise Home: Release Radar is on and has a shelf")
+        } else {
+            radarState = String(localized: "On \u{00B7} Nothing to show yet", comment: "Customise Home: Release Radar is on but found nothing")
+        }
+        out.append(Row(kind: .releaseRadar, stateText: radarState))
+        if !isInHousehold && !isKidProfile {
+            out.append(Row(kind: .household,
+                           stateText: String(localized: "Join or create a household in Settings", comment: "Customise Home: Household shelf needs a household")))
+        }
+        return out
     }
 }
 

@@ -35,6 +35,7 @@ struct BookDetailView: View {
     var isPresentedModally: Bool = false
     @Environment(PlayerViewModel.self) private var playerViewModel
     @Environment(LibraryViewModel.self) private var libraryViewModel
+    @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.bookDetailSheetDismiss) private var inheritedSheetDismiss
     // HIG audit 2026-09-17 M5: drives the metadata grid's accessibility-size layout below.
@@ -55,6 +56,10 @@ struct BookDetailView: View {
     /// Critique 2026-10-06 (harden): the bookmark fetch failed (it used to look like "no bookmarks").
     @State private var bookmarksLoadFailed = false
     @State private var isOnScreen = false
+    @State private var episodeFilter: PodcastEpisodeList.Filter = .all
+    @State private var episodeOrder: PodcastEpisodeList.Order = .newestFirst
+    /// Played state just set from an episode's context menu, until the progress map catches up.
+    @State private var episodePlayedOverride: [String: Bool] = [:]
     @State private var detailedItem: LibraryItem?
     // Design review (14 Aug 2026), item 4: chapters/bookmarks used to expand inline in
     // the scroll body — replaced with a compact row that opens a sheet (see
@@ -109,6 +114,7 @@ struct BookDetailView: View {
     @State private var showAskBook = false
     /// Batch 454/455: Recommend to… and Book Club (both need a household).
     @State private var showRecommend = false
+    @State private var addToListKind: AddToListSheet.Kind?
     @State private var showBookClub = false
     @State private var householdStore = HouseholdStore.shared
 
@@ -243,6 +249,22 @@ struct BookDetailView: View {
                 showRecommend = true
             } label: {
                 Label("Recommend to…", systemImage: "person.2")
+            }
+        }
+
+        // REVIEW 2026-11-11 F2: playlists are the user's own; collections need the server's update permission.
+        if ListEditing.offersAddToPlaylist(isPodcast: displayItem.isPodcast) {
+            Button {
+                addToListKind = .playlist
+            } label: {
+                Label("Add to Playlist…", systemImage: "music.note.list")
+            }
+        }
+        if ListEditing.offersAddToCollection(user: authViewModel.currentUser, isPodcast: displayItem.isPodcast) {
+            Button {
+                addToListKind = .collection
+            } label: {
+                Label("Add to Collection…", systemImage: "rectangle.stack.badge.plus")
             }
         }
 
@@ -580,6 +602,11 @@ struct BookDetailView: View {
             AskBookSheet(itemId: displayItem.id, title: displayItem.title, author: displayItem.authorName,
                          onSeek: { time, reason in jumpFromSheet { playerViewModel.seek(to: time, reason: reason) } },
                          chapters: displayChapters)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $addToListKind) { kind in
+            AddToListSheet(item: displayItem, kind: kind)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -1772,28 +1799,86 @@ struct BookDetailView: View {
     /// the scope note in `CHANGES_IMPLEMENTED.md`'s podcast-support entry for why
     /// per-episode downloads aren't part of this pass.
     private var episodesSection: some View {
-        let episodes = (displayItem.media?.episodes ?? []).sorted {
-            ($0.publishedAt ?? 0) > ($1.publishedAt ?? 0)
-        }
+        // L3: Unplayed/All and Newest/Oldest (view-local, like Apple Podcasts' show page).
+        let episodes = PodcastEpisodeList.visible(
+            displayItem.media?.episodes ?? [], filter: episodeFilter, order: episodeOrder,
+            isFinished: { isEpisodeFinished($0) })
+        let total = displayItem.media?.episodes?.count ?? 0
         return VStack(alignment: .leading, spacing: 12) {
-            Typo.cardTitle(Text("Episodes (\(episodes.count))"))
-                .foregroundStyle(Color.shelfCream)
+            HStack {
+                Typo.cardTitle(Text("Episodes (\(episodes.count))"))
+                    .foregroundStyle(Color.shelfCream)
+                Spacer(minLength: 0)
+                if total > 0 {
+                    Menu {
+                        Picker("Show", selection: $episodeFilter) {
+                            Text("Unplayed").tag(PodcastEpisodeList.Filter.unplayed)
+                            Text("All Episodes").tag(PodcastEpisodeList.Filter.all)
+                        }
+                        Picker("Order", selection: $episodeOrder) {
+                            Text("Newest First").tag(PodcastEpisodeList.Order.newestFirst)
+                            Text("Oldest First").tag(PodcastEpisodeList.Order.oldestFirst)
+                        }
+                    } label: {
+                        Label("Filter and Sort Episodes", systemImage: "line.3.horizontal.decrease.circle")
+                            .labelStyle(.iconOnly)
+                            .font(.title3)
+                            .foregroundStyle(Color.shelfAmberText)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                }
+            }
 
             if episodes.isEmpty {
-                Typo.metadata(Text("No episodes found for this podcast."))
+                Typo.metadata(Text(total == 0 ? "No episodes found for this podcast."
+                                              : "No unplayed episodes."))
                     .foregroundStyle(Color.shelfMuted)
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(episodes) { episode in
+                        let finished = isEpisodeFinished(episode)
                         PodcastEpisodeRow(
                             episode: episode,
-                            progress: libraryViewModel.progressFor(episodeId: episode.id)
+                            progress: libraryViewModel.progressFor(episodeId: episode.id),
+                            isFinishedOverride: finished,
+                            isNowPlaying: playerViewModel.currentBook?.id == displayItem.id
+                                && playerViewModel.currentEpisode?.id == episode.id
                         ) {
                             Haptics.selection()
+                            // UI-10 / L3: the player is an overlay; close a presenting sheet first.
+                            closeSheetIfModal()
                             // Critique 2026-10-06 (harden): an episode tap that replaces the
                             // loaded book (or another episode) offers "Playing instead of …
                             // Undo"; the pinned bar already names what it replaces.
                             Task { await playerViewModel.startPlaybackOfferingUndo(for: displayItem, episode: episode) }
+                        }
+                        // L3: mark played/unplayed. Play Next / Add to Up Next queue this episode
+                        // (an Up Next entry can carry one, so two episodes of a show can be queued).
+                        .contextMenu {
+                            if !(playerViewModel.currentBook?.id == displayItem.id
+                                 && playerViewModel.currentEpisode?.id == episode.id) {
+                                Button {
+                                    Haptics.selection()
+                                    playerViewModel.playNext(displayItem, episode: episode)
+                                } label: {
+                                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                                }
+                                Button {
+                                    Haptics.selection()
+                                    playerViewModel.addToQueue(displayItem, episode: episode)
+                                } label: {
+                                    Label("Add to Up Next", systemImage: "text.badge.plus")
+                                }
+                            }
+                            Button {
+                                setEpisode(episode, finished: !finished)
+                            } label: {
+                                if finished {
+                                    Label("Mark as Unplayed", systemImage: "circle")
+                                } else {
+                                    Label("Mark as Played", systemImage: "checkmark.circle")
+                                }
+                            }
                         }
                         if episode.id != episodes.last?.id {
                             Divider().background(Color.shelfSurface)
@@ -1804,6 +1889,28 @@ struct BookDetailView: View {
         }
         .padding(16)
         .shelfCardStyle()
+    }
+
+    /// Server progress, overridden locally right after a mark so the row updates at once.
+    private func isEpisodeFinished(_ episode: PodcastEpisode) -> Bool {
+        episodePlayedOverride[episode.id] ?? libraryViewModel.progressFor(episodeId: episode.id)?.isFinished ?? false
+    }
+
+    private func setEpisode(_ episode: PodcastEpisode, finished: Bool) {
+        let itemId = displayItem.id
+        episodePlayedOverride[episode.id] = finished
+        Haptics.selection()
+        Task {
+            do {
+                if let progress = try await AudiobookshelfAPI.shared.setEpisodeFinished(
+                    itemId: itemId, episodeId: episode.id, isFinished: finished) {
+                    libraryViewModel.applyRemoteProgress(progress)
+                }
+            } catch {
+                episodePlayedOverride[episode.id] = nil
+                ShelfLog.error(.sync, "Mark episode \(finished ? "played" : "unplayed") failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Chapters (design review, 14 Aug 2026, item 4)
@@ -2800,12 +2907,50 @@ struct ChapterRow: View {
     }
 }
 
-//// One row in a podcast's episode list — title, published date, duration, and a
+/// L3: pure decisions for a show's episode list, pinned by `Top10PodcastShowTests`.
+enum PodcastEpisodeList {
+    enum Filter: Hashable { case unplayed, all }
+    enum Order: Hashable { case newestFirst, oldestFirst }
+
+    static func visible(_ episodes: [PodcastEpisode], filter: Filter, order: Order,
+                        isFinished: (PodcastEpisode) -> Bool) -> [PodcastEpisode] {
+        let kept = filter == .unplayed ? episodes.filter { !isFinished($0) } : episodes
+        // Stable on ties: a missing date sorts as oldest.
+        return kept.enumerated().sorted { l, r in
+            let a = l.element.publishedAt ?? 0, b = r.element.publishedAt ?? 0
+            if a != b { return order == .newestFirst ? a > b : a < b }
+            return l.offset < r.offset
+        }.map(\.element)
+    }
+
+    /// Show notes are HTML; the row wants plain text. Nil when nothing is left.
+    static func plainDescription(_ html: String?) -> String? {
+        guard let html else { return nil }
+        // A cheap tag strip, not `strippingHTML`: that builds an NSAttributedString (WebKit)
+        // and would run per row in a list of hundreds.
+        var text = String(html.prefix(3000))
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        for (entity, char) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+                               ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")] {
+            text = text.replacingOccurrences(of: entity, with: char)
+        }
+        text = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return text.isEmpty ? nil : text
+    }
+}
+
+/// One row in a podcast's episode list — title, published date, duration, and a
 /// progress bar when the episode has been started. Tapping plays it.
 struct PodcastEpisodeRow: View {
     let episode: PodcastEpisode
     let progress: MediaProgress?
+    /// L3: played state after a local mark (nil = trust `progress`).
+    var isFinishedOverride: Bool? = nil
+    /// L3: this episode is the one loaded in the player.
+    var isNowPlaying: Bool = false
     let onTap: () -> Void
+
+    private var finished: Bool { isFinishedOverride ?? progress?.isFinished ?? false }
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -2817,9 +2962,15 @@ struct PodcastEpisodeRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: (progress?.isFinished ?? false) ? "checkmark.circle.fill" : "play.circle")
-                    .foregroundStyle((progress?.isFinished ?? false) ? Color.shelfMuted : Color.shelfAmberText)
-                    .font(.title3)
+                if isNowPlaying {
+                    // L3: the same equalizer the app uses for now playing elsewhere.
+                    EqualizerBadge(animating: false, color: Color.shelfAmber)
+                        .frame(width: 24, height: 24)
+                } else {
+                    Image(systemName: finished ? "checkmark.circle.fill" : "play.circle")
+                        .foregroundStyle(finished ? Color.shelfMuted : Color.shelfAmberText)
+                        .font(.title3)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Typo.rowTitle(episode.title.map { Text(verbatim: $0) } ?? Text("Untitled episode"))
                         .foregroundStyle(Color.shelfCream)
@@ -2834,6 +2985,11 @@ struct PodcastEpisodeRow: View {
                         }
                     })
                     .foregroundStyle(Color.shelfMuted)
+                    if let blurb = PodcastEpisodeList.plainDescription(episode.description ?? episode.subtitle) {
+                        Typo.metadata(Text(verbatim: blurb))
+                            .foregroundStyle(Color.shelfMuted)
+                            .lineLimit(2)
+                    }
                     if let pct = progress?.progress, pct > 0, pct < 0.99 {
                         ProgressView(value: min(pct, 1))
                             .tint(Color.shelfAmber)
@@ -2848,7 +3004,7 @@ struct PodcastEpisodeRow: View {
         // played state the row shows are read too.
         .accessibilityLabel(Self.accessibilityLabel(
             title: episode.title, date: episode.publishedDate.map { Self.dateFormatter.string(from: $0) },
-            duration: episode.duration, progress: progress?.progress, isFinished: progress?.isFinished ?? false))
+            duration: episode.duration, progress: progress?.progress, isFinished: finished))
         .accessibilityHint("Plays this episode")
     }
 

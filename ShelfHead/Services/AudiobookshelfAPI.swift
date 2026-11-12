@@ -1092,7 +1092,8 @@ actor AudiobookshelfAPI {
     func search(libraryId: String, query: String) async throws -> [LibraryItem] {
         // Batch 490 (REVIEW 2026-11-11 L1): a thin wrapper over the grouped search so CarPlay,
         // Siri and the view model keep their book-only call shape.
-        try await searchGrouped(libraryId: libraryId, query: query).books
+        let groups = try await searchGrouped(libraryId: libraryId, query: query)
+        return groups.books + groups.podcasts   // a library has one kind; the other is empty
     }
 
     /// Batch 490 (REVIEW 2026-11-11 L1): server cap for one search. ABS's
@@ -1119,23 +1120,79 @@ actor AudiobookshelfAPI {
             let name: String
             let numBooks: Int?
         }
+        /// Batch 492 (REVIEW 2026-11-11 L1): a genre or tag match, `{name, numItems}`.
+        struct Facet: Equatable, Hashable {
+            let name: String
+            let numItems: Int?
+        }
         var books: [LibraryItem] = []
         var authors: [Person] = []
         var narrators: [Person] = []
+        var genres: [Facet] = []
+        var tags: [Facet] = []
+        /// Batch 492 (REVIEW 2026-11-11 L2): a podcast library's `podcast` group (shows).
+        /// Decoded as `[{libraryItem}]` like `book`; the server source
+        /// (`libraryItemsPodcastFilters.search`) builds `itemMatches` of `{libraryItem}`.
+        var podcasts: [LibraryItem] = []
+        /// Batch 493: a podcast library's `episodes` group. The server
+        /// (`libraryItemsPodcastFilters.search`) sends `{libraryItem}` with the matching episode
+        /// as `libraryItem.recentEpisode`; an entry without a decodable episode is dropped alone.
+        var episodes: [EpisodeMatch] = []
+
+        struct EpisodeMatch: Identifiable {
+            let item: LibraryItem
+            let episode: PodcastEpisode
+            var id: String { "\(item.id)/\(episode.id)" }
+        }
 
         nonisolated static func decode(_ data: Data) throws -> SearchGroups {
             struct BookResult: Decodable { let libraryItem: LibraryItem }
             struct SeriesResult: Decodable { let books: LossyArray<LibraryItem>? }
+            struct EpisodeResult: Decodable {
+                let match: EpisodeMatch
+                enum CodingKeys: String, CodingKey { case libraryItem }
+                enum ItemKeys: String, CodingKey { case recentEpisode }
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    let item = try c.decode(LibraryItem.self, forKey: .libraryItem)
+                    let ic = try c.nestedContainer(keyedBy: ItemKeys.self, forKey: .libraryItem)
+                    let episode = try ic.decode(PodcastEpisode.self, forKey: .recentEpisode)
+                    match = EpisodeMatch(item: item, episode: episode)
+                }
+            }
             struct PersonResult: Decodable {
                 let id: String?
                 let name: String?
                 let numBooks: Int?
             }
+            struct LabelResult: Decodable {
+                let name: String?
+                let numItems: Int?
+            }
             struct Response: Decodable {
+                let podcast: LossyArray<BookResult>?
+                let episodes: LossyArray<EpisodeResult>?
+                let genres: LossyArray<LabelResult>?
+                let tags: LossyArray<LabelResult>?
                 let book: LossyArray<BookResult>?
                 let series: LossyArray<SeriesResult>?
                 let authors: LossyArray<PersonResult>?
                 let narrators: LossyArray<PersonResult>?
+
+                enum CodingKeys: String, CodingKey { case podcast, episodes, genres, tags, book, series, authors, narrators }
+                // Batch 492: each group decodes on its own, so one group of an unexpected
+                // shape (not an array) loses only itself.
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    podcast = try? c.decodeIfPresent(LossyArray<BookResult>.self, forKey: .podcast)
+                    episodes = try? c.decodeIfPresent(LossyArray<EpisodeResult>.self, forKey: .episodes)
+                    genres = try? c.decodeIfPresent(LossyArray<LabelResult>.self, forKey: .genres)
+                    tags = try? c.decodeIfPresent(LossyArray<LabelResult>.self, forKey: .tags)
+                    book = try? c.decodeIfPresent(LossyArray<BookResult>.self, forKey: .book)
+                    series = try? c.decodeIfPresent(LossyArray<SeriesResult>.self, forKey: .series)
+                    authors = try? c.decodeIfPresent(LossyArray<PersonResult>.self, forKey: .authors)
+                    narrators = try? c.decodeIfPresent(LossyArray<PersonResult>.self, forKey: .narrators)
+                }
             }
             let response = try JSONDecoder().decode(Response.self, from: data)
 
@@ -1156,9 +1213,21 @@ actor AudiobookshelfAPI {
                     return Person(id: p.id, name: name, numBooks: p.numBooks)
                 }
             }
+            func labels(_ list: [LabelResult]?) -> [Facet] {
+                var seenNames = Set<String>()
+                return (list ?? []).compactMap { l in
+                    let name = (l.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty, seenNames.insert(name.lowercased()).inserted else { return nil }
+                    return Facet(name: name, numItems: l.numItems)
+                }
+            }
             return SearchGroups(books: books,
                                 authors: people(response.authors?.elements, needsId: true),
-                                narrators: people(response.narrators?.elements, needsId: false))
+                                narrators: people(response.narrators?.elements, needsId: false),
+                                genres: labels(response.genres?.elements),
+                                tags: labels(response.tags?.elements),
+                                podcasts: response.podcast?.elements.map(\.libraryItem) ?? [],
+                                episodes: response.episodes?.elements.map(\.match) ?? [])
         }
     }
 

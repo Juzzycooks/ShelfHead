@@ -90,6 +90,16 @@ struct FeaturesTipsView: View {
             Feature(id: SettingsRow.featureReadAlong, icon: "book", title: "Read Along",
                     detail: "Follow the book’s EPUB as it plays, with the sentence being read highlighted. For books with an EPUB and a transcript.",
                     requirement: .iOS26),
+            // Batch 493 (REVIEW 2026-11-11 N3): Phase 1–3 features that had no row. The two
+            // linked rows use plain ids: their pages are already in Settings search.
+            Feature(id: SettingsRow.featureAutoChapters, icon: "list.bullet.indent", title: "Suggested chapters",
+                    detail: "For a book with no chapters, or one very long chapter, tap Suggest Chapters… at the foot of the player’s chapter list. Needs the book downloaded."),
+            Feature(id: "features.releaseRadar", icon: "calendar.badge.clock", title: "Release Radar",
+                    detail: "Opt in to hear when the next book in a series you follow is announced.",
+                    settingsPage: .releaseRadar, settingsRow: SettingsRow.releaseRadar),
+            Feature(id: "features.readingSites", icon: "books.vertical.fill", title: "Hardcover and reading lists",
+                    detail: "Sync with Hardcover, or import and export Goodreads and StoryGraph lists.",
+                    settingsPage: .readingSites, settingsRow: SettingsRow.readingSites),
         ]),
         FeatureGroup(id: "system", title: "Around iOS", features: [
             Feature(id: SettingsRow.featureWidget, icon: "apps.iphone.badge.plus", title: "Home Screen widgets",
@@ -116,6 +126,8 @@ struct FeaturesTipsView: View {
                     detail: "Every book you’ve finished, as a wall of tapes. Under Stats › More."),
             Feature(id: SettingsRow.featurePassport, icon: "airplane.departure", title: "Listening Passport",
                     detail: "Stamps for the genres, narrators and decades you’ve finished. Under Stats › More."),
+            Feature(id: SettingsRow.featureYearInReview, icon: "calendar", title: "Year in Review",
+                    detail: "Your year of listening in numbers, with cards to share. Open it from the Stats tab."),
             Feature(id: SettingsRow.featureDeckSkins, icon: "paintpalette", title: "Deck skins",
                     detail: "Restyle the player’s tape deck.",
                     settingsPage: .appearance, settingsRow: SettingsRow.deckSkin),
@@ -287,31 +299,27 @@ struct WhatsNewSheet: View {
     }
 
     /// The version these notes describe. Update at each release cut, with `items`.
-    private let version = "7.6"
+    private let version = "7.7"
 
     // Update this list at each release cut, from that release's `WhatsNew-<version>.txt`
-    // (plain user-facing language; no file names). Currently WhatsNew-7.6.txt.
+    // (plain user-facing language; no file names). Currently WhatsNew-7.7.txt.
     private let items: [Item] = [
-        Item(id: 1, title: "Search finds more",
-             detail: "Library search now matches authors and narrators, shows up to 50 books instead of 12, and remembers your recent searches."),
-        Item(id: 2, title: "Tidy Continue Listening",
-             detail: "Touch and hold a book you’ve stopped listening to and remove it from Continue Listening. You can do the same for a series, and undo either."),
-        Item(id: 3, title: "Sleep timer",
-             detail: "Set any length up to three hours, add one more chapter to an end-of-chapter timer, and jump back to where you were when you set it."),
-        Item(id: 4, title: "Player",
-             detail: "Driving Mode keeps the screen on, the player works in landscape, Up Next is in the player’s menu, and the chapter list shows what you’ve played."),
-        Item(id: 5, title: "Signing in",
-             detail: "A reminder stays on screen when your session ends, single sign-on errors name the server setting to change, and the sign-in page shows your server’s version."),
-        Item(id: 6, title: "Shortcuts and links",
-             detail: "Touch and hold the app icon for Resume, Downloads and Search. New Control Centre controls skip back, skip forward and add a bookmark."),
-        Item(id: 7, title: "CarPlay",
-             detail: "Lists page both ways, Home follows the shelves you chose on iPhone, and keyboard search appears where the system supports it."),
-        Item(id: 8, title: "Apple Watch",
-             detail: "Double Tap plays and pauses. Choose a storage limit, download on Wi-Fi only, add 15 minutes to a sleep timer, and skip chapters from your headphones."),
-        Item(id: 9, title: "Listening",
-             detail: "See your most listened books and your library’s totals, set a books-this-year goal, and export your listening history."),
-        Item(id: 10, title: "Reading",
-             detail: "PDFs gain Contents and Go to Page. EPUBs gain Sepia and Black pages and relaxed line spacing.")
+        Item(id: 1, title: "Podcasts",
+             detail: "Podcast libraries talk about shows, and search finds episodes. Filter a show to unplayed, mark episodes played, add them to Up Next, and upload episodes into a show."),
+        Item(id: 2, title: "Playlists and collections",
+             detail: "Add a book to a playlist or collection from its menu, or start a new one. Rename, reorder, remove items or delete from the list’s page."),
+        Item(id: 3, title: "Wi‑Fi only downloads",
+             detail: "A download you start away from Wi‑Fi now waits for it instead of being refused. Need one book now? Download just that one over mobile data."),
+        Item(id: 4, title: "Search",
+             detail: "Genres and tags show up in results, and every group has Show All."),
+        Item(id: 5, title: "Easier to find",
+             detail: "The player’s menu gathers Search, Previously On, X‑Ray and Ask the Book under Explore the Story, and Settings is regrouped into four sections."),
+        Item(id: 6, title: "Apple Watch",
+             detail: "Play on This Watch switches to the watch’s own player, and the watch tells you when your iPhone is out of range."),
+        Item(id: 7, title: "Portrait again",
+             detail: "The app stays in portrait. Driving Mode still turns sideways."),
+        Item(id: 8, title: "Feedback",
+             detail: "Settings › About has Send Feedback and Share Diagnostics. The report leaves out your server address and sign-in details.")
     ]
 
     var body: some View {

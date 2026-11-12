@@ -4,6 +4,26 @@
     "" : {
 
     },
+    "Play on This Watch" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在此手表上播放"
+          }
+        }
+      }
+    },
+    "iPhone out of range" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone 不在范围内"
+          }
+        }
+      }
+    },
     "“%@” has different progress here than on the server — this Watch is at %@, the server is at %@. Which one should win?" : {
       "localizations" : {
         "en" : {

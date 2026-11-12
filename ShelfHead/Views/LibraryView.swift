@@ -69,6 +69,11 @@ struct LibraryView: View {
     /// `LibraryFilterSheet` (below) presented from this flag instead of a `Menu`.
     @State private var showFilterSheet = false
     @State private var showUploadSheet = false
+    @State private var showAllGroup: SearchShowAll?   // Batch 493 (L1): a search group's full list
+    /// N1 (REVIEW 2026-11-11): Mixtapes and Want to Read, offered from the scope menus beside
+    /// Collections and Playlists and pushed on this stack like the other Library destinations.
+    @State private var showMixtapes = false
+    @State private var showWantToRead = false
     // Code review fix (26 August 2026): doc comment said "Non-nil" — leftover from
     // when this was presumably an optional. It's a `Bool`; true while a "B-side"
     // shuffle pick is being handed to the player.
@@ -182,6 +187,9 @@ struct LibraryView: View {
     /// Only the modes this library actually has. A mode is shown while its data is still
     /// loading (unknown) and hidden once it's confirmed empty, so chips don't flicker out.
     private var availableModes: [BrowseMode] {
+        // Batch 492 (REVIEW 2026-11-11 L2): a podcast library is just its list of shows;
+        // Series, Authors, Narrators, Collections and Playlists describe books.
+        if libraryViewModel.isPodcastLibrary { return [.books] }
         var modes: [BrowseMode] = [.books]
         // UI-11 (REVIEW_2026-08-12.md): `seriesLoaded`/`collectionsLoaded`/
         // `playlistsLoaded` are deliberately still set `true` on a genuine load
@@ -393,6 +401,8 @@ struct LibraryView: View {
         switch browseMode {
         case .books where searchScope == .ask:
             return String(localized: "Try \u{201C}a short unplayed mystery\u{201D}", comment: "Library search field prompt, Ask scope")
+        case .books where libraryViewModel.isPodcastLibrary:
+            return String(localized: "Search shows", comment: "Library search field prompt for a podcast library")
         case .books:       return String(localized: "Search books, authors, series…", comment: "Library search field prompt, Books scope")
         case .series:      return String(localized: "Search series", comment: "Library search field prompt, Series scope")
         case .authors:     return String(localized: "Search authors", comment: "Library search field prompt, Authors scope")
@@ -464,7 +474,7 @@ struct LibraryView: View {
                     }
 
                     if browseMode == .books {
-                        activeFilterChips
+                        if !libraryViewModel.isPodcastLibrary { activeFilterChips }   // Batch 492 (L2): no filters for shows
                         booksCountLine
                     }
 
@@ -555,7 +565,7 @@ struct LibraryView: View {
             // on the `List`), and it's a `.background` rather than `.ignoresSafeArea()`
             // on the fill above so the grid keeps the bottom inset the note above is about.
             .background(Color.shelfBackground.ignoresSafeArea())
-            .libraryScopeBar(enabled: usesScopeBar) { browseModeSwitcher }
+            .libraryScopeBar(enabled: usesScopeBar && !libraryViewModel.isPodcastLibrary) { browseModeSwitcher }
             // Reverted per user feedback (26 August 2026): Stage 4 had switched this
             // to `browseMode.rawValue` so the principal-toolbar title menu could show
             // the current mode as the visible nav title. With that menu gone (see
@@ -585,7 +595,7 @@ struct LibraryView: View {
                         prompt: searchPrompt)
             // Batch 445 (HIG Searching: scopes narrow the search; shown while searching). Books only.
             .searchScopes($searchScope) {
-                if browseMode == .books {
+                if browseMode == .books && !libraryViewModel.isPodcastLibrary {   // Batch 492 (L2): Ask reads books
                     Text("Titles").tag(LibrarySearchScope.titles)
                     Text("Ask").tag(LibrarySearchScope.ask)
                 }
@@ -623,6 +633,7 @@ struct LibraryView: View {
                 // its results in `selectLibrary`).
                 searchTask?.cancel()
                 moodSearch.reset()
+                if libraryViewModel.isPodcastLibrary { searchScope = .titles }   // Batch 492 (L2)
                 if !searchText.isEmpty { searchText = "" }
             }
             .onChange(of: searchText) { _, newValue in
@@ -698,10 +709,17 @@ struct LibraryView: View {
                         Button {
                             showUploadSheet = true
                         } label: {
-                            Label("Upload Books", systemImage: "plus")
+                            // Batch 493: a podcast library takes episodes, not books.
+                            if libraryViewModel.isPodcastLibrary {
+                                Label("Upload Episodes", systemImage: "plus")
+                            } else {
+                                Label("Upload Books", systemImage: "plus")
+                            }
                         }
                         .monochromeToolbarItem()
-                        .accessibilityHint("Sends audiobook or ebook files from this device to your server")
+                        .accessibilityHint(libraryViewModel.isPodcastLibrary
+                            ? Text("Sends episode audio files from this device to your server")
+                            : Text("Sends audiobook or ebook files from this device to your server"))
                     }
                 }
                 .shelfVisibilityPriority(.low)
@@ -721,7 +739,7 @@ struct LibraryView: View {
                     } else if browseMode == .books {
                         // Plan §3.2: "Select" is text (HIG Toolbars: edit-like actions aren't
                         // well represented by symbols). Hidden while searching (§11).
-                        if searchText.isEmpty {
+                        if searchText.isEmpty && !libraryViewModel.isPodcastLibrary {
                             Button {
                                 Haptics.selection()
                                 enterSelectMode(with: nil)
@@ -775,7 +793,12 @@ struct LibraryView: View {
                                         Task { await libraryViewModel.selectLibrary(library) }
                                     } label: {
                                         HStack {
-                                            Text(library.name)
+                                            // Batch 492 (REVIEW 2026-11-11 L2): the library's own icon, when it has a match.
+                                            if let symbol = library.symbolName {
+                                                Label(library.name, systemImage: symbol)
+                                            } else {
+                                                Text(library.name)
+                                            }
                                             if library.id == libraryViewModel.selectedLibrary?.id {
                                                 Image(systemName: "checkmark")
                                             }
@@ -806,6 +829,9 @@ struct LibraryView: View {
                 $0.destination(bottomInset: bottomInset)
                     .environment(\.libraryDetailSelection, detailSelection)
             }
+            .navigationDestination(isPresented: $showMixtapes) { MixtapesView() }
+            .navigationDestination(isPresented: $showWantToRead) { LibraryWantToReadDestination() }
+            .navigationDestination(item: $showAllGroup) { SearchShowAllView(group: $0, bottomInset: bottomInset) }
             .toast(message: $shuffleToastMessage, style: .info, bottomInset: bottomInset)
             // L1 (REVIEW_2026-08-20_UI_SECURITY.md): same confirmation
             // `DownloadsView`/`BookDetailView` already show before deleting a download.
@@ -872,7 +898,8 @@ struct LibraryView: View {
     /// Select is offered in Books scope with a result set on screen, never while searching
     /// (plan §11: no select mode in search) or during the first load (§5).
     private var canEnterSelectMode: Bool {
-        browseMode == .books && searchText.isEmpty && !showsBooksSkeleton && booksWindow.total > 0
+        browseMode == .books && !libraryViewModel.isPodcastLibrary   // Batch 492 (L2): bulk actions are book-level
+            && searchText.isEmpty && !showsBooksSkeleton && booksWindow.total > 0
     }
 
     /// `BookContextMenu`'s "Select" hook: enters select mode with that book selected.
@@ -1145,7 +1172,9 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var browseModeSwitcher: some View {
-        if dynamicTypeSize.isAccessibilitySize {
+        if libraryViewModel.isPodcastLibrary {
+            EmptyView()   // Batch 492 (REVIEW 2026-11-11 L2): one scope, so no switcher
+        } else if dynamicTypeSize.isAccessibilitySize {
             browseModeMenu
         } else {
             HStack(spacing: 8) {
@@ -1201,6 +1230,10 @@ struct LibraryView: View {
                     }
                 }
             }
+            if !libraryViewModel.isPodcastLibrary {
+                Divider()
+                libraryExtrasButtons
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: active?.icon ?? "ellipsis.circle")
@@ -1215,8 +1248,26 @@ struct LibraryView: View {
             .contentShape(Rectangle())
         }
         .accessibilityLabel(a11yLabel)
-        .accessibilityHint("Browse Collections or Playlists")
+        .accessibilityHint("Browse Collections or Playlists, or open Mixtapes and Want to Read")
         .accessibilityAddTraits(active != nil ? [.isSelected] : [])
+    }
+
+    /// N1 (REVIEW 2026-11-11): Mixtapes and Want to Read, listed under the scopes in both scope menus.
+    /// They are destinations, not scopes, so they push a screen rather than change `browseMode`.
+    @ViewBuilder
+    private var libraryExtrasButtons: some View {
+        Button {
+            Haptics.selection()
+            showMixtapes = true
+        } label: {
+            Label("Mixtapes", systemImage: "music.note.list")
+        }
+        Button {
+            Haptics.selection()
+            showWantToRead = true
+        } label: {
+            Label("Want to Read", systemImage: "bookmark")
+        }
     }
 
     /// Accessibility-size fallback (`dynamicTypeSize.isAccessibilitySize`) for the
@@ -1237,6 +1288,10 @@ struct LibraryView: View {
                         }
                     }
                 }
+            }
+            if !libraryViewModel.isPodcastLibrary {
+                Divider()
+                libraryExtrasButtons
             }
         } label: {
             HStack(spacing: 6) {
@@ -1360,7 +1415,8 @@ struct LibraryView: View {
                 descending: libraryViewModel.sortDescending,
                 downloadedOnly: libraryViewModel.downloadedOnly,
                 smartFilter: libraryViewModel.smartFilter,
-                offlineFallback: libraryViewModel.itemsSource == .offlineFallback
+                offlineFallback: libraryViewModel.itemsSource == .offlineFallback,
+                isPodcast: libraryViewModel.isPodcastLibrary
             )))
             .monospacedDigit()
             .foregroundStyle(Color.shelfMuted)
@@ -1703,11 +1759,17 @@ struct LibraryView: View {
                 // Batch 490 (REVIEW 2026-11-11 L4): no full swipe — a long swipe used to
                 // replace the loaded book with no chance to stop; now it takes a tap, and
                 // `quickPlayOrPause` offers "Jump back" when it replaces one.
+                // Batch 492 (REVIEW 2026-11-11 L2): Play and Mark as Finished are episode-level, so
+                // a show row has no swipe actions (the same rule as `bookContextMenu`).
                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                    leadingPlayAction(for: item)
+                    if BookContextMenu.offersBookActions(isPodcast: item.isPodcast) {
+                        leadingPlayAction(for: item)
+                    }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    swipeActions(for: item)
+                    if BookContextMenu.offersBookActions(isPodcast: item.isPodcast) {
+                        swipeActions(for: item)
+                    }
                 }
                 .bookContextMenu(item)
         case .placeholder(_, let state):
@@ -2037,11 +2099,13 @@ struct LibraryView: View {
                 EmptyStateView(
                     icon: libraryViewModel.downloadedOnly ? "arrow.down.circle" : "books.vertical",
                     title: noDownloadsAtAll ? "No downloads yet"
-                                            : (filtering ? "Nothing matches" : "No books here"),
+                                            : (filtering ? "Nothing matches"
+                                                         : (libraryViewModel.isPodcastLibrary ? "No shows here" : "No books here")),
                     subtitle: noDownloadsAtAll
                         ? "Books you download appear here for offline listening."
                         : (filtering ? "No books match the current filter."
-                                     : "This library doesn't have any books yet."),
+                                     : (libraryViewModel.isPodcastLibrary ? "This library doesn't have any shows yet."
+                                                                          : "This library doesn't have any books yet.")),
                     actionTitle: filtering ? "Clear Filter" : nil,
                     action: filtering ? {
                         libraryViewModel.downloadedOnly = false
@@ -2053,7 +2117,7 @@ struct LibraryView: View {
             // G5: someone who filtered to "Downloaded" is looking for their offline books;
             // "play a random *unstarted* book" (which also needs the server) is the
             // opposite of that. Every other empty state keeps the offer.
-            if !libraryViewModel.downloadedOnly {
+            if !libraryViewModel.downloadedOnly && !libraryViewModel.isPodcastLibrary {
                 bSideButton
             }
         }
@@ -2191,6 +2255,8 @@ struct LibraryView: View {
         // next keystroke's request runs; the spinner only shows when there's nothing yet.
         let hasAnyResult = !libraryViewModel.searchResults.isEmpty
             || !libraryViewModel.searchAuthors.isEmpty || !libraryViewModel.searchNarrators.isEmpty
+            || !libraryViewModel.searchGenres.isEmpty || !libraryViewModel.searchTags.isEmpty
+            || !libraryViewModel.searchEpisodes.isEmpty
         return LazyVStack(spacing: 0) {
             if libraryViewModel.isSearching && !hasAnyResult {
                 LoadingView("Searching\u{2026}")
@@ -2214,39 +2280,32 @@ struct LibraryView: View {
                     // asks for `AudiobookshelfAPI.searchResultLimit` (50). It still has no
                     // page cursor, so there's no "load more" here.
                 }
-                searchPeopleSection(title: "Authors", people: libraryViewModel.searchAuthors, isAuthor: true)
-                searchPeopleSection(title: "Narrators", people: libraryViewModel.searchNarrators, isAuthor: false)
+                // Batch 493 (L1): ABS passes `limit` straight to the query with no cap, but a
+                // longer list is better narrowed than scrolled, so a full page says so.
+                if SearchGroupDisplay.booksHitLimit(libraryViewModel.searchResults.count, limit: AudiobookshelfAPI.searchResultLimit),
+                   !libraryViewModel.searchIsLocal, !libraryViewModel.searchFailed {
+                    Typo.supporting(Text("Showing the first \(AudiobookshelfAPI.searchResultLimit) matches. Search for something more specific to narrow them."))
+                        .foregroundStyle(Color.shelfMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                }
+                // Batch 493: a podcast library's matching episodes, under the shows.
+                SearchGroupSection(group: .episodes, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { showAllGroup = .episodes }
+                SearchGroupSection(group: .authors, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { showAllGroup = .authors }
+                SearchGroupSection(group: .narrators, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { showAllGroup = .narrators }
+                // Batch 492 (REVIEW 2026-11-11 L1): Genres and Tags open the same filtered books page.
+                SearchGroupSection(group: .genres, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { showAllGroup = .genres }
+                SearchGroupSection(group: .tags, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { showAllGroup = .tags }
             }
         }
         .padding(.horizontal, Space.pageH)
         .padding(.vertical, 12)
         .padding(.bottom, bottomInset)
-    }
-
-    /// Batch 490 (REVIEW 2026-11-11 L1): the author or narrator matches of an online search,
-    /// under the book list. Each row opens that person's books, as Library's Authors and
-    /// Narrators modes do. Hidden when the group is empty (and always for a podcast library).
-    @ViewBuilder
-    private func searchPeopleSection(title: LocalizedStringResource, people: [AudiobookshelfAPI.SearchGroups.Person], isAuthor: Bool) -> some View {
-        if !people.isEmpty {
-            RetroSectionHeader(title: title)
-                .padding(.top, Space.l)
-                .padding(.bottom, 4)
-            ForEach(people, id: \.self) { person in
-                if isAuthor, let id = person.id {
-                    LibraryRouteLink(.author(NamedEntity(id: id, name: person.name)), bottomInset: bottomInset) {
-                        SearchPersonRow(person: person, isAuthor: true)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    LibraryRouteLink(.narrator(person.name), bottomInset: bottomInset) {
-                        SearchPersonRow(person: person, isAuthor: false)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Divider().overlay(Color.shelfMuted.opacity(0.2))
-            }
-        }
     }
 
     /// Batch 490 (REVIEW 2026-11-11 L7): the rows under an empty search field. Books only (the
@@ -2592,7 +2651,8 @@ struct LibraryFilterSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 Picker("Section", selection: $tab) {
-                    ForEach(FilterTab.allCases) { Text($0.title).tag($0) }
+                    // Batch 492 (REVIEW 2026-11-11 L2): a podcast library has no filters to offer.
+                    ForEach(FilterTab.allCases.filter { !($0 == .filters && libraryViewModel.isPodcastLibrary) }) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, Space.pageH)
@@ -2630,7 +2690,7 @@ struct LibraryFilterSheet: View {
                 // exceeds the sheet's height at the current detent, which is a much
                 // better failure mode than clipping content the user can't reach.
                 ScrollView {
-                    switch tab {
+                    switch (tab == .filters && libraryViewModel.isPodcastLibrary) ? .sort : tab {
                     case .filters: filtersTab
                     case .sort: sortTab
                     case .display: displayTab
@@ -2640,6 +2700,7 @@ struct LibraryFilterSheet: View {
                 .scrollIndicators(.hidden)
             }
             .background(Color.shelfBackground.ignoresSafeArea())
+            .onAppear { if libraryViewModel.isPodcastLibrary { tab = .sort } }   // Batch 492 (L2): no Filters tab for shows
             .navigationTitle("Filters & Sort")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2923,14 +2984,14 @@ struct LibraryFilterSheet: View {
                 // (current value + chevron) that expands into a native menu overlay
                 // on tap instead.
                 Picker("Sort by", selection: Binding(
-                    get: { libraryViewModel.sortOption },
+                    get: { LibraryViewModel.effectiveSort(libraryViewModel.sortOption, isPodcast: libraryViewModel.isPodcastLibrary) },
                     set: { newValue in
                         libraryViewModel.sortOption = newValue
                         Task { await libraryViewModel.applySortFilter() }
                     }
                 )) {
-                    ForEach(LibrarySort.allCases) { option in
-                        Text(LibraryLocalQuery.sortOptionLabel(option)).tag(option)
+                    ForEach(LibraryViewModel.sortOptions(isPodcast: libraryViewModel.isPodcastLibrary)) { option in
+                        Text(LibraryViewModel.sortLabel(option, isPodcast: libraryViewModel.isPodcastLibrary)).tag(option)
                     }
                 }
                 .pickerStyle(.menu)
@@ -3156,6 +3217,47 @@ struct SearchPersonRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: [person.name, Self.bookCountText(person.numBooks)].compactMap { $0 }.joined(separator: ", ")))
         .accessibilityHint(isAuthor ? Text("Opens this author’s books") : Text("Opens this narrator’s books"))
+    }
+}
+
+/// Batch 492 (REVIEW 2026-11-11 L1): one genre or tag match in Library search, the same plain
+/// row as `SearchPersonRow`.
+struct SearchFacetRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let facet: AudiobookshelfAPI.SearchGroups.Facet
+    let isTag: Bool
+    /// A podcast library's count would be shows, which the book-count phrase would misname.
+    var countsShows = false
+
+    var body: some View {
+        let count = countsShows ? nil : SearchPersonRow.bookCountText(facet.numItems)
+        HStack(spacing: 12) {
+            Image(systemName: isTag ? "tag.fill" : "theatermasks.fill")
+                .font(.title3)
+                .foregroundStyle(Color.shelfMuted)
+                .frame(width: 56, height: 44)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Typo.rowTitle(Text(verbatim: facet.name))
+                    .foregroundStyle(Color.shelfCream)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                if let count {
+                    Typo.fine(Text(verbatim: count))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.shelfMuted)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: [facet.name, count].compactMap { $0 }.joined(separator: ", ")))
+        .accessibilityHint(isTag ? Text("Opens the books with this tag") : Text("Opens the books in this genre"))
     }
 }
 
@@ -3925,5 +4027,214 @@ enum RecentLibrarySearches {
     static func clear() -> [String] {
         UserDefaults.standard.removeObject(forKey: key)
         return []
+    }
+}
+
+/// N1 (REVIEW 2026-11-11): `WantToReadView` takes the Reading Sites model, which Settings owns as
+/// `@State`; this wrapper gives the Library entry point its own, loaded from the same store.
+private struct LibraryWantToReadDestination: View {
+    @State private var model = ReadingSitesViewModel()
+    var body: some View { WantToReadView(model: model) }
+}
+
+
+// MARK: - Search groups (Batch 493, REVIEW 2026-11-11 L1)
+
+/// Batch 493: the pure decisions behind Library search's grouped sections.
+nonisolated enum SearchGroupDisplay {
+    /// Rows a people, facet or episode group shows inline before "Show All".
+    static let inlineLimit = 5
+
+    /// The rows to show inline, and whether the group has more than that (so it ends with Show All).
+    static func inline<T>(_ items: [T], limit: Int = inlineLimit) -> (shown: [T], hasMore: Bool) {
+        (Array(items.prefix(limit)), items.count > limit)
+    }
+
+    /// A book (or show) list that came back full may have been cut off by the request's limit.
+    static func booksHitLimit(_ count: Int, limit: Int) -> Bool {
+        count >= limit
+    }
+}
+
+/// Batch 493: one grouped section of an online Library search.
+enum SearchShowAll: String, Identifiable, Hashable {
+    case authors, narrators, genres, tags, episodes
+    var id: String { rawValue }
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .authors: return "Authors"
+        case .narrators: return "Narrators"
+        case .genres: return "Genres"
+        case .tags: return "Tags"
+        case .episodes: return "Episodes"
+        }
+    }
+}
+
+/// Batch 493: a group's rows. Inline (`limit` set) it shows the first rows under a header and a
+/// Show All row when there are more; pushed (`limit` nil) it shows every row, no header.
+/// The server returns no page cursor, so Show All lists what the one search already returned.
+struct SearchGroupSection: View {
+    let group: SearchShowAll
+    var limit: Int?
+    let bottomInset: CGFloat
+    var onShowAll: () -> Void = {}
+
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+    @Environment(PlayerViewModel.self) private var playerViewModel
+
+    private var count: Int {
+        switch group {
+        case .authors: return libraryViewModel.searchAuthors.count
+        case .narrators: return libraryViewModel.searchNarrators.count
+        case .genres: return libraryViewModel.searchGenres.count
+        case .tags: return libraryViewModel.searchTags.count
+        case .episodes: return libraryViewModel.searchEpisodes.count
+        }
+    }
+
+    private var showAllLabel: Text {
+        switch group {
+        case .authors: return Text("Show all authors")
+        case .narrators: return Text("Show all narrators")
+        case .genres: return Text("Show all genres")
+        case .tags: return Text("Show all tags")
+        case .episodes: return Text("Show all episodes")
+        }
+    }
+
+    private var cap: Int { limit ?? Int.max }
+
+    var body: some View {
+        if count > 0 {
+            if limit != nil {
+                RetroSectionHeader(title: group.title)
+                    .padding(.top, Space.l)
+                    .padding(.bottom, 4)
+            }
+            rows
+            if limit != nil, count > cap {
+                Button(action: onShowAll) {
+                    HStack {
+                        Text("Show All")
+                            .foregroundStyle(Color.shelfAmberText)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.shelfMuted)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.vertical, 8)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showAllLabel)
+                Divider().overlay(Color.shelfMuted.opacity(0.2))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var rows: some View {
+        switch group {
+        case .authors, .narrators:
+            let isAuthor = group == .authors
+            let all = isAuthor ? libraryViewModel.searchAuthors : libraryViewModel.searchNarrators
+            ForEach(SearchGroupDisplay.inline(all, limit: cap).shown, id: \.self) { person in
+                if isAuthor, let id = person.id {
+                    LibraryRouteLink(.author(NamedEntity(id: id, name: person.name)), bottomInset: bottomInset) {
+                        SearchPersonRow(person: person, isAuthor: true)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    LibraryRouteLink(.narrator(person.name), bottomInset: bottomInset) {
+                        SearchPersonRow(person: person, isAuthor: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Divider().overlay(Color.shelfMuted.opacity(0.2))
+            }
+        case .genres, .tags:
+            let isTag = group == .tags
+            let all = isTag ? libraryViewModel.searchTags : libraryViewModel.searchGenres
+            ForEach(SearchGroupDisplay.inline(all, limit: cap).shown, id: \.self) { facet in
+                LibraryRouteLink(isTag ? .tag(facet.name) : .genre(facet.name), bottomInset: bottomInset) {
+                    SearchFacetRow(facet: facet, isTag: isTag, countsShows: libraryViewModel.isPodcastLibrary)
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(Color.shelfMuted.opacity(0.2))
+            }
+        case .episodes:
+            ForEach(SearchGroupDisplay.inline(libraryViewModel.searchEpisodes, limit: cap).shown) { match in
+                Button {
+                    Task { await playerViewModel.startPlaybackOfferingUndo(for: match.item, episode: match.episode) }
+                } label: {
+                    SearchEpisodeRow(match: match)
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(Color.shelfMuted.opacity(0.2))
+            }
+        }
+    }
+}
+
+/// Batch 493: the page behind a group's Show All row.
+struct SearchShowAllView: View {
+    let group: SearchShowAll
+    let bottomInset: CGFloat
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                SearchGroupSection(group: group, limit: nil, bottomInset: bottomInset)
+            }
+            .padding(.horizontal, Space.pageH)
+            .padding(.vertical, 12)
+            .padding(.bottom, bottomInset)
+        }
+        .background(Color.shelfBackground.ignoresSafeArea())
+        .navigationTitle(Text(group.title))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Batch 493: one matching podcast episode in a podcast library's search. Tapping plays it.
+struct SearchEpisodeRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let match: AudiobookshelfAPI.SearchGroups.EpisodeMatch
+
+    private var subtitle: String {
+        [match.item.title, match.episode.publishedDate?.formatted(date: .abbreviated, time: .omitted)]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+    }
+
+    var body: some View {
+        let title = (match.episode.title ?? "").isEmpty ? match.item.title : (match.episode.title ?? "")
+        HStack(spacing: 12) {
+            CoverImageView(itemId: match.item.id, width: 56, height: 56)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Typo.rowTitle(Text(verbatim: title))
+                    .foregroundStyle(Color.shelfCream)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                Typo.fine(Text(verbatim: subtitle))
+                    .foregroundStyle(Color.shelfMuted)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+            }
+            Spacer()
+            Image(systemName: "play.circle")
+                .font(.title3)
+                .foregroundStyle(Color.shelfMuted)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: [title, subtitle].filter { !$0.isEmpty }.joined(separator: ", ")))
+        .accessibilityHint(Text("Plays this episode"))
+        .accessibilityAddTraits(.isButton)
     }
 }

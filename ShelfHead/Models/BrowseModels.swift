@@ -563,12 +563,55 @@ struct Playlist: Codable, Identifiable {
 
     var displayName: String { name ?? String(localized: "Untitled Playlist", comment: "Fallback name for a playlist without a name") }
     var libraryItems: [LibraryItem] { (items ?? []).compactMap { $0.libraryItem } }
+    /// L3: one entry per playlist row with a unique id, so two episodes of one show (same
+    /// `libraryItem.id`) no longer collide in a `ForEach`.
+    var entries: [PlaylistEntry] {
+        (items ?? []).compactMap { row in
+            guard let item = row.libraryItem else { return nil }
+            return PlaylistEntry(item: item, episodeId: row.episodeId, serverEpisode: row.episode)
+        }
+    }
+}
+
+/// One row of a playlist as the grid shows it. `id` is item id + episode id.
+struct PlaylistEntry: Identifiable {
+    let item: LibraryItem
+    let episodeId: String?
+    /// The expanded episode the server sends beside each playlist row
+    /// (`Playlist.toOldJSONExpanded`: `episode: pmi.mediaItem.toOldJSONExpanded(...)`).
+    var serverEpisode: PodcastEpisode? = nil
+    var id: String { Self.makeID(itemId: item.id, episodeId: episodeId) }
+
+    static func makeID(itemId: String, episodeId: String?) -> String {
+        guard let episodeId, !episodeId.isEmpty else { return itemId }
+        return "\(itemId)#\(episodeId)"
+    }
+
+    /// The episode this row points at, when the item carries its episode list.
+    var episode: PodcastEpisode? {
+        guard let episodeId else { return nil }
+        if let serverEpisode, serverEpisode.id == episodeId { return serverEpisode }
+        return item.media?.episodes?.first { $0.id == episodeId }
+    }
 }
 
 struct PlaylistItem: Codable {
     let libraryItemId: String?
     let episodeId: String?
     let libraryItem: LibraryItem?
+    /// Podcast rows carry their expanded episode at this level. Decoded leniently so a
+    /// malformed episode never drops the row.
+    let episode: PodcastEpisode?
+
+    enum CodingKeys: String, CodingKey { case libraryItemId, episodeId, libraryItem, episode }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        libraryItemId = try c.decodeIfPresent(String.self, forKey: .libraryItemId)
+        episodeId = try c.decodeIfPresent(String.self, forKey: .episodeId)
+        libraryItem = try c.decodeIfPresent(LibraryItem.self, forKey: .libraryItem)
+        episode = (try? c.decodeIfPresent(PodcastEpisode.self, forKey: .episode)) ?? nil
+    }
 }
 
 struct PlaylistsResponse: Codable {

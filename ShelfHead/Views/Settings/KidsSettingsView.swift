@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Batch 457: Settings > Household > Kids. An administrator makes a child's Audiobookshelf account (explicit content
+/// Batch 457: Settings > Kids & Profiles (Batch 492: its own page; it was the bottom half of Household). An administrator makes a child's Audiobookshelf account (explicit content
 /// off, only chosen libraries, an optional tag allowlist) and it is saved on this device without switching to it.
 /// Like `TranscriptsSettingsView`, the body is a group of sections for the settings page to host.
 struct KidsSettingsView: View {

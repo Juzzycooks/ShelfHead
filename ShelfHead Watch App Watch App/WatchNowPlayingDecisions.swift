@@ -477,3 +477,51 @@ nonisolated enum StandaloneBufferingDecision {
         isStreaming && isWaitingToPlay
     }
 }
+
+/// REVIEW 2026-11-11 W3: taking the iPhone's book onto this Watch from companion Now
+/// Playing, and not pretending a vanished phone is still counting.
+nonisolated enum WatchPhoneLinkDecision {
+    /// The book can start on this Watch: it's downloaded, or the Watch has its own
+    /// session to stream with. Same two conditions the Details screen's "Play on Watch"
+    /// is built from (`WatchBookPlayOptions`, `WatchBookDetailView.hasWatchSession`).
+    static func canPlayOnWatch(isDownloaded: Bool, hasWatchSession: Bool) -> Bool {
+        isDownloaded || hasWatchSession
+    }
+
+    /// The iPhone has stopped answering: not reachable and its snapshot has aged past
+    /// `WatchStaleness.threshold`. A reachable phone with an old snapshot (paused for a
+    /// while) is only "syncing"; a phone that just dropped is still within the threshold.
+    static func isOutOfRange(isReachable: Bool, isStateStale: Bool) -> Bool {
+        !isReachable && isStateStale
+    }
+
+    /// The "Syncing…" pill is for a reachable phone; out of range it is replaced by the
+    /// persistent out-of-range line.
+    static func showsSyncingBanner(isStateStale: Bool, isOutOfRange: Bool) -> Bool {
+        isStateStale && !isOutOfRange
+    }
+
+    /// Whether the persistent out-of-range line shows, and whether it carries the button.
+    /// The line stays as long as the phone is out of range (no timeout); the shorter
+    /// "iPhone not reachable" notice after a failed command still appears while the
+    /// phone only just dropped, and goes with its timer.
+    static func notice(isOutOfRange: Bool, failedCommandNotice: Bool, canPlayOnWatch: Bool) -> Notice? {
+        if isOutOfRange { return Notice(isOutOfRange: true, offersPlayOnWatch: canPlayOnWatch) }
+        if failedCommandNotice { return Notice(isOutOfRange: false, offersPlayOnWatch: canPlayOnWatch) }
+        return nil
+    }
+
+    struct Notice: Equatable, Sendable {
+        let isOutOfRange: Bool
+        let offersPlayOnWatch: Bool
+    }
+
+    /// The moment the mirrored position is extrapolated to. A fresh snapshot extrapolates
+    /// to `now`; a stale one freezes at the last time the phone said anything (the later
+    /// of the snapshot time and any local rebase), so the time stops counting for a phone
+    /// that may have stopped.
+    static func extrapolationDate(now: Date, lastUpdated: Date, isStateStale: Bool) -> Date {
+        guard isStateStale else { return now }
+        return min(now, lastUpdated)
+    }
+}

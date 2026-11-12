@@ -61,6 +61,8 @@ struct WatchNowPlayingModel {
     var sleepSecondsLeft: Double?
     var source: WatchPlaybackSource
     var isStale: Bool = false
+    /// W3: the iPhone has stopped answering; the screen swaps the "Syncing…" pill for the adapter's out-of-range line.
+    var isPhoneOutOfRange: Bool = false
     /// The loaded book, for "Jump back" (only ever restores into the same book). Nil
     /// while nothing is loaded.
     var itemId: String? = nil
@@ -169,7 +171,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 6) {
-                if model.isStale {
+                if WatchPhoneLinkDecision.showsSyncingBanner(isStateStale: model.isStale, isOutOfRange: model.isPhoneOutOfRange) {
                     StaleBanner()
                 }
                 header

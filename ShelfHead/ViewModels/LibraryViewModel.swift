@@ -116,6 +116,11 @@ final class LibraryViewModel {
     /// podcast library, whose search response has no such groups.
     var searchAuthors: [AudiobookshelfAPI.SearchGroups.Person] = []
     var searchNarrators: [AudiobookshelfAPI.SearchGroups.Person] = []
+    /// Batch 492 (REVIEW 2026-11-11 L1): the genre and tag groups of the last online search.
+    var searchGenres: [AudiobookshelfAPI.SearchGroups.Facet] = []
+    var searchTags: [AudiobookshelfAPI.SearchGroups.Facet] = []
+    /// Batch 493: a podcast library's matching episodes, under the shows.
+    var searchEpisodes: [AudiobookshelfAPI.SearchGroups.EpisodeMatch] = []
     /// Critique 2026-10-05 (Library): true when the last server search *failed* (as opposed
     /// to returning zero results), so the UI can say "Couldn't reach your server" with Retry
     /// instead of a misleading "No results".
@@ -145,6 +150,49 @@ final class LibraryViewModel {
     var sortOption: LibrarySort = SettingsStore.librarySortOption {
         didSet { SettingsStore.librarySortOption = sortOption }
     }
+    /// Batch 492 (REVIEW 2026-11-11 L2): the selected library lists podcast shows, not books.
+    var isPodcastLibrary: Bool { selectedLibrary?.isPodcastLibrary == true }
+
+    /// Batch 492 (REVIEW 2026-11-11 L2): the sorts a podcast library offers: Title, Author,
+    /// Date Added and Episodes. `LibrarySort` has no episode-count case, so `.duration` stands
+    /// in for it there (a show's duration isn't a sort the server has), labelled "Episodes" and
+    /// sent as `media.numTracks`.
+    nonisolated static func sortOptions(isPodcast: Bool) -> [LibrarySort] {
+        isPodcast ? [.title, .author, .addedAt, .duration] : LibrarySort.allCases
+    }
+
+    /// The sort in effect: the saved one, unless this library doesn't offer it (Recently Played
+    /// swaps in the in-progress list, which for a podcast library is episodes), then Title.
+    nonisolated static func effectiveSort(_ sort: LibrarySort, isPodcast: Bool) -> LibrarySort {
+        sortOptions(isPodcast: isPodcast).contains(sort) ? sort : .title
+    }
+
+    /// The server `sort` key. ABS's podcast sort (`libraryItemsPodcastFilters.getOrder`) knows
+    /// `media.metadata.author` (not `authorName`) and `media.numTracks` (the episode count).
+    nonisolated static func serverSortKey(_ sort: LibrarySort, isPodcast: Bool) -> String {
+        guard isPodcast else { return sort.rawValue }
+        let effective = effectiveSort(sort, isPodcast: true)
+        switch effective {
+        case .author: return "media.metadata.author"
+        case .duration: return "media.numTracks"
+        default: return effective.rawValue
+        }
+    }
+
+    /// Label of a sort option in the picker (a podcast library's Duration reads "Episodes").
+    nonisolated static func sortLabel(_ sort: LibrarySort, isPodcast: Bool) -> String {
+        if isPodcast, sort == .duration {
+            return String(localized: "Episodes", comment: "Library sort option for a podcast library: by number of episodes")
+        }
+        return LibraryLocalQuery.sortOptionLabel(sort)
+    }
+
+    /// The progress filter sent to the server: none for a podcast library (a show has no
+    /// progress of its own, so the filter matched nothing useful).
+    nonisolated static func serverFilter(_ progress: LibraryProgressFilter, isPodcast: Bool) -> String? {
+        isPodcast ? nil : progress.filterValue
+    }
+
     var sortDescending = SettingsStore.librarySortDescending {
         didSet { SettingsStore.librarySortDescending = sortDescending }
     }
@@ -528,7 +576,7 @@ final class LibraryViewModel {
         items = []
         personalizedShelves = []
         searchResults = []
-        searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
+        searchAuthors = []; searchNarrators = []; searchGenres = []; searchTags = []; searchEpisodes = []  // Batch 490/492/493 (REVIEW 2026-11-11 L1)
         seriesList = []
         collections = []
         playlists = []
@@ -740,13 +788,16 @@ final class LibraryViewModel {
     func selectLibrary(_ library: Library) async {
         selectedLibrary = library
         SettingsStore.selectedLibraryId = library.id   // shared with CarPlay
+        // Batch 492 (REVIEW 2026-11-11 L2): a podcast library has no smart filters or
+        // Downloaded-only (shows aren't downloadable), so neither carries over from a book library.
+        if library.isPodcastLibrary { smartFilter = nil; downloadedOnly = false }
         items = []
         personalizedShelves = []
         // Review Low (search after library switch, 30 October 2026): results and any in-flight
         // search belong to the previous library.
         searchGeneration &+= 1
         searchResults = []
-        searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
+        searchAuthors = []; searchNarrators = []; searchGenres = []; searchTags = []; searchEpisodes = []  // Batch 490/492/493 (REVIEW 2026-11-11 L1)
         searchQuery = ""
         searchFailed = false
         isSearching = false
@@ -818,7 +869,7 @@ final class LibraryViewModel {
 
         // "Recently Played" isn't a server sort key — it's the items-in-progress list,
         // which the server already returns in most-recent order. Not paginated.
-        if sortOption.isRecentlyPlayed {
+        if Self.effectiveSort(sortOption, isPodcast: isPodcastLibrary).isRecentlyPlayed {
             do {
                 // Review Medium 31 (30 October 2026): /api/me/items-in-progress spans every
                 // library (and podcasts); keep this library's books. The 100 cap is the server's.
@@ -958,8 +1009,10 @@ final class LibraryViewModel {
     }
 
     private func currentQueryKey(libraryId: String) -> WindowQueryKey {
-        WindowQueryKey(libraryId: libraryId, sort: sortOption.rawValue,
-                       descending: sortDescending, filter: progressFilter.filterValue)
+        WindowQueryKey(libraryId: libraryId,
+                       sort: Self.serverSortKey(sortOption, isPodcast: isPodcastLibrary),
+                       descending: sortDescending,
+                       filter: Self.serverFilter(progressFilter, isPodcast: isPodcastLibrary))
     }
 
     @ObservationIgnored private var windowQueryKey: WindowQueryKey?
@@ -1456,6 +1509,72 @@ final class LibraryViewModel {
         isLoadingPlaylists = false
     }
 
+    // MARK: Collection and playlist writes (REVIEW 2026-11-11 F2)
+    //
+    // Each write throws on failure (the caller shows one plain message) and, on success, reloads the
+    // affected list so every screen reading `collections` / `playlists` shows the server's copy.
+
+    private func writeLibraryId(for item: LibraryItem) -> String? { item.libraryId ?? selectedLibrary?.id }
+
+    func addToPlaylist(id: String, item: LibraryItem) async throws {
+        try await AudiobookshelfAPI.shared.addToPlaylist(id: id, items: [PlaylistItemRef(libraryItemId: item.id)])
+        await loadPlaylists()
+    }
+
+    func createPlaylist(name: String, with item: LibraryItem) async throws {
+        guard let libraryId = writeLibraryId(for: item) else { throw URLError(.badURL) }
+        _ = try await AudiobookshelfAPI.shared.createPlaylist(libraryId: libraryId, name: name,
+                                                              items: [PlaylistItemRef(libraryItemId: item.id)])
+        await loadPlaylists()
+    }
+
+    func renamePlaylist(id: String, name: String) async throws {
+        try await AudiobookshelfAPI.shared.renamePlaylist(id: id, name: name)
+        await loadPlaylists()
+    }
+
+    func deletePlaylist(id: String) async throws {
+        try await AudiobookshelfAPI.shared.deletePlaylist(id: id)
+        playlists.removeAll { $0.id == id }
+        await loadPlaylists()
+    }
+
+    /// Applies an edited playlist: removes `removed` rows, then re-orders what is left when `order`
+    /// is non-nil (the full remaining list in its new order).
+    func updatePlaylistItems(id: String, removed: [PlaylistItemRef], order: [PlaylistItemRef]?) async throws {
+        if !removed.isEmpty { try await AudiobookshelfAPI.shared.removeFromPlaylist(id: id, items: removed) }
+        defer { Task { await loadPlaylists() } }
+        if let order, !order.isEmpty { try await AudiobookshelfAPI.shared.reorderPlaylist(id: id, items: order) }
+    }
+
+    func addToCollection(id: String, item: LibraryItem) async throws {
+        try await AudiobookshelfAPI.shared.addBooksToCollection(id: id, bookIds: [item.id])
+        await loadCollections()
+    }
+
+    func createCollection(name: String, with item: LibraryItem) async throws {
+        guard let libraryId = writeLibraryId(for: item) else { throw URLError(.badURL) }
+        _ = try await AudiobookshelfAPI.shared.createCollection(libraryId: libraryId, name: name, description: nil,
+                                                                bookIds: [item.id])
+        await loadCollections()
+    }
+
+    func renameCollection(id: String, name: String) async throws {
+        try await AudiobookshelfAPI.shared.updateCollection(id: id, name: name)
+        await loadCollections()
+    }
+
+    func deleteCollection(id: String) async throws {
+        try await AudiobookshelfAPI.shared.deleteCollection(id: id)
+        collections.removeAll { $0.id == id }
+        await loadCollections()
+    }
+
+    func removeFromCollection(id: String, bookIds: [String]) async throws {
+        try await AudiobookshelfAPI.shared.removeBooksFromCollection(id: id, bookIds: bookIds)
+        await loadCollections()
+    }
+
     /// Loads the books for a given filter (Authors/Narrators/Genres screens).
     /// Returns `nil` on failure so callers can show a retry CTA instead of an
     /// empty state that's indistinguishable from a genuinely empty result.
@@ -1765,7 +1884,7 @@ final class LibraryViewModel {
         guard let library = selectedLibrary,
               !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
             searchResults = []
-            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
+            searchAuthors = []; searchNarrators = []; searchGenres = []; searchTags = []; searchEpisodes = []  // Batch 490/492/493 (REVIEW 2026-11-11 L1)
             searchFailed = false
             searchIsLocal = false
             isSearching = false
@@ -1793,7 +1912,7 @@ final class LibraryViewModel {
         if ReachabilityStore.shared.status != .ok {
             searchIsLocal = true
             searchResults = LibraryLocalQuery.search(DownloadManager.shared.downloadedLibraryItems(), query: query)
-            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
+            searchAuthors = []; searchNarrators = []; searchGenres = []; searchTags = []; searchEpisodes = []  // Batch 490/492/493 (REVIEW 2026-11-11 L1)
             return
         }
         searchIsLocal = false
@@ -1806,9 +1925,12 @@ final class LibraryViewModel {
             )
             // Ignore a response for a query the user has since changed.
             guard generation == searchGeneration, query == searchQuery else { return }
-            searchResults = groups.books
+            searchResults = groups.books + groups.podcasts   // a library has one kind; the other is empty
             searchAuthors = groups.authors
             searchNarrators = groups.narrators
+            searchGenres = groups.genres
+            searchTags = groups.tags
+            searchEpisodes = groups.episodes
         } catch {
             guard generation == searchGeneration else { return }
             let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
@@ -1818,7 +1940,7 @@ final class LibraryViewModel {
             searchFailed = true
             searchIsLocal = true
             searchResults = LibraryLocalQuery.search(DownloadManager.shared.downloadedLibraryItems(), query: query)
-            searchAuthors = []; searchNarrators = []  // Batch 490 (REVIEW 2026-11-11 L1)
+            searchAuthors = []; searchNarrators = []; searchGenres = []; searchTags = []; searchEpisodes = []  // Batch 490/492/493 (REVIEW 2026-11-11 L1)
         }
     }
 
@@ -2609,10 +2731,25 @@ enum LibraryLocalQuery {
     static func countAndSortLine(
         count: Int, sort: LibrarySort, descending: Bool,
         downloadedOnly: Bool, smartFilter: SmartFilter?, offlineFallback: Bool = false,
+        isPodcast: Bool = false,
         locale: Locale = .current
     ) -> String {
         let number = count.formatted(.number.locale(locale))
         let one = count == 1
+        // Batch 492 (REVIEW 2026-11-11 L2): a podcast library counts shows, and its Duration
+        // sort slot is the episode count.
+        if isPodcast {
+            let lead = one
+                ? String(localized: "\(number) show", comment: "Library count line lead for a podcast library, one show; %@ is the formatted count")
+                : String(localized: "\(number) shows", comment: "Library count line lead for a podcast library, several shows; %@ is the formatted count")
+            let effective = LibraryViewModel.effectiveSort(sort, isPodcast: true)
+            let sortText = effective == .duration
+                ? (descending
+                    ? String(localized: "Episodes, most first", comment: "Sort description in a podcast library's count line")
+                    : String(localized: "Episodes, fewest first", comment: "Sort description in a podcast library's count line"))
+                : sortDescription(effective, descending: descending)
+            return String(localized: "\(lead) · \(sortText)", comment: "Library count line; first %@ is the count phrase, second %@ is the sort description")
+        }
         if let smartFilter {
             return one
                 ? String(localized: "\(number) book · \(smartFilter.label)", comment: "Library count line with a Smart Filter, one book; first %@ is the formatted count, second %@ is the filter name")

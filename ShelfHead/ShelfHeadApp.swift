@@ -7,6 +7,38 @@ import AppIntents
 import TipKit
 import os
 
+/// REVIEW G1: the iPhone app is portrait-only except while Driving Mode is on screen. The
+/// Info.plist still lists Portrait + both Landscapes (the app delegate's mask is intersected
+/// with it, so it can only narrow, never widen); `AppDelegate` answers with `mask`, and
+/// Driving Mode flips it through `OrientationLock.setDrivingMode`.
+enum OrientationPolicy {
+    /// Pure decision: Driving Mode on allows everything but upside-down, otherwise portrait.
+    static func mask(drivingModeActive: Bool) -> UIInterfaceOrientationMask {
+        drivingModeActive ? .allButUpsideDown : .portrait
+    }
+}
+
+@MainActor
+enum OrientationLock {
+    private(set) static var mask: UIInterfaceOrientationMask = OrientationPolicy.mask(drivingModeActive: false)
+
+    /// Driving Mode appeared (`true`) or went away (`false`).
+    static func setDrivingMode(_ active: Bool) {
+        mask = OrientationPolicy.mask(drivingModeActive: active)
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else { return }
+        // Tell the root and whatever is presented on it (Driving Mode is a full-screen cover).
+        var vc = scene.keyWindow?.rootViewController
+        while let current = vc {
+            current.setNeedsUpdateOfSupportedInterfaceOrientations()
+            vc = current.presentedViewController
+        }
+        if !active {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
+        }
+    }
+}
+
 /// Handles background URLSession completion events for downloads.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
@@ -37,6 +69,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// `INIntentsSupported`, which this method requires.
     func application(_ application: UIApplication, handlerFor intent: INIntent) -> Any? {
         intent is INPlayMediaIntent ? PlayMediaIntentHandler() : nil
+    }
+
+    /// REVIEW G1: portrait unless Driving Mode is up (see `OrientationLock`).
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        MainActor.assumeIsolated { OrientationLock.mask }
     }
 
     /// Batch 453: the app window gets `HouseholdSceneDelegate` so a tapped household invite

@@ -404,6 +404,19 @@ private struct DownloadedBooksLinkLabel: View {
 
 private struct DownloadsInFlightSections: View {
     @State private var downloadManager = DownloadManager.shared
+    /// D1: the waiting download the user is confirming "Download Now on Mobile Data" for.
+    @State private var cellularConfirmation: DownloadTask?
+
+    /// D1: whether this row is waiting for Wi-Fi right now (and so offers "Download Now").
+    private func isWaitingForWiFi(_ task: DownloadTask) -> Bool {
+        !task.isPaused && NetworkMonitor.shared.isConnected && DownloadPolicyStatus.waitsForWiFi(
+            wifiOnly: SettingsStore.wifiOnlyDownloads, onWiFi: NetworkMonitor.shared.isOnWiFi,
+            cellularOverridden: task.cellularOverride)
+    }
+
+    private func downloadNowSize(_ task: DownloadTask) -> Int64 {
+        task.bytesExpected > 0 ? task.bytesExpected : task.knownSizeBytes
+    }
 
     var body: some View {
         // Polish pass (DL-3): automatic downloads held back by Wi-Fi-only / charging-only used
@@ -431,9 +444,43 @@ private struct DownloadsInFlightSections: View {
                     })
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
+                    // D1 (REVIEW 2026-11-11): a download waiting for Wi-Fi can be sent over
+                    // mobile data for this one book. Swipe and touch-and-hold both offer it.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if isWaitingForWiFi(task) {
+                            Button {
+                                cellularConfirmation = task
+                            } label: {
+                                Label(DownloadPolicyStatus.downloadNowTitle(bytes: downloadNowSize(task)), systemImage: "antenna.radiowaves.left.and.right")
+                            }
+                            .tint(Color.shelfAmber)
+                        }
+                    }
+                    .contextMenu {
+                        if isWaitingForWiFi(task) {
+                            Button {
+                                cellularConfirmation = task
+                            } label: {
+                                Label(DownloadPolicyStatus.downloadNowTitle(bytes: downloadNowSize(task)), systemImage: "antenna.radiowaves.left.and.right")
+                            }
+                        }
+                    }
                 }
             } header: {
                 RetroSectionHeader(title: LocalizedStringResource("Downloading", comment: "Downloads section header"))
+            }
+            .confirmationDialog(
+                cellularConfirmation.map { DownloadPolicyStatus.downloadNowTitle(bytes: downloadNowSize($0)) } ?? "",
+                isPresented: Binding(get: { cellularConfirmation != nil }, set: { if !$0 { cellularConfirmation = nil } }),
+                titleVisibility: .visible,
+                presenting: cellularConfirmation
+            ) { task in
+                Button(DownloadPolicyStatus.downloadNowTitle(bytes: downloadNowSize(task))) {
+                    downloadManager.downloadNowOnCellular(itemId: task.id)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { task in
+                Text(DownloadPolicyStatus.downloadNowMessage(title: task.title, bytes: downloadNowSize(task)))
             }
         }
 
@@ -990,9 +1037,11 @@ private struct DownloadStorageSection: View {
 enum ActiveDownloadStatus: Equatable {
     case downloading, paused, waitingForWiFi, waitingForNetwork
 
-    static func choose(isPaused: Bool, wifiOnly: Bool, isConnected: Bool, isOnWiFi: Bool) -> ActiveDownloadStatus {
+    static func choose(isPaused: Bool, wifiOnly: Bool, isConnected: Bool, isOnWiFi: Bool,
+                       cellularOverridden: Bool = false) -> ActiveDownloadStatus {
         if isPaused { return .paused }
-        switch DownloadPolicyStatus.waitReason(isPaused: false, wifiOnly: wifiOnly, isConnected: isConnected, isOnWiFi: isOnWiFi) {
+        switch DownloadPolicyStatus.waitReason(isPaused: false, wifiOnly: wifiOnly, isConnected: isConnected, isOnWiFi: isOnWiFi,
+                                               cellularOverridden: cellularOverridden) {
         case .wifi: return .waitingForWiFi
         case .network: return .waitingForNetwork
         case nil: return .downloading
@@ -1065,7 +1114,8 @@ struct ActiveDownloadRow: View {
                         Typo.supporting(Text(ActiveDownloadStatus.choose(
                             isPaused: task.isPaused, wifiOnly: SettingsStore.wifiOnlyDownloads,
                             isConnected: NetworkMonitor.shared.isConnected,
-                            isOnWiFi: NetworkMonitor.shared.isOnWiFi).text))
+                            isOnWiFi: NetworkMonitor.shared.isOnWiFi,
+                            cellularOverridden: task.cellularOverride).text))
                             .foregroundStyle(Color.shelfMuted)
                     }
                     // Polish pass (DL-2): "120 MB of 1.4 GB · about 4 min left" — sign of life

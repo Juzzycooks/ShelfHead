@@ -1199,6 +1199,8 @@ struct MainTabView: View {
         }
         .toast(message: $playerViewModel.errorMessage, bottomInset: otherToastInset)
         .toast(message: $downloadManager.downloadError, duration: 6, bottomInset: otherToastInset)
+        // D1 (REVIEW 2026-11-11): "Will download on Wi-Fi." when a manual download is accepted and waits.
+        .toast(message: $downloadManager.downloadInfo, style: .info, duration: 4, bottomInset: otherToastInset)
         .toast(message: $playerViewModel.infoMessage, style: .success, duration: 2, bottomInset: otherToastInset)
         // Library contract: a failed background refresh is a non-blocking toast; the
         // blocking `errorAlert` below stays for `errorMessage` (a failed first load).

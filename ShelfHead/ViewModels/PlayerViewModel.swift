@@ -240,17 +240,20 @@ final class PlayerViewModel {
 
     // MARK: - Up Next queue
 
-    /// Books queued to play after the current one. Persisted to a file in the App Group
-    /// container (via `persistQueue()`) so it survives the frequent iOS relaunch cycle
-    /// the mini-player is designed around.
-    var upNext: [LibraryItem] = []
+    /// Books (and podcast episodes) queued to play after the current one. Persisted to a file
+    /// in the App Group container (via `persistQueue()`) so it survives the frequent iOS
+    /// relaunch cycle the mini-player is designed around.
+    var upNext: [UpNextEntry] = []
 
     private func persistQueue() {
         Self.saveQueue(upNext)
         // Mirror the queue into `SharedLibrary` alongside its own persistence, so the
         // widget's "Up Next" option resolves against published data rather than needing
         // `LibraryItem` (and its whole media graph) in the widget target.
-        WidgetLibraryPublisher.publishUpNext(upNext)
+        // Book entries only: the widget resumes a pinned item as a book, so an episode entry
+        // (whose `item` is the whole show) has nothing it could play. Book entries are
+        // already unique by id (entry id == item id), so no further dedupe is needed.
+        WidgetLibraryPublisher.publishUpNext(upNext.filter { $0.episode == nil }.map(\.item))
     }
 
     /// ARCH-7 (REVIEW_2026-08-12.md): this used to be `JSONEncoder().encode(items)`
@@ -437,7 +440,16 @@ final class PlayerViewModel {
             dropPrefetchIfQueueHeadChanged()
             return
         }
-        CoverImageCache.prefetch(itemId: next.id)
+        CoverImageCache.prefetch(itemId: next.item.id)
+        // Episode entries start cold: warming one would mean a second kind of held session
+        // (`startPlaybackSession(itemId:episodeId:)`) with its own disposition rules, and
+        // `startEpisodePlayback` doesn't take a prefetched session. Close whatever was warmed
+        // for the previous head (entry ids differ from item ids for an episode, so a held
+        // book session is never mistaken for it).
+        if next.episode != nil {
+            resolvePrefetchedSession(for: .discarded)
+            return
+        }
         guard prefetchedItemId != next.id else { return }
         // Item 3: a session warmed for a book that is no longer next used to be dropped
         // by the assignment at the bottom of this function. Close it as part of deciding
@@ -520,7 +532,7 @@ final class PlayerViewModel {
     /// `SharedLibrary` is a single unscoped payload regardless.
     private static var queueFileURL: URL? { queueContainerURL?.appendingPathComponent("upNext.json") }
 
-    private static func saveQueue(_ items: [LibraryItem]) {
+    private static func saveQueue(_ items: [UpNextEntry]) {
         guard let queueFileURL else { return }
         if items.isEmpty {
             try? FileManager.default.removeItem(at: queueFileURL)
@@ -529,7 +541,7 @@ final class PlayerViewModel {
         }
     }
 
-    private static func loadQueue() -> [LibraryItem] {
+    private static func loadQueue() -> [UpNextEntry] {
         if let queueFileURL,
            let data = try? Data(contentsOf: queueFileURL),
            let items = decodeQueue(data) {
@@ -546,18 +558,20 @@ final class PlayerViewModel {
 
     /// Review Low (Playback), 30 October 2026: decoding the queue as one `[LibraryItem]`
     /// meant a single undecodable entry threw away the whole queue. Decodes element by
-    /// element and drops only the bad ones; the file format (a JSON array of
-    /// `LibraryItem`) is unchanged. `nil` only when the data isn't an array at all.
-    nonisolated static func decodeQueue(_ data: Data) -> [LibraryItem]? {
+    /// element and drops only the bad ones. The file is a JSON array; an element is either an
+    /// `UpNextEntry` (`{"item":…, "episode":…?}`) or, in files written before episodes could be
+    /// queued, a bare `LibraryItem` — `UpNextEntry.init(from:)` reads both, so an old queue
+    /// loads as book entries. `nil` only when the data isn't an array at all.
+    nonisolated static func decodeQueue(_ data: Data) -> [UpNextEntry]? {
         struct Lossy: Decodable {
-            let item: LibraryItem?
-            init(from decoder: Decoder) throws { item = try? LibraryItem(from: decoder) }
+            let entry: UpNextEntry?
+            init(from decoder: Decoder) throws { entry = try? UpNextEntry(from: decoder) }
         }
         guard let entries = try? JSONDecoder().decode([Lossy].self, from: data) else { return nil }
-        return entries.compactMap(\.item)
+        return entries.compactMap(\.entry)
     }
 
-    private static func migrateLegacyQueueIfNeeded() -> [LibraryItem] {
+    private static func migrateLegacyQueueIfNeeded() -> [UpNextEntry] {
         guard let defaults = UserDefaults(suiteName: SharedPlayback.appGroup),
               let data = defaults.data(forKey: legacyQueueKey) else { return [] }
         defer { defaults.removeObject(forKey: legacyQueueKey) }
@@ -655,21 +669,28 @@ final class PlayerViewModel {
     }
 
     /// Put a book at the front of the queue ("Play Next").
-    func playNext(_ item: LibraryItem) {
-        upNext.removeAll { $0.id == item.id }
-        upNext.insert(item, at: 0)
+    func playNext(_ item: LibraryItem, episode: PodcastEpisode? = nil) {
+        playNext(UpNextEntry(item: item, episode: episode))
+    }
+
+    /// Puts an existing queue entry (or a new one) at the head; used by "Move to Top" too.
+    func playNext(_ entry: UpNextEntry) {
+        upNext.removeAll { $0.id == entry.id }
+        upNext.insert(entry, at: 0)
         persistQueue()
         dropPrefetchIfQueueHeadChanged()
         infoMessage = String(localized: "Playing next", comment: "Toast after Play Next puts a book at the head of the Up Next queue")
     }
 
     /// Append a book to the end of the queue ("Add to Up Next").
-    func addToQueue(_ item: LibraryItem) {
-        guard !upNext.contains(where: { $0.id == item.id }) else {
+    func addToQueue(_ item: LibraryItem, episode: PodcastEpisode? = nil) {
+        let entry = UpNextEntry(item: item, episode: episode)
+        // Dedupe by entry id: two episodes of one show are two entries, the same episode is one.
+        guard !upNext.contains(where: { $0.id == entry.id }) else {
             infoMessage = String(localized: "Already in Up Next", comment: "Toast when the book is already in the Up Next queue")
             return
         }
-        upNext.append(item)
+        upNext.append(entry)
         persistQueue()
         // Only moves the head when the queue was empty (so nothing was warmed), but the
         // check is cheap and keeps every queue mutation on the same rule.
@@ -721,11 +742,11 @@ final class PlayerViewModel {
 
     /// Append several books in one mutation: one persist, one toast.
     func addToQueue(_ items: [LibraryItem]) {
-        let plan = Self.queueAddPlan(adding: items, existing: upNext, currentId: currentBook?.id)
+        let plan = Self.queueAddPlan(addingIds: items.map(\.id), existingIds: upNext.map(\.id), currentId: currentBook?.id)
         if !plan.idsToAppend.isEmpty {
             var byId: [String: LibraryItem] = [:]
             for item in items where byId[item.id] == nil { byId[item.id] = item }
-            upNext.append(contentsOf: plan.idsToAppend.compactMap { byId[$0] })
+            upNext.append(contentsOf: plan.idsToAppend.compactMap { byId[$0] }.map { UpNextEntry(item: $0) })
             persistQueue()
             dropPrefetchIfQueueHeadChanged()
         }
@@ -733,7 +754,11 @@ final class PlayerViewModel {
     }
 
     func removeFromQueue(_ item: LibraryItem) {
-        upNext.removeAll { $0.id == item.id }
+        removeFromQueue(UpNextEntry(item: item))
+    }
+
+    func removeFromQueue(_ entry: UpNextEntry) {
+        upNext.removeAll { $0.id == entry.id }
         persistQueue()
         dropPrefetchIfQueueHeadChanged()
     }
@@ -742,9 +767,9 @@ final class PlayerViewModel {
 
     /// What `undoQueueRemoval()` puts back, and where.
     struct QueueRemovalUndo: Equatable {
-        let item: LibraryItem
+        let entry: UpNextEntry
         let index: Int
-        static func == (l: Self, r: Self) -> Bool { l.item.id == r.item.id && l.index == r.index }
+        static func == (l: Self, r: Self) -> Bool { l.entry.id == r.entry.id && l.index == r.index }
     }
 
     /// Critique 2026-10-06 (harden): the Up Next sheet's swipe (a full-swipe `.onDelete`) and
@@ -762,11 +787,11 @@ final class PlayerViewModel {
         min(max(original, 0), count)
     }
 
-    func removeFromQueueWithUndo(_ item: LibraryItem) {
-        guard let index = upNext.firstIndex(where: { $0.id == item.id }) else { return }
-        removeFromQueue(item)
-        queueRemovalUndo = QueueRemovalUndo(item: item, index: index)
-        queueRemovalUndoMessage = Self.queueRemovalMessage(title: item.title)
+    func removeFromQueueWithUndo(_ entry: UpNextEntry) {
+        guard let index = upNext.firstIndex(where: { $0.id == entry.id }) else { return }
+        removeFromQueue(entry)
+        queueRemovalUndo = QueueRemovalUndo(entry: entry, index: index)
+        queueRemovalUndoMessage = Self.queueRemovalMessage(title: entry.title)
     }
 
     func undoQueueRemoval() {
@@ -774,8 +799,9 @@ final class PlayerViewModel {
         queueRemovalUndo = nil
         queueRemovalUndoMessage = nil
         // Already back (re-added meanwhile) or now the loaded book: nothing to restore.
-        guard !upNext.contains(where: { $0.id == undo.item.id }), currentBook?.id != undo.item.id else { return }
-        upNext.insert(undo.item, at: Self.queueReinsertIndex(original: undo.index, count: upNext.count))
+        guard !upNext.contains(where: { $0.id == undo.entry.id }),
+              !Self.isEntryLoaded(undo.entry, currentItemId: currentBook?.id, currentEpisodeId: currentEpisode?.id) else { return }
+        upNext.insert(undo.entry, at: Self.queueReinsertIndex(original: undo.index, count: upNext.count))
         persistQueue()
         dropPrefetchIfQueueHeadChanged()
         Haptics.selection()
@@ -805,20 +831,46 @@ final class PlayerViewModel {
     /// Deliberately no `dropPrefetchIfQueueHeadChanged()` here: `startPlayback` resolves
     /// the warmed session itself, so tapping the book that was warmed hands the session
     /// over (gapless, and no wasted session), and tapping any other queued book closes it.
-    func playFromQueue(_ item: LibraryItem) {
+    func playFromQueue(_ entry: UpNextEntry) {
         // Review Low (Playback), 30 October 2026: the book used to leave the queue before
         // the start was attempted, so a start refused because another was already loading
         // dropped it and played nothing. It now leaves only once it is the current book.
         Task {
-            await startPlayback(for: item)
-            removeFromQueueIfStarted(item)
+            await startEntry(entry)
+            removeFromQueueIfStarted(entry)
         }
     }
 
-    /// Removes `item` from Up Next once it is actually the loaded book (see `playFromQueue`).
-    private func removeFromQueueIfStarted(_ item: LibraryItem) {
-        guard currentBook?.id == item.id, upNext.contains(where: { $0.id == item.id }) else { return }
-        upNext.removeAll { $0.id == item.id }
+    /// Starts a queue entry: an episode entry starts that episode, a book entry starts the book.
+    private func startEntry(_ entry: UpNextEntry, openPlayer: Bool = true) async {
+        if let episode = entry.episode {
+            await startEpisodePlayback(for: entry.item, episode: episode, openPlayer: openPlayer)
+        } else {
+            await startPlayback(for: entry.item, openPlayer: openPlayer)
+        }
+    }
+
+    /// Whether `entry` is what the player has loaded: same item, and the same episode (or none).
+    /// Pure, for tests — comparing item ids alone would call an episode "loaded" while a
+    /// different episode of the same show plays.
+    nonisolated static func isEntryLoaded(_ entry: UpNextEntry, currentItemId: String?, currentEpisodeId: String?) -> Bool {
+        currentItemId == entry.item.id && currentEpisodeId == entry.episodeId
+    }
+
+    /// Whether auto-advance should drop `entry` rather than play it. `freshFinished` is the server's
+    /// current answer (nil when unreachable). Without one, a book falls back to the finished flag
+    /// it was queued with; an episode has no such snapshot (the item's `mediaProgress` is the
+    /// show's, not the episode's), so it is kept. Pure, for tests.
+    nonisolated static func shouldSkipQueueEntry(_ entry: UpNextEntry, freshFinished: Bool?) -> Bool {
+        if let freshFinished { return freshFinished }
+        return entry.episode == nil && entry.item.isFinished
+    }
+
+    /// Removes `entry` from Up Next once it is actually the loaded item (see `playFromQueue`).
+    private func removeFromQueueIfStarted(_ entry: UpNextEntry) {
+        guard Self.isEntryLoaded(entry, currentItemId: currentBook?.id, currentEpisodeId: currentEpisode?.id),
+              upNext.contains(where: { $0.id == entry.id }) else { return }
+        upNext.removeAll { $0.id == entry.id }
         persistQueue()
         // Review 2 Low (Playback), 30 October 2026: the head may have changed; close a stale warm session.
         dropPrefetchIfQueueHeadChanged()
@@ -839,9 +891,17 @@ final class PlayerViewModel {
     /// the wait at 1 s; otherwise keep 4 s. Pure, for tests.
     nonisolated static func freshFinishedWait(holdingPrefetchedSession: Bool) -> Double { holdingPrefetchedSession ? 1 : 4 }
 
-    private static func freshFinishedState(for itemId: String, wait: Double = 4) async -> Bool? {
-        await withTaskGroup(of: Bool?.self) { group in
+    private static func freshFinishedState(for entry: UpNextEntry, wait: Double = 4) async -> Bool? {
+        let itemId = entry.item.id
+        let episodeId = entry.episodeId
+        return await withTaskGroup(of: Bool?.self) { group in
             group.addTask {
+                if let episodeId {
+                    // An episode's progress is its own record in `/api/me`, not the show's.
+                    guard let user = try? await AudiobookshelfAPI.shared.getCurrentUser(forceRefresh: true) else { return nil }
+                    let record = user.mediaProgress?.first { $0.libraryItemId == itemId && $0.episodeId == episodeId }
+                    return record?.isFinished ?? false
+                }
                 guard let fresh = try? await AudiobookshelfAPI.shared.getItem(itemId: itemId) else { return nil }
                 return fresh.isFinished
             }
@@ -873,7 +933,7 @@ final class PlayerViewModel {
         // from autoplay would be a worse experience than skipping it, so these are
         // dropped here rather than played.
         var skippedAny = false
-        while let candidate = upNext.first, candidate.isFinished {
+        while let candidate = upNext.first, Self.shouldSkipQueueEntry(candidate, freshFinished: nil) {
             upNext.removeFirst()
             skippedAny = true
         }
@@ -895,7 +955,8 @@ final class PlayerViewModel {
         }
         // Don't auto-advance to a streamed book we can't reach while offline — keep it
         // in the queue so it plays once connectivity returns / the user taps it.
-        if !DownloadManager.shared.isDownloaded(itemId: next.id), !NetworkMonitor.shared.isConnected {
+        // (Episodes aren't downloadable, so an episode entry always needs the network.)
+        if next.episode != nil || !DownloadManager.shared.isDownloaded(itemId: next.id), !NetworkMonitor.shared.isConnected {
             // Staying put: the book keeps its place in the queue but nothing is going to
             // play now, so the warmed session would sit open until the user comes back.
             // (Best-effort — we're offline, so this close will usually fail and the
@@ -911,7 +972,7 @@ final class PlayerViewModel {
             var freshFinished: Bool?
             if NetworkMonitor.shared.isConnected {
                 freshFinished = await Self.freshFinishedState(
-                    for: next.id, wait: Self.freshFinishedWait(holdingPrefetchedSession: prefetchedSession != nil && prefetchedItemId == next.id))
+                    for: next, wait: Self.freshFinishedWait(holdingPrefetchedSession: prefetchedSession != nil && prefetchedItemId == next.id))
             }
             // The queue may have changed while we waited; whoever changed it owns the head.
             guard upNext.first?.id == next.id else { return }
@@ -919,7 +980,7 @@ final class PlayerViewModel {
             // else during the wait; leave the queue alone then.
             guard Self.shouldContinueAdvance(finishedItemId: finishedItemId, currentItemId: currentBook?.id,
                                              isPlaying: isPlaying, isLoadingSession: isLoadingSession) else { return }
-            if freshFinished == true {
+            if Self.shouldSkipQueueEntry(next, freshFinished: freshFinished) {
                 upNext.removeFirst()
                 persistQueue()
                 dropPrefetchIfQueueHeadChanged()
@@ -932,7 +993,7 @@ final class PlayerViewModel {
             // closes it on a mismatch.
             // Auto-advance: keep whatever player state the user was in (don't force-open).
             // Review Low (Playback): leave the queue only once the start has taken hold.
-            await startPlayback(for: next, openPlayer: false)
+            await startEntry(next, openPlayer: false)
             removeFromQueueIfStarted(next)
         }
     }
@@ -957,7 +1018,7 @@ final class PlayerViewModel {
             guard upNext.isEmpty,
                   let next = seriesBooks.nextUnfinishedInSeries(after: book, seriesName: series)
             else { return }
-            upNext.append(next)
+            upNext.append(UpNextEntry(item: next))
             persistQueue()
             infoMessage = String(localized: "Added the next book in \(series) to Up Next", comment: "Toast when the next book of a series is queued automatically. %@ is the series name")
         }
@@ -2192,5 +2253,67 @@ struct MiniPlayerSuppression: Equatable {
     /// glass pill if its content went away, so the mini player stays visible there.
     static func showsMiniPlayer(hasMiniPlayer: Bool, suppressed: Bool, canHide: Bool) -> Bool {
         hasMiniPlayer && !(suppressed && canHide)
+    }
+}
+
+// MARK: - Up Next entry
+
+/// One slot in the Up Next queue: a book, or one episode of a podcast.
+///
+/// Holds the episode itself (not just its id) so the queue can show its title and start it
+/// without re-resolving it against `item.media.episodes`, which a queued item may not carry.
+/// `id` is the item id for a book (so book entries behave exactly as the queue's old
+/// `[LibraryItem]` did, and the widget/prefetch code that keys on item ids still matches them)
+/// and `itemId#episodeId` for an episode, so two episodes of one show can be queued at once.
+struct UpNextEntry: Codable, Identifiable, Hashable {
+    let item: LibraryItem
+    let episode: PodcastEpisode?
+
+    init(item: LibraryItem, episode: PodcastEpisode? = nil) {
+        self.item = item
+        self.episode = episode
+    }
+
+    var episodeId: String? { episode?.id }
+
+    var id: String { Self.makeId(itemId: item.id, episodeId: episodeId) }
+
+    nonisolated static func makeId(itemId: String, episodeId: String?) -> String {
+        episodeId.map { "\(itemId)#\($0)" } ?? itemId
+    }
+
+    /// The row title: the episode's title for an episode, the book's otherwise.
+    var title: String {
+        if let t = episode?.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { return t }
+        return item.title
+    }
+
+    /// The row subtitle: the show name for an episode, the author for a book.
+    var subtitle: String { episode == nil ? item.authorName : item.title }
+
+    static func == (l: UpNextEntry, r: UpNextEntry) -> Bool { l.id == r.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    private enum CodingKeys: String, CodingKey { case item, episode }
+
+    /// Reads the current `{"item":…, "episode":…?}` shape, or a bare `LibraryItem` as written by
+    /// versions before episodes could be queued (no `item` key at the top level).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if c.contains(.item) {
+            item = try c.decode(LibraryItem.self, forKey: .item)
+            // A present-but-undecodable episode throws (the lossy queue decoder drops the entry)
+            // rather than quietly turning into a book entry for the whole show.
+            episode = c.contains(.episode) ? try c.decode(PodcastEpisode.self, forKey: .episode) : nil
+        } else {
+            item = try LibraryItem(from: decoder)
+            episode = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(item, forKey: .item)
+        try c.encodeIfPresent(episode, forKey: .episode)
     }
 }
