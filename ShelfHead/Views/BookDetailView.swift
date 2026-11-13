@@ -153,8 +153,15 @@ struct BookDetailView: View {
 
     /// Prefer the shared progress map (kept current across the app), falling back to
     /// whatever progress the item itself carries.
+    /// Listening only (Batch 497): the play labels, time left, chapter shading and Reset follow it.
     private var resolvedProgress: Double {
         libraryViewModel.progressFor(itemId: displayItem.id)?.progress ?? displayItem.progressPercent
+    }
+
+    /// Batch 497 (REVIEW 2026-11-11 L12): what the header's bar shows. Reading for an
+    /// ebook-only book, listening for anything with audio (`LibraryItem.shownProgress`).
+    private var headerProgress: Double {
+        displayItem.shownProgress(libraryViewModel.progressFor(itemId: displayItem.id))
     }
 
     private var resolvedFinished: Bool {
@@ -552,11 +559,11 @@ struct BookDetailView: View {
         .sheet(item: $shareSession) { session in
             ShareComposerSheet(context: session.context)
         }
-        // Left as a plain full-height sheet, deliberately not given
-        // `.presentationDetents` in the polish pass below — `EbookReaderView` is a
-        // full reading surface, not a list peek, so a partial-height presentation
-        // would just crop the page rather than offer a useful "glance and dismiss."
-        .sheet(isPresented: $showEbookReader) {
+        // Batch 495 (REVIEW 2026-11-11 L13): a full-screen cover, not a sheet. As a sheet, a
+        // downward drag at the top of a chapter dismissed the book mid-read. The reader's
+        // toolbar has the labelled Close button (`SheetCloseButton`). Listen from Here keeps
+        // the reader open and starts the audio (`openPlayer: false`), as it did in the sheet.
+        .fullScreenCover(isPresented: $showEbookReader) {
             EbookReaderView(item: displayItem, onListen: { time in listenFromReader(at: time) })
         }
         // Design review (14 Aug 2026), item 4: Chapters/Bookmarks demoted to sheets.
@@ -1012,14 +1019,14 @@ struct BookDetailView: View {
                 // jacket itself answers "where am I" at a glance. Amber fill is
                 // deliberate — real progress state, the one thing point 8 explicitly
                 // allows amber for outside Play/Resume itself.
-                if resolvedProgress > 0 && !resolvedFinished {
+                if headerProgress > 0 && !resolvedFinished {
                     HStack(spacing: 8) {
                         // Critique 2026-10-05 (Book Detail): was a fixed 120pt bar; it now
                         // flexes up to 160pt so it doesn't crowd the percentage at large sizes.
-                        BookProgressBar(progress: resolvedProgress)
+                        BookProgressBar(progress: headerProgress)
                             .frame(maxWidth: 160)
                             .frame(height: 4)
-                        Typo.supporting(Text("\(Int(resolvedProgress * 100))%"), weight: .semibold)
+                        Typo.supporting(Text("\(Int(headerProgress * 100))%"), weight: .semibold)
                             .foregroundStyle(Color.shelfAmberText)
                         // Critique 2026-10-05 (Book Detail, 2nd): the live equalizer now lives only
                         // in the pinned bar's readout (nearest the action); this header had a
@@ -1436,12 +1443,36 @@ struct BookDetailView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "book.fill")
-                    Text("Read")
+                    // Batch 495 (REVIEW 2026-11-11 L12): say where the reader is.
+                    if let percentText = readingPercentText {
+                        Text("Continue Reading · \(percentText)", comment: "Book Detail read button when the ebook is partly read; %@ is a percentage such as 60%")
+                    } else {
+                        Text("Read")
+                    }
                 }
                 .shelfCompactButtonStyle()
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 L12): the server's ebook reading fraction for this book,
+    /// from the shared progress map (kept current by the live socket) or the item itself,
+    /// as "60%". Nil when there is none worth saying (see `readingPercent(fraction:)`).
+    private var readingPercentText: String? {
+        let fraction = (libraryViewModel.progressFor(itemId: displayItem.id) ?? displayItem.mediaProgress)?.readingFraction
+        return Self.readingPercent(fraction: fraction)?.formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    /// Batch 495 (L12): pure. The fraction rounded down to a whole percent, or nil below 1%
+    /// or once the book is read to the end (the button then just says Read). Rounded down so
+    /// 99.6% never shows as 100%. Pinned by `Batch495ReaderProgressTests`.
+    nonisolated static func readingPercent(fraction: Double?) -> Double? {
+        guard let fraction, fraction.isFinite else { return nil }
+        // The epsilon keeps 0.29 (28.999… × 100 in binary) at 29%.
+        let whole = (fraction * 100 + 1e-9).rounded(.down)
+        guard whole >= 1, whole < 100 else { return nil }
+        return whole / 100
     }
 
     @ViewBuilder
@@ -1858,14 +1889,12 @@ struct BookDetailView: View {
                             if !(playerViewModel.currentBook?.id == displayItem.id
                                  && playerViewModel.currentEpisode?.id == episode.id) {
                                 Button {
-                                    Haptics.selection()
-                                    playerViewModel.playNext(displayItem, episode: episode)
+                                    playerViewModel.playNext(displayItem, episode: episode)   // Batch 495 (V7): playNext gives the feedback
                                 } label: {
                                     Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                 }
                                 Button {
-                                    Haptics.selection()
-                                    playerViewModel.addToQueue(displayItem, episode: episode)
+                                    playerViewModel.addToQueue(displayItem, episode: episode)   // Batch 495 (V7): addToQueue gives the feedback
                                 } label: {
                                     Label("Add to Up Next", systemImage: "text.badge.plus")
                                 }
@@ -1999,7 +2028,12 @@ struct BookDetailView: View {
         case .ask:
             navigationRow(title: "Ask the Book", systemImage: "questionmark.circle") { showAskBook = true }
         case .ebook:
-            navigationRow(title: "Read the Book", systemImage: "book") { showEbookReader = true }
+            // Batch 495 (REVIEW 2026-11-11 L12): the companion ebook's row says where the reader is too.
+            if let percentText = readingPercentText {
+                navigationRow(title: "Continue Reading · \(percentText)", systemImage: "book") { showEbookReader = true }
+            } else {
+                navigationRow(title: "Read the Book", systemImage: "book") { showEbookReader = true }
+            }
         case .bookClub:
             navigationRow(title: "Book Club", systemImage: "person.3") { showBookClub = true }
         }
@@ -2341,7 +2375,7 @@ struct BookDetailView: View {
                 editingBookmark = nil
                 await reloadBookmarks()
             } else {
-                Haptics.impact(.heavy)
+                Haptics.error()   // Batch 495 (V7)
                 editSaveError = BookmarkEditFeedback.failureMessage
                 // Critique 2026-10-06 (polish): the message appears below the editor, out
                 // of VoiceOver focus (the Save button keeps it), so it's announced too.
@@ -2746,6 +2780,10 @@ private struct BookDetailDownloadSection: View {
         let task = downloadManager.activeDownloads[item.id]
         let progress = task?.progress ?? 0
         let paused = task?.isPaused ?? false
+        let queuedLabel: String? = (task?.isQueued == true && !paused)
+            ? (downloadManager.queuePosition(of: item.id).map { DownloadQueuePlan.queuedLabel(position: $0) }
+               ?? String(localized: "Queued"))
+            : nil
         return Menu {
             Button {
                 if paused {
@@ -2791,8 +2829,9 @@ private struct BookDetailDownloadSection: View {
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
         }
-        .accessibilityLabel(paused ? Text("Download paused") : Text("Downloading"))
-        .accessibilityValue("\(Int(progress * 100)) percent")
+        // Batch 496 (D2): a book waiting in the download queue says so, with its place.
+        .accessibilityLabel(queuedLabel.map { Text(verbatim: $0) } ?? (paused ? Text("Download paused") : Text("Downloading")))
+        .accessibilityValue(queuedLabel == nil ? Text("\(Int(progress * 100)) percent") : Text(verbatim: ""))
         .accessibilityHint("Opens pause, resume, and cancel options")
     }
 

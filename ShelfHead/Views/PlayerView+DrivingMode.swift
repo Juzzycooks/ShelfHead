@@ -375,11 +375,11 @@ struct DrivingModeView: View {
             // surface hardcoded the same "gobackward.15"/"goforward.30" glyphs as
             // `controlsView` above — same fix, same shared `SkipLabels` helper.
             skipButton(backward: true, seconds: skipBackwardInterval) {
-                Haptics.impact(.medium); playerViewModel.skipBackward()
+                Haptics.impact(.light); playerViewModel.skipBackward()   // Batch 495 (V7): skip class
             }
             playButton
             skipButton(backward: false, seconds: skipForwardInterval) {
-                Haptics.impact(.medium); playerViewModel.skipForward()
+                Haptics.impact(.light); playerViewModel.skipForward()   // Batch 495 (V7): skip class
             }
         }
         .frame(maxWidth: .infinity)

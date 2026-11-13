@@ -7,6 +7,14 @@ extension SettingsKeys {
     /// Batch 454: recommendation ids this device has dismissed (delete for me only), and ids already notified.
     static let householdDismissedRecommendations = "settings_householdDismissedRecs"
     static let householdNotifiedRecommendations = "settings_householdNotifiedRecs"
+    /// Batch 495 (REVIEW 2026-11-11 Y1): "New recommendation" notifications. Default on (today's behaviour).
+    static let householdRecommendationNotifications = "settings_householdRecNotifications"
+}
+
+extension SettingsStore {
+    static var householdRecommendationNotificationsEnabled: Bool {
+        UserDefaults.standard.object(forKey: SettingsKeys.householdRecommendationNotifications) as? Bool ?? true
+    }
 }
 
 // MARK: - Pure rules
@@ -100,6 +108,8 @@ final class HouseholdInbox {
 @MainActor
 enum HouseholdNotifier {
     static func notify(_ recommendations: [HouseholdRecommendation], members: [String: HouseholdMember]) {
+        // Batch 495 (REVIEW 2026-11-11 Y1): System & Privacy › Notifications has a switch for these now.
+        guard SettingsStore.householdRecommendationNotificationsEnabled else { return }
         Task {
             guard await NotificationManager.isAuthorized() else { return }
             for rec in recommendations {
@@ -109,6 +119,10 @@ enum HouseholdNotifier {
                 content.body = String(localized: "\(sender) recommends \(rec.title).",
                                       comment: "Household notification body. First %@ is a member's name, second is a book title.")
                 content.sound = .default
+                // Batch 495 (Y1): a tap opens the book (same server) or the Household page.
+                content.categoryIdentifier = NotificationRoute.Category.householdRecommendation.rawValue
+                content.userInfo = NotificationRoute.Payload(itemId: rec.libraryItemId,
+                                                             serverFingerprint: rec.serverFingerprint).userInfo
                 let request = UNNotificationRequest(identifier: "shelfhead.household.rec.\(rec.id)",
                                                     content: content, trigger: nil)
                 try? await UNUserNotificationCenter.current().add(request)

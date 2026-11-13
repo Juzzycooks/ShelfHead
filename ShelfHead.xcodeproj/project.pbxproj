@@ -74,6 +74,7 @@
 		1AC57DF89F454FCCB1679EA7 /* AudibleCatalogAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698726333AF346B285B2941A /* AudibleCatalogAPI.swift */; };
 		1B1F21FDDA1C4CC8B2826F70 /* EPUBReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82E93AF796CE415AB7AA1EE0 /* EPUBReaderView.swift */; };
 		1BDA607DEED54CF484A16DA3 /* MoodSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18A1F90C5854EC9A7285DB1 /* MoodSearch.swift */; };
+		1D8A5CF8575C9259DB106CC0 /* AudiobookshelfAPI+Collections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7AC882F50497CE5011D06A /* AudiobookshelfAPI+Collections.swift */; };
 		1DCC787714A14522B87AE5FB /* ServerURLRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63E4D1828759424183102121 /* ServerURLRules.swift */; };
 		1E581B288D9849F2B772EE17 /* ClipEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A4216F9F5948EA892C690B /* ClipEditorSheet.swift */; };
 		1E8DAF870B034D66A3F58B76 /* AmbientBedEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6089D9A928B34BD7BBB298BD /* AmbientBedEngine.swift */; };
@@ -82,6 +83,7 @@
 		21DBAA65475542D79B7F80C8 /* RecapPlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2FA64DFA346461395BB7E63 /* RecapPlaybackController.swift */; };
 		28EFE8A25EBD48A2A31BD464 /* HouseholdShareAcceptance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C378AEB827C4B4588DD138B /* HouseholdShareAcceptance.swift */; };
 		2A029902E7514F4FAD4D15A3 /* ReachabilityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A02104AE6F10456C8EE95AEF /* ReachabilityStore.swift */; };
+		3060E3F0D6F6039BF3EE3B67 /* AudiobookshelfAPI+Podcasts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423752371C2AF55DFD26A17E /* AudiobookshelfAPI+Podcasts.swift */; };
 		30877432D1026706D7E805DA /* SkipLabels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846A32C3BB81E3C29B621792 /* SkipLabels.swift */; };
 		3109F8F2C5E94119B8EBCEC5 /* MoodSearchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AFE37521CD44030AC089CE8 /* MoodSearchViews.swift */; };
 		3223DBF3A5B295438FCFC610 /* PendingProgressQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F52AD5486A7FE082623803 /* PendingProgressQueue.swift */; };
@@ -186,8 +188,6 @@
 		AE2A84E6E7454427975BD177 /* ReadingSitesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4595FE5BCDA4828AD3EE939 /* ReadingSitesView.swift */; };
 		AEDE3A61E5E94CE1B001890E /* DeckHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A97211C6E634194B0541267 /* DeckHaptics.swift */; };
 		B1DB96B3ECB643F797A9E78B /* AudiobookshelfAPI+Users.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221E836F24DA460EA20801D5 /* AudiobookshelfAPI+Users.swift */; };
-		3060E3F0D6F6039BF3EE3B67 /* AudiobookshelfAPI+Podcasts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423752371C2AF55DFD26A17E /* AudiobookshelfAPI+Podcasts.swift */; };
-		1D8A5CF8575C9259DB106CC0 /* AudiobookshelfAPI+Collections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7AC882F50497CE5011D06A /* AudiobookshelfAPI+Collections.swift */; };
 		B3162179FD3F4A83A9210E98 /* AudiobookshelfAPI+Upload.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5418DF33F644C34A691E8D9 /* AudiobookshelfAPI+Upload.swift */; };
 		B36A47FD948E4F56994F0A60 /* PlayerView+Artwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = E59B95C7A23545E4B481E3DF /* PlayerView+Artwork.swift */; };
 		B438C8338A824BD5BA23B648 /* HouseholdRecordMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E4D3639BB447C4854AF6FD /* HouseholdRecordMapper.swift */; };
@@ -425,13 +425,12 @@
 		17D5863D1D0442DB99477F7B /* RecommendBookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendBookSheet.swift; sourceTree = "<group>"; };
 		1A97211C6E634194B0541267 /* DeckHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeckHaptics.swift; sourceTree = "<group>"; };
 		1B63808309BB4B2096F3F015 /* ReviewPromptManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPromptManager.swift; sourceTree = "<group>"; };
+		1B7AC882F50497CE5011D06A /* AudiobookshelfAPI+Collections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudiobookshelfAPI+Collections.swift"; sourceTree = "<group>"; };
 		1C13EE9A9FCD4365BF512D91 /* FinishedBookCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinishedBookCatalog.swift; sourceTree = "<group>"; };
 		1C5AAF7717EF4A8F989E02EF /* HouseholdModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdModels.swift; sourceTree = "<group>"; };
 		1DFF3CB89ACD43C3982D306A /* ReleaseRadarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseRadarViewModel.swift; sourceTree = "<group>"; };
 		218FFBC6D67943C0950C4C6F /* PlayerView+Header.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlayerView+Header.swift"; sourceTree = "<group>"; };
 		221E836F24DA460EA20801D5 /* AudiobookshelfAPI+Users.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudiobookshelfAPI+Users.swift"; sourceTree = "<group>"; };
-		423752371C2AF55DFD26A17E /* AudiobookshelfAPI+Podcasts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudiobookshelfAPI+Podcasts.swift"; sourceTree = "<group>"; };
-		1B7AC882F50497CE5011D06A /* AudiobookshelfAPI+Collections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudiobookshelfAPI+Collections.swift"; sourceTree = "<group>"; };
 		22A96A1DFCA147EABE85DF57 /* MoodQueryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoodQueryModel.swift; sourceTree = "<group>"; };
 		232A626FDCCA64197857CE31 /* SettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsComponents.swift; sourceTree = "<group>"; };
 		250EA735A30B4011A5154B2D /* ListeningPassportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningPassportView.swift; sourceTree = "<group>"; };
@@ -448,6 +447,7 @@
 		3C378AEB827C4B4588DD138B /* HouseholdShareAcceptance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdShareAcceptance.swift; sourceTree = "<group>"; };
 		41CECCCFA19D4B8EBC64CC4B /* YearInReviewVideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YearInReviewVideoExporter.swift; sourceTree = "<group>"; };
 		421E053E48C5F98BD6B9CA55 /* AccountSecuritySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSecuritySettingsView.swift; sourceTree = "<group>"; };
+		423752371C2AF55DFD26A17E /* AudiobookshelfAPI+Podcasts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AudiobookshelfAPI+Podcasts.swift"; sourceTree = "<group>"; };
 		4376738CEC2C4C96EF02BD83 /* SettingsSearchIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSearchIndex.swift; sourceTree = "<group>"; };
 		4398BC66A07748D0B056064D /* LoudnessMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessMeter.swift; sourceTree = "<group>"; };
 		45E878ACC18345FBAAC94E53 /* LibraryDoctorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryDoctorView.swift; sourceTree = "<group>"; };
@@ -1739,7 +1739,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.ShelfHeadIntents;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1769,7 +1769,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.ShelfHeadIntents;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1802,7 +1802,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.watchkitapp.ShelfHeadWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1838,7 +1838,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.watchkitapp.ShelfHeadWatchWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1863,7 +1863,7 @@
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = JuzzyCooks.ShelfHeadTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -1886,7 +1886,7 @@
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = JuzzyCooks.ShelfHeadTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -1917,7 +1917,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1952,7 +1952,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1978,7 +1978,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "JuzzyCooks.ShelfHead-Watch-Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2001,7 +2001,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "JuzzyCooks.ShelfHead-Watch-Tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2023,7 +2023,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "JuzzyCooks.ShelfHead-Watch-UITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2045,7 +2045,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6HTZR75UR8;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "JuzzyCooks.ShelfHead-Watch-UITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -2079,7 +2079,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.ShelfHeadWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -2117,7 +2117,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead.ShelfHeadWidgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -2292,7 +2292,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2343,7 +2343,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 7.7;
+				MARKETING_VERSION = 7.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.justin.ShelfHead;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

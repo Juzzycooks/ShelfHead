@@ -11,11 +11,13 @@ final class Top10SettingsGroupingTests: XCTestCase {
 
     func testRootHasFourGroupsOfAtMostFourRows() {
         for tools in [true, false] {
-            let groups = SettingsView.rootGroups(showsServerTools: tools)
-            XCTAssertEqual(titles(groups), ["Server", "Listening", "Sharing & Services", "App"])
-            for group in groups {
-                XCTAssertLessThanOrEqual(group.pages.count, 4, "\(group.id) has too many rows")
-                XCTAssertFalse(group.pages.isEmpty)
+            for watch in [true, false] {
+                let groups = SettingsView.rootGroups(showsServerTools: tools, showsAppleWatch: watch)
+                XCTAssertEqual(titles(groups), ["Server", "Listening", "Sharing & Services", "App"])
+                for group in groups {
+                    XCTAssertLessThanOrEqual(group.pages.count, 4, "\(group.id) has too many rows")
+                    XCTAssertFalse(group.pages.isEmpty)
+                }
             }
         }
     }
@@ -24,8 +26,15 @@ final class Top10SettingsGroupingTests: XCTestCase {
         let groups = SettingsView.rootGroups(showsServerTools: true)
         XCTAssertEqual(groups[0].pages, [.account, .downloads, .serverTools, .kids])
         XCTAssertEqual(groups[1].pages, [.playback, .sleepTimer, .sound, .transcripts])
-        XCTAssertEqual(groups[2].pages, [.household, .readingSites, .releaseRadar])
+        // Batch 496 (REVIEW 2026-11-11 W13): Apple Watch, with a Watch paired.
+        XCTAssertEqual(groups[2].pages, [.household, .readingSites, .releaseRadar, .appleWatch])
         XCTAssertEqual(groups[3].pages, [.appearance, .systemPrivacy, .recentChanges, .diagnostics])
+    }
+
+    /// Batch 496 (W13): no Watch paired and no Watch app installed, no Apple Watch row.
+    func testAppleWatchRowNeedsAWatch() {
+        let groups = SettingsView.rootGroups(showsServerTools: true, showsAppleWatch: false)
+        XCTAssertEqual(groups[2].pages, [.household, .readingSites, .releaseRadar])
     }
 
     func testServerToolsRowIsHiddenWithoutPermissions() {

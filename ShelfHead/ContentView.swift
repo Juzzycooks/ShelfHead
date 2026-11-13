@@ -177,6 +177,16 @@ struct ContentView: View {
         // while it isn't mounted yet is held, not lost. `MainTabView` consumes the inbox and
         // still routes everything through `handleDeepLink` (and so behind App Lock).
         .onOpenURL { url in linkInbox.hold(url) }
+        // Batch 497 (REVIEW 2026-11-11 Spotlight): "Search in App" from Spotlight arrives as a
+        // CSQueryContinuationActionType activity (needs Info.plist `CoreSpotlightContinuation` = true;
+        // harmless without it). Turned into the `shelfhead://search` link and held like any other, so
+        // sign-in, the profile picker and App Lock gate it.
+        .onContinueUserActivity(CSQueryContinuationActionType) { activity in
+            if let url = SpotlightSearchContinuation.url(activityType: activity.activityType,
+                                                         userInfo: activity.userInfo) {
+                linkInbox.hold(url)
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             // SEC-3: blank the switcher snapshot for any non-`.active` phase — covers
             // the `.inactive` transition the OS actually snapshots during, ahead of
@@ -305,6 +315,10 @@ struct MainTabView: View {
     /// modern (iOS 26+) tab path — same role `homePath`/`libraryPath`/`settingsPath`
     /// play for their tabs.
     @State private var listeningPath = NavigationPath()
+    /// Batch 496 (REVIEW 2026-11-11 N6): the iOS 26 Search tab (value 4): its stack and its
+    /// field. Unused on the legacy shell, where search stays in Library.
+    @State private var searchPath = NavigationPath()
+    @State private var searchTab = SearchTabModel()
     /// iPhone Duo (§3, docs/iphone-duo-readiness-2026-10-22.md): the book in Library's
     /// detail column on the inner display (`librarySplitView`). Only set at regular width,
     /// and it outlives a fold: collapsing shows it over the Library root, and Back clears it.
@@ -602,6 +616,7 @@ struct MainTabView: View {
                         libraryDetailItem = nil
                     case 2: listeningPath = NavigationPath()
                     case 3: settingsPath = NavigationPath()
+                    case 4: searchPath = NavigationPath()   // Batch 496 (N6)
                     default: break
                     }
                 }
@@ -869,7 +884,15 @@ struct MainTabView: View {
                 NavigationStack(path: $settingsPath) { SettingsView() }
                     .environment(\.shelfTabIndex, 3)
             }
+            // Batch 496 (REVIEW 2026-11-11 N6): HIG Searching, "In apps that use tab bars ...
+            // search is a dedicated tab". `TabRole.search` (iOS 18) supplies the title and
+            // magnifying glass and sits apart at the trailing edge; the four tabs stay as they are.
+            Tab(value: 4, role: .search) {
+                NavigationStack(path: $searchPath) { LibrarySearchTabView(model: searchTab) }
+                    .environment(\.shelfTabIndex, 4)
+            }
         }
+        .librarySearchTab(searchTab, libraryViewModel: libraryViewModel)
     }
 
     /// iPhone Duo (§3, docs/iphone-duo-readiness-2026-10-22.md; user decision "Split view,
@@ -1089,6 +1112,7 @@ struct MainTabView: View {
         .onChange(of: libraryPath) { _, _ in tabBarMinimize.reexpand() }
         .onChange(of: listeningPath) { _, _ in tabBarMinimize.reexpand() }
         .onChange(of: settingsPath) { _, _ in tabBarMinimize.reexpand() }
+        .onChange(of: searchPath) { _, _ in tabBarMinimize.reexpand() }
         // Batch 218 (R10.8): consumes a tab-switch request from a descendant (e.g.
         // `HomeView`'s empty-state CTA) — reuses `selectedTabBinding`'s own
         // reset-on-reselect logic rather than just assigning `selectedTab` directly,
@@ -1156,6 +1180,9 @@ struct MainTabView: View {
             libraryPath = NavigationPath()
             listeningPath = NavigationPath()
             settingsPath = NavigationPath()
+            // Batch 496 (N6): the Search tab's stack and query belonged to the old account.
+            searchPath = NavigationPath()
+            searchTab.reset()
             deepLinkedItem = nil
             // iPhone Duo (§3): and the inner display's detail column (a book from the old server).
             libraryDetailItem = nil
@@ -1201,6 +1228,11 @@ struct MainTabView: View {
         .toast(message: $downloadManager.downloadError, duration: 6, bottomInset: otherToastInset)
         // D1 (REVIEW 2026-11-11): "Will download on Wi-Fi." when a manual download is accepted and waits.
         .toast(message: $downloadManager.downloadInfo, style: .info, duration: 4, bottomInset: otherToastInset)
+        // Batch 495 (REVIEW 2026-11-11 D6): Auto-delete finished says so, and the files only go
+        // once this toast does, so Undo keeps them.
+        .toast(message: $downloadManager.autoDeleteUndoMessage, style: .info, duration: AutoDeletePlan.undoWindow,
+               bottomInset: otherToastInset,
+               action: ToastAction(label: "Undo") { downloadManager.undoPendingAutoDelete() })
         .toast(message: $playerViewModel.infoMessage, style: .success, duration: 2, bottomInset: otherToastInset)
         // Library contract: a failed background refresh is a non-blocking toast; the
         // blocking `errorAlert` below stays for `errorMessage` (a failed first load).
@@ -1221,7 +1253,8 @@ struct MainTabView: View {
         // Critique 2026-10-05 (second run): a failed playback start is an alert with Retry,
         // not a toast — it blocks what the listener just asked for, and an alert is announced
         // by VoiceOver and waits to be read. Offline/cellular guard messages stay toasts.
-        .errorAlert(title: "Can't Start Playback", message: Binding(
+        // Batch 495 (REVIEW 2026-11-11 P4): the same alert carries the lost-stream notice, titled for it.
+        .errorAlert(title: playerViewModel.failureIsLostStream ? "Playback Stopped" : "Can't Start Playback", message: Binding(
             // Stands down while Driving Mode's full-screen cover is up: an alert can't
             // present under it, and a failed presentation clears the message (UX-4), so
             // Driving Mode shows the failure itself with its own Try Again (fourth run).
@@ -1439,17 +1472,36 @@ struct MainTabView: View {
             // shelfhead://book/<id>, and (Batch 490, REVIEW 2026-11-11 F14) `?t=<seconds>` to
             // start there. Only a valid, non-negative number counts; anything else just opens it.
             if let id = DeepLinkParser.bookID(in: url) {
-                openBook(id: id, playAt: DeepLinkParser.startTime(in: url))
+                // Batch 495 (REVIEW 2026-11-11 Y1): `?play=1` (a notification's Play action) plays it
+                // from where it was left; `t` wins when both are present.
+                let playAt = DeepLinkParser.startTime(in: url)
+                openBook(id: id, playAt: playAt,
+                         playLink: playAt == nil && DeepLinkParser.wantsPlay(in: url) ? url : nil)
             }
+        case "household":
+            // Batch 495 (REVIEW 2026-11-11 Y1): a recommendation for a book on another server.
+            openSettings(page: .household)
         case "series":
             // Batch 490 (REVIEW 2026-11-11 F14): shelfhead://series/<id> → that series in Library.
-            if let id = DeepLinkParser.seriesID(in: url) { openSeries(id: id, link: url) }
+            if let id = DeepLinkParser.seriesID(in: url) {
+                openSeries(id: id, link: url)
+            } else if let name = DeepLinkParser.seriesName(in: url) {
+                // Batch 497 (Y1): shelfhead://series?name=<name> (a Release Radar reminder).
+                openSeries(named: name, link: url)
+            }
         case "author":
             // Batch 490 (REVIEW 2026-11-11 F14): shelfhead://author/<id> → that author's books.
             if let id = DeepLinkParser.authorID(in: url) { openAuthor(id: id, link: url) }
         case "search":
             // Batch 490 (REVIEW 2026-11-11 F14/F13): shelfhead://search[?q=…] (and the Search quick
             // action) lands on Library's Books root, with `q` (if any) in the search field.
+            // Batch 496 (REVIEW 2026-11-11 N6): on iOS 26 it lands on the Search tab instead.
+            if case .searchTab(let query)? = SearchRequestRoute.route(for: url, hasSearchTab: SearchRequestRoute.systemHasSearchTab) {
+                searchPath = NavigationPath()
+                searchTab.receive(query: query)
+                selectedTab = 4
+                return
+            }
             libraryPath = NavigationPath()
             libraryDetailItem = nil
             libraryViewModel.requestedBrowseMode = .books
@@ -1513,6 +1565,47 @@ struct MainTabView: View {
             guard !appLock.isLocked else { appLock.pendingAction = .deepLink(link); return }
             showLibraryRoute(.series(series))
         }
+    }
+
+    /// Batch 497 (REVIEW 2026-11-11 Y1): `shelfhead://series?name=<name>`. Matches the name exactly
+    /// (case/diacritic-insensitive) in the loaded series list, then the server's list; with no
+    /// match, no library or no server, it falls back to the search link (`SeriesNameRoute`).
+    private func openSeries(named name: String, link: URL) {
+        Task { @MainActor in
+            var candidates: [Series]? = libraryViewModel.seriesLoaded ? libraryViewModel.seriesList : []
+            var outcome = SeriesNameRoute.decide(name: name, candidateNames: candidates?.map { Self.names(of: $0) })
+            if case .search = outcome {
+                candidates = await fetchAllSeries()
+                outcome = SeriesNameRoute.decide(name: name, candidateNames: candidates?.map { Self.names(of: $0) })
+            }
+            // Re-checked after the awaits, as `openSeries(id:)` does.
+            guard !appLock.isLocked else { appLock.pendingAction = .deepLink(link); return }
+            switch outcome {
+            case .open(let index):
+                if let series = candidates?[index] { showLibraryRoute(.series(series)) }
+            case .search(let searchURL):
+                if let searchURL { handleDeepLink(searchURL) }
+            }
+        }
+    }
+
+    private static func names(of series: Series) -> [String] {
+        [series.name, series.displayName].compactMap { $0 }
+    }
+
+    /// Every series of the current library, a page at a time; nil when there is no library yet or
+    /// the server can't be reached.
+    private func fetchAllSeries() async -> [Series]? {
+        guard let libraryId = await currentLibraryId() else { return nil }
+        var all: [Series] = []
+        let pageSize = 100
+        for page in 0..<20 {
+            guard let response = try? await AudiobookshelfAPI.shared.getSeries(libraryId: libraryId, limit: pageSize, page: page)
+            else { return nil }
+            all += response.results
+            if response.results.count < pageSize { break }
+        }
+        return all
     }
 
     /// Batch 490 (REVIEW 2026-11-11 F14): `shelfhead://author/<id>`.
@@ -1643,7 +1736,7 @@ struct MainTabView: View {
     /// Fetch a book by id and present it; optionally start playback at `playAt` (Handoff).
     /// Batch 490 (REVIEW 2026-11-11 E1): falls back to the downloaded copy (offline, or the server
     /// is down), and says so when neither has it instead of doing nothing.
-    private func openBook(id: String, playAt: Double? = nil) {
+    private func openBook(id: String, playAt: Double? = nil, playLink: URL? = nil) {
         Task {
             let fetched = await libraryViewModel.getItemDetail(itemId: id)
             guard let item = DeepLinkParser.resolvedBook(fetched: fetched,
@@ -1651,7 +1744,7 @@ struct MainTabView: View {
                 linkFailureMessage = String(localized: "Couldn\u{2019}t open that book. It may have been removed, or your server can\u{2019}t be reached.")
                 return
             }
-            await finishOpeningBook(item: item, playAt: playAt)
+            await finishOpeningBook(item: item, playAt: playAt, playLink: playLink)
         }
     }
 
@@ -1664,12 +1757,26 @@ struct MainTabView: View {
     /// async: the app can be locked *during* that fetch, after the outer guard already
     /// passed. Queues the already-resolved `item` (no re-fetch needed on replay) instead of
     /// starting playback or presenting the sheet over the lock.
-    private func finishOpeningBook(item: LibraryItem, playAt: Double?) async {
+    private func finishOpeningBook(item: LibraryItem, playAt: Double?, playLink: URL? = nil) async {
         guard !appLock.isLocked else {
-            appLock.pendingAction = .openBookItem(item: item, playAt: playAt)
+            // Batch 495 (Y1): `.openBookItem` has no "play" flag, so a Play link re-queues as itself.
+            if let playLink {
+                appLock.pendingAction = .deepLink(playLink)
+            } else {
+                appLock.pendingAction = .openBookItem(item: item, playAt: playAt)
+            }
             return
         }
-        if let playAt {
+        if playLink != nil {
+            // Batch 495 (REVIEW 2026-11-11 Y1): the download-complete notification's Play action.
+            // Only ever reached from that explicit tap.
+            if playerViewModel.currentBook?.id != item.id {
+                await playerViewModel.startPlayback(for: item)
+            } else if !playerViewModel.isPlaying {
+                playerViewModel.togglePlayPause()
+            }
+            openFullPlayer()
+        } else if let playAt {
             if playerViewModel.currentBook?.id != item.id {
                 await playerViewModel.startPlayback(for: item)
             }
@@ -1837,6 +1944,74 @@ nonisolated enum QuickActionRoute {
 /// `handleDeepLink`, where they're a bare `switch` on `url.host` with nothing to get
 /// wrong. Query parsing is the first bit of this scheme with an actual decision in it
 /// (present/absent, known/unknown raw value), which is why it gets extracted.
+/// Batch 496 (REVIEW 2026-11-11 N6): where a `shelfhead://search[?q=…]` link (and the Search
+/// quick action, which opens that link) lands. Pinned by `Batch496SearchRoutingTests`.
+nonisolated enum SearchRequestRoute: Equatable {
+    /// iOS 26: the Search tab, with the query in its field (nil: focus the empty field).
+    case searchTab(query: String?)
+    /// iOS 17.6–25 (legacy shell, no Search tab): Library's Books root and its own field.
+    case librarySearch(query: String?)
+
+    /// Nil for any link that isn't a search link.
+    static func route(for url: URL, hasSearchTab: Bool) -> SearchRequestRoute? {
+        guard url.scheme == "shelfhead", url.host == "search" else { return nil }
+        let query = DeepLinkParser.searchQuery(in: url)
+        return hasSearchTab ? .searchTab(query: query) : .librarySearch(query: query)
+    }
+
+    /// The Search tab only exists on the iOS 26 `TabView` shell (`modernTabCore`).
+    static var systemHasSearchTab: Bool {
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
+}
+
+/// Batch 497 (REVIEW 2026-11-11 Y1): what `shelfhead://series?name=` does. A series is opened
+/// only on an exact name match (case, diacritics and width ignored; never "closest") that is
+/// unique; everything else (no list, no match, two matches) falls back to the search link.
+/// Pinned by `Batch497LinkTests`.
+nonisolated enum SeriesNameRoute: Equatable {
+    case open(Int)          // index into the candidates
+    case search(URL?)       // `shelfhead://search?q=<name>`
+
+    /// `candidateNames`: each series' names (nil when the library isn't loaded or the server
+    /// couldn't be reached).
+    static func decide(name: String, candidateNames: [[String]]?) -> SeriesNameRoute {
+        let fallback = SeriesNameRoute.search(searchURL(for: name))
+        guard let candidateNames else { return fallback }
+        let wanted = folded(name)
+        guard !wanted.isEmpty else { return fallback }
+        let hits = candidateNames.indices.filter { candidateNames[$0].contains { folded($0) == wanted } }
+        return hits.count == 1 ? .open(hits[0]) : fallback
+    }
+
+    static func searchURL(for name: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "shelfhead"
+        components.host = "search"
+        components.queryItems = [URLQueryItem(name: "q", value: name)]
+        return components.url
+    }
+
+    static func folded(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+    }
+}
+
+/// Batch 497 (REVIEW 2026-11-11 Spotlight): turns Spotlight's "Search in App" continuation into
+/// the `shelfhead://search` link. Pinned by `Batch497LinkTests`.
+nonisolated enum SpotlightSearchContinuation {
+    /// The link for a query-continuation activity, or nil for any other activity type. A missing,
+    /// non-string or blank query gives the bare `shelfhead://search` (focus the field).
+    static func url(activityType type: String, userInfo: [AnyHashable: Any]?) -> URL? {
+        guard type == CSQueryContinuationActionType else { return nil }
+        let raw = (userInfo?[CSSearchQueryString] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty { return URL(string: "shelfhead://search") }
+        return SeriesNameRoute.searchURL(for: raw)
+    }
+}
+
 enum DeepLinkParser {
 
     /// The smart filter a `shelfhead://library?smartFilter=<rawValue>` link asks for, or
@@ -1883,6 +2058,26 @@ enum DeepLinkParser {
     static func seriesID(in url: URL) -> String? { pathID(in: url, host: "series") }
     static func authorID(in url: URL) -> String? { pathID(in: url, host: "author") }
 
+    /// Batch 497 (REVIEW 2026-11-11 Y1): `shelfhead://series?name=<name>`, the series named rather
+    /// than identified (a Release Radar entry has no Audiobookshelf id). Trimmed; nil when absent
+    /// or blank, or when the link carries an id path (`series/<id>` wins).
+    static func seriesName(in url: URL) -> String? {
+        guard url.host == "series", seriesID(in: url) == nil,
+              let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "name" })?.value else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// `shelfhead://series?name=<name>`, percent-encoded by `URLComponents`.
+    static func seriesURL(named name: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "shelfhead"
+        components.host = "series"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        return components.url
+    }
+
     /// `shelfhead://book/<id>?t=<seconds>`: where to start, in seconds. Only a finite,
     /// non-negative number counts; anything else (missing, empty, "abc", -5, nan, inf) is nil,
     /// so the link just opens the book.
@@ -1893,6 +2088,14 @@ enum DeepLinkParser {
               let seconds = Double(raw.trimmingCharacters(in: .whitespaces)),
               seconds.isFinite, seconds >= 0 else { return nil }
         return seconds
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 Y1): `shelfhead://book/<id>?play=1` asks to play the book
+    /// (the download-complete notification's Play action). Only the exact value "1" counts.
+    static func wantsPlay(in url: URL) -> Bool {
+        guard url.host == "book" else { return false }
+        return URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "play" })?.value == "1"
     }
 
     /// `shelfhead://search?q=<text>`: the search text, trimmed, or nil when absent or blank.

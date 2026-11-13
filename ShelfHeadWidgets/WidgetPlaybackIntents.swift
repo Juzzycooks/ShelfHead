@@ -149,8 +149,13 @@ struct ResumeLastBookControlIntent: AudioPlaybackIntent {
 }
 
 /// Control Center's Sleep Timer toggle. Arms/disarms the default-length timer.
+///
+/// Batch 495 (REVIEW 2026-11-11 Y3): also `LiveActivityIntent`, the protocol ActivityKit
+/// documents for starting a Live Activity with the app in the background, so arming from
+/// Control Centre shows the countdown at once. The app side opens its start window in
+/// `PlaybackCoordinator.setSleepTimerFromWidget(enabled:)` while this `perform()` waits.
 @available(iOS 18.0, *)
-struct SleepTimerControlToggleIntent: SetValueIntent, AudioPlaybackIntent {
+struct SleepTimerControlToggleIntent: SetValueIntent, AudioPlaybackIntent, LiveActivityIntent {
     static var title: LocalizedStringResource = "Sleep Timer"
     static var description = IntentDescription("Start or stop the sleep timer.")
     static var isDiscoverable: Bool { false }
@@ -262,6 +267,131 @@ struct AddBookmarkControlIntent: AudioPlaybackIntent {
         guard SharedPlayback.read() != nil else { return .result() }
         await postDarwinAndAwaitHandling("com.shelfhead.addBookmark")
         return .result()
+    }
+}
+
+// MARK: - Pinned widget Play (Batch 495, REVIEW 2026-11-11 Y5)
+
+/// The pinned widget's Play disc: plays the pinned book (not whatever is loaded). Darwin
+/// notifications carry no payload, so the book id goes through the App Group
+/// (`PinnedPlayRequest`) and `com.shelfhead.playPinnedBook` tells the app to read it.
+/// `AudioPlaybackIntent` so a terminated app is launched in the background to serve it. The
+/// app plays it through `PlaybackCoordinator.playInBackground(itemId:)`, the bounded path
+/// Siri's Play Audiobook uses, and writes back whether the book is actually playing; this
+/// waits for that answer and throws when it isn't "playing", rather than reporting success.
+struct PlayPinnedBookIntent: AudioPlaybackIntent {
+    static var title: LocalizedStringResource = "Play Pinned Book"
+    static var description = IntentDescription("Play the book pinned to the widget.")
+    static var isDiscoverable: Bool { false }
+
+    @Parameter(title: "Book ID")
+    var itemId: String
+
+    init() {}
+
+    init(itemId: String) {
+        self.itemId = itemId
+    }
+
+    func perform() async throws -> some IntentResult {
+        guard let request = PinnedPlayRequest.make(itemId: itemId, now: Date()) else { return .result() }
+        PinnedPlayRequest.write(request)
+        postDarwin(PinnedPlayRequest.darwinName)
+        let outcome = await PinnedPlayRequest.awaitOutcome(token: request.token)
+        guard outcome == .playing else { throw PinnedPlayError.couldNotStart }
+        return .result()
+    }
+}
+
+/// Batch 495 (Y5): shown if the system surfaces a widget intent's error.
+enum PinnedPlayError: Error, CustomLocalizedStringResourceConvertible {
+    case couldNotStart
+
+    var localizedStringResource: LocalizedStringResource {
+        "Couldn’t start this book. Open ShelfHead to try again."
+    }
+}
+
+/// Batch 495 (Y5): the App Group hand-off between `PlayPinnedBookIntent` and the app's
+/// `PlaybackCoordinator.playPinnedFromWidget()`. Compiled into both targets with this file.
+enum PinnedPlayRequest {
+    static let darwinName = "com.shelfhead.playPinnedBook"
+    private static let requestKey = "widget_pinnedPlayRequest"
+    private static let outcomeKey = "widget_pinnedPlayOutcome"
+
+    /// A request older than this is ignored: it belongs to a tap whose intent already gave up.
+    static let maxRequestAge: TimeInterval = 15
+    /// How long the intent waits for the app's answer: the app's own 8 s bound plus slack
+    /// for a cold launch to reach the Darwin observer.
+    static let outcomeWait: TimeInterval = 10
+
+    struct Request: Codable, Equatable, Sendable {
+        var token: String
+        var itemId: String
+        var requestedAt: Date
+    }
+
+    enum Outcome: String, Codable, Sendable {
+        case playing
+        case failed
+    }
+
+    /// Nil for a blank id.
+    static func make(itemId: String, now: Date, token: String = UUID().uuidString) -> Request? {
+        let id = itemId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return nil }
+        return Request(token: token, itemId: id, requestedAt: now)
+    }
+
+    /// Pure: whether a stored request should still be acted on.
+    static func isFresh(_ request: Request, now: Date, maxAge: TimeInterval = maxRequestAge) -> Bool {
+        let age = now.timeIntervalSince(request.requestedAt)
+        return age >= -1 && age <= maxAge
+    }
+
+    /// Pure: the outcome stored for `token`, from the raw stored string "<token>|<outcome>".
+    static func outcome(fromStored stored: String?, token: String) -> Outcome? {
+        guard let stored, let bar = stored.lastIndex(of: "|") else { return nil }
+        guard String(stored[..<bar]) == token else { return nil }
+        return Outcome(rawValue: String(stored[stored.index(after: bar)...]))
+    }
+
+    private static var defaults: UserDefaults? { UserDefaults(suiteName: SharedPlayback.appGroup) }
+
+    static func write(_ request: Request) {
+        guard let data = try? JSONEncoder().encode(request) else { return }
+        defaults?.set(data, forKey: requestKey)
+    }
+
+    /// Reads and clears the pending request; nil when there is none or it's stale.
+    static func takePending(now: Date) -> Request? {
+        guard let defaults, let data = defaults.data(forKey: requestKey) else { return nil }
+        defaults.removeObject(forKey: requestKey)
+        guard let request = try? JSONDecoder().decode(Request.self, from: data),
+              isFresh(request, now: now) else { return nil }
+        return request
+    }
+
+    static func writeOutcome(_ outcome: Outcome, token: String) {
+        defaults?.set("\(token)|\(outcome.rawValue)", forKey: outcomeKey)
+    }
+
+    /// Polls for the app's answer to `token`; nil if none arrived within `timeout`.
+    static func awaitOutcome(token: String, timeout: TimeInterval = outcomeWait) async -> Outcome? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var polls = 0
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)   // 50ms
+            if let found = outcome(fromStored: defaults?.string(forKey: outcomeKey), token: token) {
+                return found
+            }
+            // On a cold launch the first post can land before the app's observer is registered.
+            // While the request is still waiting to be taken, post again about once a second;
+            // once taken the key is gone, so a repeat can't start the book twice.
+            polls += 1
+            if polls % 20 == 0, defaults?.data(forKey: requestKey) != nil { postDarwin(darwinName) }
+        }
+        return nil
     }
 }
 

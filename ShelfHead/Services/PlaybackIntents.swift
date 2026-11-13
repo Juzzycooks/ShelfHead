@@ -94,18 +94,58 @@ final class PlaybackCoordinator {
         await runBounded(timeout: timeout) { await self.playRequested(mediaName: mediaName) }
     }
 
-    private func runBounded(timeout: TimeInterval, _ body: @escaping @MainActor () async -> Void) async {
+    /// Runs `body` and returns once it finishes (true) or `timeout` passes (false), whichever
+    /// comes first. The work task is never cancelled.
+    ///
+    /// Batch 495 (REVIEW 2026-11-11 Y2): this used to race `work.value` inside a task group,
+    /// but a task group waits for every child before it returns and awaiting an unstructured
+    /// task's `value` doesn't respond to cancellation, so the "bound" only ended when the work
+    /// did. A continuation resumed by whichever side finishes first returns at the deadline.
+    @discardableResult
+    private func runBounded(timeout: TimeInterval, _ body: @escaping @MainActor () async -> Void) async -> Bool {
         let work = Task { @MainActor in await body() }
-        _ = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await work.value; return true }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return false
+        let gate = BoundedRunGate()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            Task { @MainActor in
+                await work.value
+                if gate.claim() { continuation.resume(returning: true) }
             }
-            let first = await group.next()
-            group.cancelAll()
-            return first ?? false
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                if gate.claim() { continuation.resume(returning: false) }
+            }
         }
+    }
+
+    // MARK: - Bounded background play of one book (Batch 495, REVIEW 2026-11-11 Y2/Y5)
+
+    /// Siri "Play ‹book›" and the pinned widget's Play disc: start `itemId` without opening
+    /// the app, bounded to `timeout` seconds, and report what actually happened. If the
+    /// deadline passes before the book has begun starting (the server lookup is still
+    /// out), the attempt is abandoned so a late server answer can't start sound after the
+    /// listener was told it failed. A start already under way is left to finish.
+    func playInBackground(itemId: String, timeout: TimeInterval = 8) async -> BackgroundPlayOutcome {
+        let attempt = BackgroundPlayAttempt()
+        let finished = await runBounded(timeout: timeout) {
+            await self.play(itemId: itemId, openPlayer: false, attempt: attempt)
+        }
+        if !finished && !attempt.startBegun { attempt.abandoned = true }
+        let service = AudioPlayerService.shared
+        return BackgroundPlayOutcome.decide(requestedItemId: itemId,
+                                            liveItemId: service.currentItemId,
+                                            isPlaying: service.isPlaying,
+                                            workFinished: finished,
+                                            startBegun: attempt.startBegun)
+    }
+
+    /// Y5: the pinned widget's Play disc. `PlayPinnedBookIntent` (WidgetPlaybackIntents.swift)
+    /// leaves the book id in the App Group and posts `PinnedPlayRequest.darwinName`; this
+    /// takes the request, plays it through the same bounded path as Siri, and writes the
+    /// outcome back so the intent can stop waiting.
+    func playPinnedFromWidget() async {
+        guard let request = PinnedPlayRequest.takePending(now: Date()) else { return }
+        let outcome = await playInBackground(itemId: request.itemId)
+        PinnedPlayRequest.writeOutcome(outcome == .playing ? .playing : .failed, token: request.token)
     }
 
     /// PL-14: the app half of the CarPlay/Siri `INPlayMediaIntent`. A bare play (no name)
@@ -155,16 +195,30 @@ final class PlaybackCoordinator {
     /// Start playback for a book already resolved to a specific server item id —
     /// `PlayAudiobookIntent`'s path once `AudiobookQuery` has resolved a specific
     /// `AudiobookEntity`, rather than re-searching by title on every invocation.
-    func play(itemId: String) async {
+    func play(itemId: String, openPlayer: Bool = true, attempt: BackgroundPlayAttempt? = nil) async {
         await ensureConfigured()
+        // Batch 495 (REVIEW 2026-11-11 Y2): the book is already loaded here. Playing: nothing
+        // to do. Paused live session: resume it rather than restarting the session.
+        if let vm = playerViewModel, vm.currentBook?.id == itemId, !vm.isAwaitingResume {
+            if !vm.isPlaying { vm.togglePlayPause() }
+            return
+        }
         // Review 7 Low (slow server): bounded; downloaded copy is the fallback.
         let hasLocal = DownloadManager.shared.downloadedLibraryItems().contains { $0.id == itemId }
+        let resolved: LibraryItem?
         if let item = await Self.serverRace(seconds: hasLocal ? 3 : 30, { try await AudiobookshelfAPI.shared.getItem(itemId: itemId) }) {
-            await awaitPlayerViewModel()?.startPlayback(for: item)
-        } else if let local = DownloadManager.shared.downloadedLibraryItems().first(where: { $0.id == itemId }) {
+            resolved = item
+        } else {
             // Review 5 Low (offline play by title): server unreachable, play the downloaded copy.
-            await awaitPlayerViewModel()?.startPlayback(for: local)
+            resolved = DownloadManager.shared.downloadedLibraryItems().first(where: { $0.id == itemId })
         }
+        guard let item = resolved else { return }
+        let vm = await awaitPlayerViewModel()
+        // Batch 495 (Y2): a background caller that already answered "couldn't start" must
+        // not start the book late.
+        if attempt?.abandoned == true { return }
+        attempt?.startBegun = true
+        await vm?.startPlayback(for: item, openPlayer: openPlayer)
     }
 
     // MARK: - Find in audiobook (Batch 424)
@@ -524,7 +578,11 @@ final class PlaybackCoordinator {
         ) else {
             throw PlaybackIntentError.sleepTimerError(hasBook: vm.currentBook != nil)
         }
-        applySleepTimer(.minutes(armed), via: vm)
+        // Batch 495 (REVIEW 2026-11-11 Y3): called from `StartSleepTimerIntent.perform()`, a
+        // `LiveActivityIntent`, so the countdown activity may start with the app in the background.
+        LiveActivityController.shared.allowingIntentStart {
+            applySleepTimer(.minutes(armed), via: vm)
+        }
     }
 
     /// Review 3 Medium 4: the timer lives on the audio service; the view model only adds profile/undo
@@ -548,9 +606,79 @@ final class PlaybackCoordinator {
             defaultMinutes: SettingsStore.defaultSleepTimerMinutes,
             hasLiveSession: AudioPlayerService.shared.currentSession != nil
         ) {
-        case .arm(let minutes): applySleepTimer(.minutes(minutes), via: vm)
+        case .arm(let minutes):
+            // Batch 495 (REVIEW 2026-11-11 Y3): only `SleepTimerControlToggleIntent` (a
+            // `LiveActivityIntent`) posts the "on" channel, and its `perform()` is still
+            // waiting while this runs, so the countdown activity may start from here.
+            LiveActivityController.shared.allowingIntentStart {
+                applySleepTimer(.minutes(minutes), via: vm)
+            }
         case .disarm: applySleepTimer(.off, via: vm)
         case .none: break
+        }
+    }
+}
+
+/// Batch 495 (REVIEW 2026-11-11 Y2): one-shot latch for `PlaybackCoordinator.runBounded`, so
+/// exactly one of "work finished" and "deadline passed" resumes its continuation.
+@MainActor
+final class BoundedRunGate {
+    private var claimed = false
+    func claim() -> Bool {
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
+}
+
+/// Batch 495 (Y2): shared between `playInBackground` and the `play(itemId:)` it bounds.
+/// `startBegun` is set just before the player starts loading the book; `abandoned` is set by
+/// the caller when the deadline passed first, and stops a late start.
+@MainActor
+final class BackgroundPlayAttempt {
+    var startBegun = false
+    var abandoned = false
+}
+
+/// Batch 495 (REVIEW 2026-11-11 Y2/Y5): what a bounded background play of one book achieved.
+enum BackgroundPlayOutcome: Equatable {
+    /// The requested book is the live session and playing.
+    case playing
+    /// The book began loading but wasn't playing by the deadline. It may still start.
+    case stillStarting
+    /// Nothing started: the book couldn't be found or loaded, the start failed, or the
+    /// deadline passed before loading began (the attempt was abandoned).
+    case couldNotStart
+
+    nonisolated static func decide(requestedItemId: String, liveItemId: String?, isPlaying: Bool,
+                                   workFinished: Bool, startBegun: Bool) -> BackgroundPlayOutcome {
+        if liveItemId == requestedItemId && isPlaying { return .playing }
+        if !workFinished && startBegun { return .stillStarting }
+        return .couldNotStart
+    }
+}
+
+/// Batch 495 (Y2): Siri's answer when "Play ‹book›" can't confirm the book is playing. Thrown,
+/// so Siri presents it as a failure rather than a success.
+enum PlayBookIntentError: Error, Equatable, CustomLocalizedStringResourceConvertible {
+    case stillStarting(title: String)
+    case couldNotStart(title: String)
+
+    /// Nil for `.playing`: the intent answers with a dialog instead of throwing.
+    nonisolated static func forOutcome(_ outcome: BackgroundPlayOutcome, title: String) -> PlayBookIntentError? {
+        switch outcome {
+        case .playing: return nil
+        case .stillStarting: return .stillStarting(title: title)
+        case .couldNotStart: return .couldNotStart(title: title)
+        }
+    }
+
+    var localizedStringResource: LocalizedStringResource {
+        switch self {
+        case .stillStarting(let title):
+            return "“\(title)” is still loading. If it doesn’t start, open ShelfHead."
+        case .couldNotStart(let title):
+            return "Couldn’t start “\(title)”. Check that your server is reachable, then try again."
         }
     }
 }
@@ -789,13 +917,18 @@ struct AudiobookQuery: EntityStringQuery {
 
 /// "Play a book in ShelfHead" — Siri asks which book (or the phrase names one), then
 /// starts it by its resolved server id. (Also usable in the Shortcuts app via the book
-/// picker `AudiobookQuery` backs.) See the note on `ResumePlaybackIntent` above —
-/// reverted to plain `AppIntent` for the same reason (network-bound `perform()`, not a
-/// good fit for `AudioPlaybackIntent`).
-struct PlayAudiobookIntent: AppIntent {
+/// picker `AudiobookQuery` backs.)
+///
+/// Batch 495 (REVIEW 2026-11-11 Y2): `AudioPlaybackIntent` without `openAppWhenRun`, so a
+/// locked phone no longer asks for an unlock. Batch 68 tried this and Siri spun (Batch 70
+/// reverted) because `perform()` waited on an unbounded server round trip. Now it goes
+/// through `PlaybackCoordinator.playInBackground(itemId:)`, which answers within 8 s
+/// whatever the server does, and only claims success when the book is the live session
+/// and playing; otherwise it throws a spoken failure. **[device check]** like Batch 332's
+/// `ResumePlaybackIntent`, the Batch 70 failure was only ever seen on hardware.
+struct PlayAudiobookIntent: AudioPlaybackIntent {
     static var title: LocalizedStringResource = "Play Audiobook"
     static var description = IntentDescription("Play an audiobook by title.")
-    static var openAppWhenRun: Bool = true
 
     /// An `AppEntity` parameter rather than free text: it gives Shortcuts a real book
     /// picker instead of a bare text field, lets Siri disambiguate between similar
@@ -809,9 +942,10 @@ struct PlayAudiobookIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult {
-        await PlaybackCoordinator.shared.play(itemId: book.id)
-        return .result()
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let outcome = await PlaybackCoordinator.shared.playInBackground(itemId: book.id)
+        if let error = PlayBookIntentError.forOutcome(outcome, title: book.title) { throw error }
+        return .result(dialog: IntentDialog(LocalizedStringResource("Playing “\(book.title)”.")))
     }
 }
 
@@ -856,8 +990,8 @@ enum FindInAudiobookOutcome: Equatable {
 }
 
 /// "Find a passage in ShelfHead": searches the book's on-device transcript and jumps back to it.
-/// `openAppWhenRun` for the same reason as `PlayAudiobookIntent`: it drives the in-app player
-/// (and may need to start a book), which a background-only intent can't do reliably.
+/// `openAppWhenRun`: it drives the in-app player (and may need to start a book and search a
+/// transcript), which a background-only intent can't do reliably.
 /// `book` is optional: nil means the current (or last played) book. **[device check]**
 struct FindInAudiobookIntent: AppIntent {
     static var title: LocalizedStringResource = "Find in Audiobook"
@@ -935,7 +1069,11 @@ struct SkipAheadIntent: AudioPlaybackIntent {
 
 /// Start a sleep timer for the current book. Available in the Shortcuts app; the
 /// minutes value is a parameter Siri will ask for.
-struct StartSleepTimerIntent: AppIntent {
+///
+/// Batch 495 (REVIEW 2026-11-11 Y3): `LiveActivityIntent`, the protocol ActivityKit documents
+/// for starting a Live Activity while the app is in the background, so the countdown appears
+/// on the Lock Screen when the timer is set by voice.
+struct StartSleepTimerIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Set Sleep Timer"
     static var description = IntentDescription("Start a sleep timer for the current audiobook.")
 

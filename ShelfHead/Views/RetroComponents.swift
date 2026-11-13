@@ -1196,9 +1196,46 @@ struct LibraryPositionScrubber: View {
 
 struct RetroSectionHeader: View {
     let title: LocalizedStringResource
+    /// Batch 496 (REVIEW 2026-11-11 N4): an optional trailing "See all" that pushes the
+    /// shelf's full list. VoiceOver reads `label` (which names the shelf), not a bare "See all".
+    private struct SeeAll {
+        let label: String
+        let destination: () -> AnyView
+    }
+    private var seeAll: SeeAll?
     init(title: LocalizedStringResource) { self.title = title }
+    /// Batch 496 (N4): a header with a trailing "See all" link (44 pt target), copied from
+    /// the Other Servers shelf (Batch 490). `seeAllLabel` is the spoken name, e.g. "See all
+    /// recently added".
+    init<Destination: View>(title: LocalizedStringResource, seeAllLabel: String,
+                            @ViewBuilder seeAllDestination: @escaping () -> Destination) {
+        self.title = title
+        self.seeAll = SeeAll(label: seeAllLabel, destination: { AnyView(seeAllDestination()) })
+    }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
+        if let seeAll {
+            HStack(alignment: .center, spacing: 8) {
+                titleRow
+                Spacer(minLength: 0)   // AX sizes drop the rule; keep See all trailing
+                NavigationLink {
+                    seeAll.destination()
+                } label: {
+                    Text("See all")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.shelfAmberText)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: seeAll.label))
+            }
+        } else {
+            titleRow
+        }
+    }
+
+    private var titleRow: some View {
         // R3 (REVIEW_2026-09-04_UI.md): title wins the width fight; the rule
         // collapses and is dropped at accessibility sizes (rendered:
         // PREFEREN/CES at AX3).

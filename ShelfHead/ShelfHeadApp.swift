@@ -41,6 +41,15 @@ enum OrientationLock {
 
 /// Handles background URLSession completion events for downloads.
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Batch 495 (REVIEW 2026-11-11 Y1): the notification delegate has to be in place before launch
+    /// finishes, or the tap that cold-launched the app is never delivered (Apple,
+    /// UNUserNotificationCenter.delegate). Taps become `shelfhead://` links in `IncomingLinkInbox`.
+    func application(_ application: UIApplication,
+                     willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        NotificationResponder.shared.install()
+        return true
+    }
+
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {

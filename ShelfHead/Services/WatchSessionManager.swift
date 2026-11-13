@@ -13,6 +13,7 @@ import Foundation
 // time in the same function.
 @preconcurrency import WatchConnectivity
 import UIKit
+import Observation
 
 // MARK: - Credential handoff vocabulary (item 10, 10 September 2026)
 
@@ -224,6 +225,7 @@ final class WatchSessionManager: NSObject {
     /// Batch 399 follow-up: sends the timed chapter skip settings (default start/end plus
     /// per-book overrides) under `"chapterSkipSettings"` so the Watch's standalone
     /// engine can honour them. Reads the same UserDefaults keys `SettingsStore` writes.
+    /// Batch 495 (W7): the same payload also carries the playback settings listed there.
     ///
     /// Channel: `transferUserInfo`, deliberately NOT `updateApplicationContext`. Per the
     /// WATCH-3 notes on `send(_:)`, application context is reserved for `playbackState`
@@ -234,10 +236,18 @@ final class WatchSessionManager: NSObject {
     private func pushChapterSkipSettingsIfNeeded() {
         guard hasReachableWatchApp, WCSession.default.activationState == .activated else { return }
         let defaults = UserDefaults.standard
+        // Batch 495 (REVIEW 2026-11-11 W7): plus skip intervals, smart rewind, default and
+        // per-book speeds, so standalone Watch playback follows them. All optional on the
+        // wire; an older Watch app ignores the extra keys.
         let settings = WatchChapterSkipSettings(
             defaultStart: defaults.integer(forKey: SettingsKeys.chapterSkipStart),
             defaultEnd: defaults.integer(forKey: SettingsKeys.chapterSkipEnd),
-            overrides: (defaults.dictionary(forKey: SettingsKeys.perBookChapterSkip) as? [String: [Int]]) ?? [:])
+            overrides: (defaults.dictionary(forKey: SettingsKeys.perBookChapterSkip) as? [String: [Int]]) ?? [:],
+            skipBackwardInterval: SettingsStore.skipBackwardInterval,
+            skipForwardInterval: SettingsStore.skipForwardInterval,
+            smartRewind: SettingsStore.smartRewind,
+            defaultSpeed: SettingsStore.defaultPlaybackSpeed,
+            perBookSpeeds: (defaults.dictionary(forKey: SettingsKeys.perBookSpeed) as? [String: Double]) ?? [:])
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys   // stable bytes, so the diff below is meaningful
         guard let data = try? encoder.encode(settings), data != lastSentChapterSkipSettings else { return }
@@ -729,7 +739,8 @@ final class WatchSessionManager: NSObject {
             guard seen.insert(itemId).inserted else { continue }
             summaries.append(WatchDownloadSummary(
                 id: itemId, title: task.title, author: "",
-                status: task.isPaused ? .queued : .downloading(progress: task.progress),
+                // Batch 496 (D2): a book waiting its turn in the download queue reads as queued too.
+                status: task.isPaused || task.isQueued ? .queued : .downloading(progress: task.progress),
                 coverData: nil))
         }
         for (itemId, failure) in manager.failedDownloads {
@@ -1112,10 +1123,19 @@ final class WatchSessionManager: NSObject {
 extension WatchSessionManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: (any Error)?) {
         Task { @MainActor in
+            // Batch 496 (REVIEW 2026-11-11 W13): Settings › Apple Watch reads pairing,
+            // install and the Watch's last setup report from here.
+            WatchSetupModel.shared.refresh()
             guard activationState == .activated else { return }
             self.refreshPollingState()
             self.pushIfNeeded()
         }
+    }
+
+    /// Batch 496 (W13): Settings › Apple Watch offers "Send Sign-In to Watch" only while the
+    /// Watch app can take a message (`isReachable`).
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        Task { @MainActor in WatchSetupModel.shared.refresh() }
     }
 
     /// Bug fix (26 August 2026): the console reported "delegate
@@ -1137,7 +1157,37 @@ extension WatchSessionManager: WCSessionDelegate {
     /// -originated context would contain, and no such format exists anywhere in this
     /// codebase to parse.
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        // Batch 496 (REVIEW 2026-11-11 W13): the Watch now sends one context, its setup
+        // report (no token). Anything else is still only logged.
+        if let data = applicationContext[WatchSetupReport.contextKey] as? Data {
+            Task { @MainActor in WatchSetupModel.shared.apply(reportData: data) }
+            return
+        }
         ShelfLog.info(.watch, "Received unexpected application context from Watch: keys=\(applicationContext.keys.sorted())")
+    }
+
+    /// Batch 497 (REVIEW 2026-11-11 W7): a speed set on the Watch for one book
+    /// (`WatchBookSpeedUpdate`), queued by the Watch's `transferUserInfo` so it arrives even
+    /// if this app wasn't running or reachable when it was set. Stored as the book's
+    /// remembered speed; the change notification then echoes the updated map back to the
+    /// Watch (`pushChapterSkipSettingsIfNeeded`), which is how the Watch learns it landed.
+    ///
+    /// Not applied to the live player, even with the same book loaded: the update can land
+    /// minutes after it was set, and changing the speed of audio the listener is hearing
+    /// here, without a touch here, would be a surprise. The phone reads the remembered
+    /// speed when it next starts the book (`SettingsStore.resolvedSpeed(forItem:)`).
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        guard let data = userInfo[WatchBookSpeedUpdate.userInfoKey] as? Data else {
+            ShelfLog.info(.watch, "Received unexpected user info from Watch: keys=\(userInfo.keys.sorted())")
+            return
+        }
+        guard let update = try? JSONDecoder().decode(WatchBookSpeedUpdate.self, from: data) else { return }
+        Task { @MainActor in
+            guard let rate = WatchBookSpeedUpdate.acceptedRate(
+                itemId: update.itemId, rate: update.rate,
+                isCoordinatingPlayback: AudioPlayerService.shared.isCoordinatingPlayback) else { return }
+            SettingsStore.setSpeed(rate, forItem: update.itemId)
+        }
     }
 
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
@@ -1151,6 +1201,7 @@ extension WatchSessionManager: WCSessionDelegate {
     /// unpaired, or leaving it off after one gets paired mid-session.
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
         Task { @MainActor in
+            WatchSetupModel.shared.refresh()   // Batch 496 (W13)
             self.refreshPollingState()
             if self.hasReachableWatchApp { self.pushIfNeeded() }
         }
@@ -1382,6 +1433,12 @@ extension WatchSessionManager: WCSessionDelegate {
         if !AuthStore.shared.customHeaders.isEmpty {
             reply["customHeaders"] = AuthStore.shared.customHeaders
         }
+        // Batch 496 (REVIEW 2026-11-11 W13): additive, not a credential. The Watch reports it
+        // back (`WatchSetupReport.handoffAccountId`) so Settings › Apple Watch can say whether
+        // this account is the one set up there. Older Watch builds ignore it.
+        if let accountId = AccountStore.currentAccountId {
+            reply["accountId"] = accountId
+        }
         return reply
     }
 
@@ -1510,6 +1567,130 @@ extension WatchSessionManager: WCSessionDelegate {
                 self.retriedTransferKeys.insert("collections")
                 WCSession.default.transferUserInfo(["collections": collectionsData])
             }
+        }
+    }
+}
+
+// MARK: - Settings › Apple Watch (Batch 496, REVIEW 2026-11-11 W13)
+
+/// Whether this iPhone's current account is the one set up on the Watch, from the Watch's
+/// last `WatchSetupReport`. Pure, so `ShelfHeadTests` can pin it.
+enum WatchSetupStatus: Equatable, Sendable {
+    /// No report yet: the Watch app hasn't run since this build, or hasn't reached this iPhone.
+    case unknown
+    case notSetUp
+    /// The iPhone's account switch or sign-out signed the Watch out.
+    case signedOutOnPhone
+    /// Signed in with this account. `isBorrowed` for an SSO account's short-lived token.
+    case thisAccount(isBorrowed: Bool)
+    /// Signed in on the Watch itself, on this account's server (the account can't be told).
+    case ownSignInSameServer
+    case otherAccount
+    case expired
+
+    static func decide(report: WatchSetupReport?, currentAccountId: String?, currentServerURL: String?) -> WatchSetupStatus {
+        guard let report else { return .unknown }
+        switch report.state {
+        case .notSetUp:
+            return report.signedOutOnPhone ? .signedOutOnPhone : .notSetUp
+        case .expired:
+            return .expired
+        case .active:
+            if let handoffId = report.handoffAccountId {
+                guard handoffId == currentAccountId else { return .otherAccount }
+                return .thisAccount(isBorrowed: report.sessionKind == WatchHandoffSessionKind.shared.rawValue)
+            }
+            if let watchServer = report.serverURL, let currentServerURL,
+               comparable(watchServer) == comparable(currentServerURL) {
+                return .ownSignInSameServer
+            }
+            return .otherAccount
+        }
+    }
+
+    /// Same leniency as the Watch's `WatchStore.comparableServerURL`.
+    private static func comparable(_ url: String) -> String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
+    }
+
+    /// Whether "Send Sign-In to Watch" would change anything worth offering.
+    var offersSignIn: Bool {
+        switch self {
+        case .thisAccount(let isBorrowed): return isBorrowed
+        default: return true
+        }
+    }
+}
+
+/// Settings › Apple Watch's live state: pairing and install (`WCSession.isPaired`,
+/// `isWatchAppInstalled`), reachability, and the Watch's setup report. Refreshed by
+/// `WatchSessionManager`'s delegate callbacks and when the page appears.
+@MainActor @Observable
+final class WatchSetupModel {
+    static let shared = WatchSetupModel()
+
+    enum OfferState: Equatable {
+        case idle, sent, failed
+    }
+
+    private(set) var isPaired = false
+    private(set) var isWatchAppInstalled = false
+    private(set) var isReachable = false
+    private(set) var report: WatchSetupReport?
+    private(set) var offerState: OfferState = .idle
+
+    private init() {}
+
+    /// The page shows only with a Watch paired or the Watch app installed. `isPaired` is
+    /// only valid once the session is activated (Apple's `WCSession.isPaired` page).
+    var showsSettingsPage: Bool { Self.showsSettingsPage(isPaired: isPaired, isWatchAppInstalled: isWatchAppInstalled) }
+
+    nonisolated static func showsSettingsPage(isPaired: Bool, isWatchAppInstalled: Bool) -> Bool {
+        isPaired || isWatchAppInstalled
+    }
+
+    var status: WatchSetupStatus {
+        WatchSetupStatus.decide(report: report, currentAccountId: AccountStore.currentAccountId,
+                                currentServerURL: AuthStore.shared.isConfigured ? AuthStore.shared.serverURL : nil)
+    }
+
+    func refresh() {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+        isPaired = session.isPaired
+        isWatchAppInstalled = session.isWatchAppInstalled
+        isReachable = session.isReachable
+        if !isReachable, offerState == .sent { offerState = .idle }
+        // The last context the Watch sent, kept by the system across launches.
+        if let data = session.receivedApplicationContext[WatchSetupReport.contextKey] as? Data {
+            apply(reportData: data)
+        }
+    }
+
+    func apply(reportData: Data) {
+        guard let decoded = try? JSONDecoder().decode(WatchSetupReport.self, from: reportData) else { return }
+        // Latest wins; a redelivered older context never overwrites a newer one.
+        if let report, report.updatedAt > decoded.updatedAt { return }
+        report = decoded
+        if decoded.state == .active { offerState = .idle }
+    }
+
+    /// "Send Sign-In to Watch": a tokenless nudge. The Watch then asks for the credential
+    /// over its usual interactive hand-over, so no token is queued and a working dedicated
+    /// session on the Watch isn't swapped for a borrowed one (`WatchStore.applyHandoff`).
+    /// `sendMessage` from iOS doesn't wake the Watch app, so this needs it open.
+    func sendSignInToWatch() {
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
+              WCSession.default.isReachable else {
+            offerState = .failed
+            return
+        }
+        offerState = .sent
+        WCSession.default.sendMessage(["offerCredentialHandoff": Data()], replyHandler: nil) { _ in
+            Task { @MainActor in WatchSetupModel.shared.offerState = .failed }
         }
     }
 }

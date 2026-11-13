@@ -123,7 +123,18 @@ final class AudioPlayerService {
     private var unexpectedPauseCheck: Task<Void, Never>?
     private var streamRecoveryAttempts = 0                 // guards the stream-failure reload (e.g. expired token)
     private var lastStreamRecoveryAt: Date?
-    private var isAdvancingTrack = false                   // guards against double-firing the end-of-track advance
+    /// Batch 495 (REVIEW 2026-11-11 P4): a `handleStreamFailure` reload is waiting on its
+    /// token refresh, so a pause seen meanwhile isn't the stream dying for good.
+    @ObservationIgnored private var streamRecoveryInFlight = false
+    /// Batch 495 (REVIEW 2026-11-11 P4): true while the "lost the connection" notice is up.
+    /// Changes are reported through `onStreamLostChanged`; play/stop/a new start clear it.
+    @ObservationIgnored private var streamLostNoticeShown = false {
+        didSet { if streamLostNoticeShown != oldValue { onStreamLostChanged?(streamLostNoticeShown) } }
+    }
+    /// Batch 495 (REVIEW 2026-11-11 P4): `PlayerViewModel` shows the notice through its
+    /// failed-start path (root alert, Driving Mode's status line) when this reports true.
+    @ObservationIgnored var onStreamLostChanged: ((Bool) -> Void)?
+    private var isAdvancingTrack = false                  // guards against double-firing the end-of-track advance
     /// Live-updated by `refreshAudioProcessing()` when volume boost/tone-control
     /// settings change mid-playback; nil when no processing is attached to the current
     /// track (see `AudioProcessingChain`).
@@ -314,6 +325,15 @@ final class AudioPlayerService {
                 Task { @MainActor in await PlaybackCoordinator.shared.previousChapterFromWidget() }
             },
             "com.shelfhead.previousChapter" as CFString, nil, .deliverImmediately
+        )
+        // Batch 495 (REVIEW 2026-11-11 Y5): the pinned widget's Play disc (`PlayPinnedBookIntent`).
+        // The book id waits in the App Group (`PinnedPlayRequest`); the coordinator plays it.
+        CFNotificationCenterAddObserver(
+            center, nil,
+            { _, _, _, _, _ in
+                Task { @MainActor in await PlaybackCoordinator.shared.playPinnedFromWidget() }
+            },
+            PinnedPlayRequest.darwinName as CFString, nil, .deliverImmediately
         )
         // Batch 490 (REVIEW 2026-11-11 F17): Control Centre "Add Bookmark" (`AddBookmarkControlIntent`).
         // Same guards, default title and `BookmarkSyncService.create` call as the lock screen
@@ -539,6 +559,7 @@ final class AudioPlayerService {
         currentTime = startOffset
         hasReachedResumePosition = false
         streamRecoveryAttempts = 0
+        streamLostNoticeShown = false   // Batch 495 (P4): a new start replaces the notice
         // Reset the per-session listen counter so time listened on the previous book
         // isn't attributed to this one on the first sync.
         timeListenedSinceSync = 0
@@ -888,6 +909,15 @@ final class AudioPlayerService {
         // widget's toggle button on a fresh install / after Sign Out, where there's no
         // last-played book to restore. Bail before any of that happens.
         guard player != nil, currentSession != nil else { return }
+        // Batch 495 (REVIEW 2026-11-11 P4): an explicit play replaces the lost-stream
+        // notice. If the item itself has failed, playing it would do nothing while every
+        // surface said playing, so reload it at the current position instead; the
+        // listener asked for sound, so the reload starts it.
+        streamLostNoticeShown = false
+        if player?.currentItem?.status == .failed {
+            reloadCurrentTrackAfterStreamLoss()
+            return
+        }
         activateAudioSession()
 
         // Fix 6.A (REVIEW-2026-09-09.md): the intent is declared BEFORE the
@@ -1281,6 +1311,7 @@ final class AudioPlayerService {
         }
         syncProgress()
         closeSession()
+        streamLostNoticeShown = false   // Batch 495 (P4)
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         removeTimeObserver()
@@ -3550,11 +3581,65 @@ final class AudioPlayerService {
         let resumeAt = max(0, currentTime - trackStart)
         let wasPlaying = isPlaying
         let index = currentTrackIndex
+        streamRecoveryInFlight = true   // Batch 495 (P4)
 
         Task {
             await AudiobookshelfAPI.shared.ensureFreshAccessToken(force: true)
             await MainActor.run {
-                self.loadAndPlayTrack(at: index, seekTo: resumeAt, autoPlay: wasPlaying)
+                self.streamRecoveryInFlight = false
+                // Batch 495 (P4): a pause (listener, sleep timer, interruption) during the
+                // token refresh wins over the intent captured at the failure.
+                self.loadAndPlayTrack(at: index, seekTo: resumeAt, autoPlay: wasPlaying && self.isPlaying)
+            }
+        }
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 P4): whether a pause nobody asked for should be
+    /// explained as a lost connection. Only for a streamed track the listener was playing,
+    /// with no interruption waiting to resume it and no recovery reload still on its way.
+    /// A deliberate pause, a sleep timer stop and an interruption all clear
+    /// `listenerWasPlaying` before the check runs; a downloaded track isn't `isStreamed`.
+    nonisolated static func shouldShowStreamLostNotice(isStreamed: Bool,
+                                                       listenerWasPlaying: Bool,
+                                                       interruptionPending: Bool,
+                                                       recoveryInFlight: Bool) -> Bool {
+        isStreamed && listenerWasPlaying && !interruptionPending && !recoveryInFlight
+    }
+
+    /// Batch 495 (P4): the current track plays from the server rather than a local file.
+    private var isCurrentTrackStreamed: Bool {
+        guard let itemId = currentItemId, let session = currentSession,
+              !session.id.hasPrefix("offline-") else { return false }
+        return DownloadManager.shared.localFileURL(itemId: itemId, trackIndex: currentTrackIndex) == nil
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 P4): the lost-stream notice's Retry, and an explicit
+    /// play on a failed item. Reloads the current track at the current position with a
+    /// fresh recovery budget and starts it. Only ever called from a listener's action, so
+    /// it never starts sound on its own.
+    func retryAfterStreamLoss() {
+        guard currentSession != nil else { return }
+        streamLostNoticeShown = false
+        reloadCurrentTrackAfterStreamLoss()
+    }
+
+    private func reloadCurrentTrackAfterStreamLoss() {
+        guard let tracks = currentSession?.audioTracks, currentTrackIndex < tracks.count else { return }
+        streamRecoveryAttempts = 0
+        lastStreamRecoveryAt = nil
+        let index = currentTrackIndex
+        let resumeAt = max(0, currentTime - (tracks[index].startOffset ?? 0))
+        streamRecoveryInFlight = true
+        let requestedAt = Date()
+        Task {
+            await AudiobookshelfAPI.shared.ensureFreshAccessToken()
+            await MainActor.run {
+                self.streamRecoveryInFlight = false
+                // The session may have been stopped or replaced while the token refreshed.
+                guard self.currentTrackIndex == index, self.currentSession != nil else { return }
+                // A pause after the tap (lock screen, sleep timer) cancels the start.
+                let pausedSinceTap = self.pausedAt.map { $0 > requestedAt } ?? false
+                self.loadAndPlayTrack(at: index, seekTo: resumeAt, autoPlay: !pausedSinceTap)
             }
         }
     }
@@ -3681,8 +3766,21 @@ final class AudioPlayerService {
             if itemDuration.isFinite, itemDuration > 0,
                item.currentTime().seconds >= itemDuration - 0.5 { return }
         }
+        // Batch 495 (REVIEW 2026-11-11 P4): a recovery reload is waiting on its token
+        // refresh and will load a new item (which cancels this check). Look again shortly
+        // rather than pausing, so the reload keeps the listener's intent to play.
+        if streamRecoveryInFlight {
+            scheduleUnexpectedPauseCheck()
+            return
+        }
         ShelfLog.error(.playback, "Player stopped unexpectedly (stall or lost stream) — reconciling to paused")
+        // Batch 495 (REVIEW 2026-11-11 P4): decided before `pause()`, which clears the flags.
+        let showNotice = Self.shouldShowStreamLostNotice(isStreamed: isCurrentTrackStreamed,
+                                                         listenerWasPlaying: isPlaying,
+                                                         interruptionPending: resumeAfterInterruption,
+                                                         recoveryInFlight: streamRecoveryInFlight)
         pause()
+        if showNotice { streamLostNoticeShown = true }
     }
 
     /// Rebuilds the audio stack after the system's media server has been reset (fix

@@ -231,6 +231,42 @@ final class StandaloneAudioEngine {
     nonisolated static let skipBackwardSeconds: Double = 15
     nonisolated static let skipForwardSeconds: Double = 30
 
+    /// Batch 495 (REVIEW 2026-11-11 W7): the iPhone's playback settings as last received
+    /// (`WatchChapterSkipSettings`, persisted by `WatchConnectivityStore`), held in memory
+    /// so the per-second tick doesn't decode them. `reloadPhonePlaybackSettings()`
+    /// refreshes it when a new payload lands.
+    private(set) var phonePlaybackSettings = WatchChapterSkipSettings.load()
+    /// When the loaded book last paused, for smart rewind on resume (as the iPhone's
+    /// `AudioPlayerService.pausedAt`). Cleared when it's used and when a book loads.
+    private var pausedAt: Date?
+
+    /// The skip intervals standalone playback uses (Batch 495 W7): the iPhone's settings,
+    /// else the last iPhone snapshot's, else the 15/30 constants above.
+    var skipBackwardInterval: Double { resolvedSkipIntervals.backward }
+    var skipForwardInterval: Double { resolvedSkipIntervals.forward }
+
+    private var resolvedSkipIntervals: (backward: Double, forward: Double) {
+        let snapshot = WatchConnectivityStore.shared.playbackState
+        return WatchPlaybackPreferences.skipIntervals(settings: phonePlaybackSettings,
+                                                      snapshotBackward: snapshot?.skipBackwardInterval,
+                                                      snapshotForward: snapshot?.skipForwardInterval)
+    }
+
+    /// Batch 495 (W7): called by `WatchConnectivityStore` after it saves a new settings
+    /// payload. Re-applies the system skip intervals too.
+    func reloadPhonePlaybackSettings() {
+        phonePlaybackSettings = WatchChapterSkipSettings.load()
+        WatchRemoteCommandRouter.shared.refreshPreferredIntervals()
+        // Batch 497 (REVIEW 2026-11-11 W7): a Watch speed the iPhone now holds is
+        // confirmed; drop it here so a later iPhone change for that book wins.
+        let watchSpeeds = Self.watchBookSpeeds()
+        let remaining = WatchPlaybackPreferences.acknowledged(watchBookSpeeds: watchSpeeds,
+                                                              phoneSpeeds: phonePlaybackSettings.perBookSpeeds)
+        if remaining.count != watchSpeeds.count {
+            UserDefaults.standard.set(remaining, forKey: WatchPlaybackPreferences.bookSpeedsDefaultsKey)
+        }
+    }
+
     init(api: WatchAudiobookshelfAPI, progressSync: WatchProgressSyncCoordinator) {
         self.api = api
         self.progressSync = progressSync
@@ -640,6 +676,15 @@ final class StandaloneAudioEngine {
             sleepTimer = nil   // PL-4: a timer belongs to the book it was set on
             currentItemId = itemId
             chapterSkipLastTickTime = nil
+            pausedAt = nil
+            // Batch 495 (REVIEW 2026-11-11 W7): this book's speed, not whatever the Watch
+            // last used (`WatchPlaybackPreferences.startRate`). Set before
+            // `attachObservers(to:)` stamps it on the player as `defaultRate`.
+            playbackRate = WatchPlaybackPreferences.startRate(
+                itemId: itemId,
+                watchBookSpeeds: Self.watchBookSpeeds(),
+                settings: phonePlaybackSettings,
+                watchLastRate: UserDefaults.standard.object(forKey: Self.playbackRateDefaultsKey) as? Double)
             itemTitle = title
             itemAuthor = author
             isLoaded = true
@@ -705,6 +750,7 @@ final class StandaloneAudioEngine {
         if isPlaying {
             player.pause()
             isPlaying = false
+            pausedAt = Date()   // Batch 495 (W7): smart rewind on resume
             // A pause during the load window wins over the resume seek: without
             // this, the seek's completion a moment later would start playback the
             // user just stopped.
@@ -731,8 +777,21 @@ final class StandaloneAudioEngine {
             }
             player.play()
             isPlaying = true
+            applySmartRewind()
         }
         updateNowPlayingInfo()
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 W7): the iPhone's smart rewind, on this Watch. Called
+    /// just after playback restarts (so a backward seek that rebuilds the queue sees
+    /// `isPlaying` and carries on playing). `pausedAt` is cleared first so it applies once.
+    private func applySmartRewind(now: Date = Date()) {
+        guard let pausedSince = pausedAt else { return }
+        pausedAt = nil
+        let rewind = WatchSmartRewind.seconds(
+            pausedFor: now.timeIntervalSince(pausedSince),
+            isEnabled: WatchPlaybackPreferences.smartRewindIsEnabled(settings: phonePlaybackSettings))
+        if rewind > 0 { seek(to: max(0, currentTime - rewind)) }
     }
 
     /// Critique 2026-10-06 (harden): resumes the loaded book after activating the session
@@ -749,6 +808,7 @@ final class StandaloneAudioEngine {
         }
         player.play()
         isPlaying = true
+        applySmartRewind()
         updateNowPlayingInfo()
     }
 
@@ -891,13 +951,32 @@ final class StandaloneAudioEngine {
         let clamped = min(max(rate, 0.5), 3.0)
         playbackRate = clamped
         UserDefaults.standard.set(clamped, forKey: Self.playbackRateDefaultsKey)
+        // Batch 495 (REVIEW 2026-11-11 W7): also remembered for this book, which then
+        // wins over the iPhone's speed for it (`WatchPlaybackPreferences.startRate`).
+        if isLoaded, let itemId = currentItemId {
+            // Batch 497 (REVIEW 2026-11-11 W7): and sent to the iPhone, which remembers it
+            // for the book too; its settings echo then clears this Watch's entry.
+            let result = WatchPlaybackPreferences.settingWatchSpeed(clamped, forItem: itemId,
+                                                                    in: Self.watchBookSpeeds(),
+                                                                    phoneSpeeds: phonePlaybackSettings.perBookSpeeds)
+            UserDefaults.standard.set(result.map, forKey: WatchPlaybackPreferences.bookSpeedsDefaultsKey)
+            if result.sendsToPhone {
+                WatchConnectivityStore.shared.sendBookSpeed(itemId: itemId, rate: clamped)
+            }
+        }
         player?.defaultRate = Float(clamped)
         if isPlaying { player?.rate = Float(clamped) }
         updateNowPlayingInfo()
     }
 
-    func skipBackward() { seek(by: -Self.skipBackwardSeconds) }
-    func skipForward() { seek(by: Self.skipForwardSeconds) }
+    /// Batch 495 (W7): speeds set on this Watch, by item id.
+    private static func watchBookSpeeds() -> [String: Double] {
+        (UserDefaults.standard.dictionary(forKey: WatchPlaybackPreferences.bookSpeedsDefaultsKey) as? [String: Double]) ?? [:]
+    }
+
+    // Batch 495 (REVIEW 2026-11-11 W7): the iPhone's intervals, not fixed 15/30.
+    func skipBackward() { seek(by: -skipBackwardInterval) }
+    func skipForward() { seek(by: skipForwardInterval) }
 
     private func seek(by delta: Double) {
         seek(to: currentTime + delta)
@@ -1262,6 +1341,7 @@ final class StandaloneAudioEngine {
         duration = 0
         chapters = []
         chapterSkipLastTickTime = nil
+        pausedAt = nil
         sleepTimer = nil
         timeListenedSinceSync = 0
         ticksSinceLastSync = 0
@@ -1349,7 +1429,7 @@ final class StandaloneAudioEngine {
         let previous = chapterSkipLastTickTime
         chapterSkipLastTickTime = currentTime
         guard isPlaying, !chapters.isEmpty, let itemId = currentItemId else { return }
-        let skip = WatchChapterSkipSettings.load().resolved(forItem: itemId)
+        let skip = phonePlaybackSettings.resolved(forItem: itemId)   // Batch 495: cached, not decoded per tick
         guard skip.start > 0 || skip.end > 0 else { return }
         let bounds = chapters.map { WatchChapterSkipRule.Bounds(start: $0.start, end: $0.end) }
         if let target = WatchChapterSkipRule.target(chapters: bounds, previousTime: previous,
@@ -1574,7 +1654,10 @@ final class StandaloneAudioEngine {
                     let wasPlaying = self.isPlaying
                     self.player?.pause()
                     self.isPlaying = false
-                    if wasPlaying { self.checkInProgress() }   // Phase 2a #7 (WA-2)
+                    if wasPlaying {
+                        self.checkInProgress()   // Phase 2a #7 (WA-2)
+                        self.pausedAt = Date()   // Batch 495 (W7): smart rewind on resume
+                    }
                     // Same reason as `togglePlayPause()`'s pause branch: a pending
                     // resume seek must not start playback into a route the user
                     // just unplugged.
@@ -1612,6 +1695,7 @@ final class StandaloneAudioEngine {
                         self.player?.pause()
                         self.isPlaying = false
                         self.checkInProgress()
+                        self.pausedAt = Date()   // Batch 495 (W7): smart rewind on resume
                     }
                     self.startPlaybackAfterResumeSeek = false
                     self.resumeAfterInterruption = self.resumeAfterInterruption || wasPlaying

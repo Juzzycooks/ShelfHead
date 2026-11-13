@@ -114,8 +114,10 @@ struct FeaturesTipsView: View {
                     detail: "Resume, play a book by name, find a line, skip, or set a sleep timer by voice or in a shortcut.",
                     settingsPage: .systemPrivacy, settingsRow: SettingsRow.siri),
             // Batch 490 (REVIEW 2026-11-11 N3): the Watch plays on its own now, not only as a remote.
+            // Batch 496 (REVIEW 2026-11-11 W13): names both modes and opens Settings › Apple Watch.
             Feature(id: SettingsRow.featureWatch, icon: "applewatch", title: "Apple Watch app",
-                    detail: "Play downloaded books from your Watch, with or without your iPhone."),
+                    detail: "With your iPhone nearby, the Watch is a remote for it. Set it up once and it plays downloaded books on its own, with your iPhone left behind.",
+                    settingsPage: .appleWatch, settingsRow: SettingsRow.watchStatus),
         ]),
         FeatureGroup(id: "fun", title: "Just for Fun", features: [
             Feature(id: SettingsRow.featureBSide, icon: "shuffle", title: "B-Side",
@@ -299,27 +301,27 @@ struct WhatsNewSheet: View {
     }
 
     /// The version these notes describe. Update at each release cut, with `items`.
-    private let version = "7.7"
+    private let version = "7.8"
 
     // Update this list at each release cut, from that release's `WhatsNew-<version>.txt`
-    // (plain user-facing language; no file names). Currently WhatsNew-7.7.txt.
+    // (plain user-facing language; no file names). Currently WhatsNew-7.8.txt.
     private let items: [Item] = [
-        Item(id: 1, title: "Podcasts",
-             detail: "Podcast libraries talk about shows, and search finds episodes. Filter a show to unplayed, mark episodes played, add them to Up Next, and upload episodes into a show."),
-        Item(id: 2, title: "Playlists and collections",
-             detail: "Add a book to a playlist or collection from its menu, or start a new one. Rename, reorder, remove items or delete from the list’s page."),
-        Item(id: 3, title: "Wi‑Fi only downloads",
-             detail: "A download you start away from Wi‑Fi now waits for it instead of being refused. Need one book now? Download just that one over mobile data."),
-        Item(id: 4, title: "Search",
-             detail: "Genres and tags show up in results, and every group has Show All."),
-        Item(id: 5, title: "Easier to find",
-             detail: "The player’s menu gathers Search, Previously On, X‑Ray and Ask the Book under Explore the Story, and Settings is regrouped into four sections."),
-        Item(id: 6, title: "Apple Watch",
-             detail: "Play on This Watch switches to the watch’s own player, and the watch tells you when your iPhone is out of range."),
-        Item(id: 7, title: "Portrait again",
-             detail: "The app stays in portrait. Driving Mode still turns sideways."),
-        Item(id: 8, title: "Feedback",
-             detail: "Settings › About has Send Feedback and Share Diagnostics. The report leaves out your server address and sign-in details.")
+        Item(id: 1, title: "Download queue",
+             detail: "Books download two at a time, in the order you started them. Move one up with Download Next, or pause, resume or cancel them all."),
+        Item(id: 2, title: "Storage",
+             detail: "Settings › Downloads shows where your space goes, including free space. Remove several downloads at once from Downloads or Library."),
+        Item(id: 3, title: "Search tab",
+             detail: "On iOS 26 and later, Search has its own tab. Series can be sorted, and Authors and Narrators have a letter index."),
+        Item(id: 4, title: "Home",
+             detail: "Shelves have See all, and Switch Profile opens the profile picker without quitting the app."),
+        Item(id: 5, title: "Player",
+             detail: "If a stream loses its connection, the app tells you and offers Retry. Sound… in the player’s menu keeps volume, tone and ambient sound next to the book."),
+        Item(id: 6, title: "Siri, widgets and notifications",
+             detail: "Ask Siri to play a book by name without unlocking. A widget pinned to a book plays it, and tapping a notification opens what it’s about."),
+        Item(id: 7, title: "Reading",
+             detail: "PDFs and comics open offline, reading progress shows on ebooks, and the reader is full screen with next-chapter links."),
+        Item(id: 8, title: "Apple Watch",
+             detail: "Now Playing fits smaller watches and scrubs within the chapter. The Shelf marks downloaded books, and Settings › Apple Watch shows whether the Watch is set up.")
     ]
 
     var body: some View {

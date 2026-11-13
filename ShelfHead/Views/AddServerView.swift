@@ -403,27 +403,50 @@ enum ServerConnectionRules {
     /// rest of the answer on `serverStatus`), which is what
     /// `ServerConnectionView.advertisedAuthMethods` passes in here. `nil` means the server
     /// didn't say (no test yet, a failed test, or an older server).
-    /// Batch 490 (REVIEW 2026-11-11 F8): comment brought up to date; it still said
-    /// nothing called this with a real list.
+    /// Batch 495 (REVIEW 2026-11-11 O3): the values are the server's own strings, `local`
+    /// and `openid` (audiobookshelf `server/Server.js` `/status`, `ServerSettings.js`).
     static func advertisesSingleSignOn(authMethods: [String]?) -> Bool {
+        contains(authMethods, "openid")
+    }
+
+    /// Whether the server accepts username and password (`local`).
+    static func advertisesPasswordSignIn(authMethods: [String]?) -> Bool {
+        contains(authMethods, "local")
+    }
+
+    private static func contains(_ authMethods: [String]?, _ method: String) -> Bool {
         guard let authMethods else { return false }
-        return authMethods.contains { $0.caseInsensitiveCompare("openid") == .orderedSame }
+        return authMethods.contains { $0.caseInsensitiveCompare(method) == .orderedSame }
     }
 
-    /// Label for the collapsed SSO disclosure inside step 2. Neutral unless the server
-    /// has actually said it does OIDC, in which case it's worth naming — an SSO-only
-    /// server otherwise looks like a screen with nothing but a password field the user
-    /// doesn't have.
-    static func otherSignInOptionsTitle(authMethods: [String]?) -> String {
-        advertisesSingleSignOn(authMethods: authMethods)
-            ? String(localized: "Other sign-in options \u{2014} SSO available")
-            : String(localized: "Other sign-in options")
+    /// Batch 495 (REVIEW 2026-11-11 O3): what the sign-in page shows, from the server's
+    /// advertised `authMethods`.
+    enum SignInLayout: Equatable {
+        /// Today's page: password fields and primary button, SSO tucked in a disclosure.
+        /// Local-only, unknown or unrecognised methods, and no `authMethods` at all.
+        case passwordWithSSODisclosure
+        /// Password primary, SSO a full-width secondary button directly under it.
+        case passwordAndSSO
+        /// OpenID without `local`: no password fields, SSO is the one primary button.
+        case singleSignOnOnly
+
+        var showsPasswordFields: Bool { self != .singleSignOnOnly }
+        /// The SSO control is a button on the page (not inside the disclosure).
+        var showsSSOButtonInline: Bool { self != .passwordWithSSODisclosure }
     }
 
-    /// Whether that disclosure opens by itself: only when the server advertised SSO, so
-    /// the neutral case stays collapsed and uncluttered as the feedback asked.
-    static func otherSignInOptionsStartExpanded(authMethods: [String]?) -> Bool {
-        advertisesSingleSignOn(authMethods: authMethods)
+    static func signInLayout(authMethods: [String]?) -> SignInLayout {
+        let sso = advertisesSingleSignOn(authMethods: authMethods)
+        let password = advertisesPasswordSignIn(authMethods: authMethods)
+        if sso && password { return .passwordAndSSO }
+        if sso { return .singleSignOnOnly }
+        return .passwordWithSSODisclosure
+    }
+
+    /// Whether the SSO button is on screen now: always in the two SSO layouts, and in
+    /// today's layout only while its disclosure is open. Feeds `statusRowShowsSpinner`.
+    static func ssoButtonVisible(layout: SignInLayout, disclosureExpanded: Bool) -> Bool {
+        layout.showsSSOButtonInline || disclosureExpanded
     }
 
     /// Batch 490 (REVIEW 2026-11-11 O6): which sign-in is in flight, so only that control
@@ -868,8 +891,13 @@ struct ServerConnectionView: View {
     /// carries the result on `ConnectionTestResult.authMethods`, so this is just that
     /// field: `nil` until a test has run, `nil` again for a failing outcome or an older
     /// server that didn't report the field, and the actual list once one has. The SSO
-    /// disclosure below reads its title and starting expansion state from this.
+    /// sign-in page's layout (`signInLayout`) is decided from this.
     private var advertisedAuthMethods: [String]? { testResult?.authMethods }
+
+    /// Batch 495 (REVIEW 2026-11-11 O3): password fields, SSO button, or both.
+    private var signInLayout: ServerConnectionRules.SignInLayout {
+        ServerConnectionRules.signInLayout(authMethods: advertisedAuthMethods)
+    }
 
     /// Batch 490 (REVIEW 2026-11-11 F8): the rest of what `/status` said.
     private var serverStatus: ServerStatusInfo? { testResult?.serverStatus }
@@ -877,7 +905,8 @@ struct ServerConnectionView: View {
     /// Batch 490 (REVIEW 2026-11-11 O6): see `ServerConnectionRules.statusRowShowsSpinner`.
     private var showsStatusSpinner: Bool {
         ServerConnectionRules.statusRowShowsSpinner(connecting: connectingMethod, page: resolvedPage,
-                                                    ssoOptionsExpanded: showOtherSignInOptions)
+                                                    ssoOptionsExpanded: ServerConnectionRules.ssoButtonVisible(
+                                                        layout: signInLayout, disclosureExpanded: showOtherSignInOptions))
     }
 
     /// The page actually on screen. See `ServerConnectionRules.resolvedPage`.
@@ -997,10 +1026,15 @@ struct ServerConnectionView: View {
                         // iPhone Duo (§2): Connect isn't a form Save, so a symbol, not the checkmark.
                         // Batch 490 (REVIEW 2026-11-11 O2): titled "Sign In" like the in-form
                         // button it duplicates, with a "go" symbol rather than `link`.
-                        Button { connect() } label: {
+                        // Batch 495 (O3): on an SSO-only server this starts SSO, not a password sign-in.
+                        Button {
+                            if signInLayout == .singleSignOnOnly { signInWithSSO() } else { connect() }
+                        } label: {
                             Label("Sign In", systemImage: "arrow.right.circle")
                         }
-                            .disabled(!isValid || isConnecting)
+                            .disabled(signInLayout == .singleSignOnOnly
+                                      ? (!ServerConnectionRules.canStartSingleSignOn(serverURL: serverURL) || isConnecting)
+                                      : (!isValid || isConnecting))
                             .monochromeToolbarItem()
                     }
                     .shelfVisibilityPriority(.high)
@@ -1212,7 +1246,7 @@ struct ServerConnectionView: View {
 
     private var signInForm: some View {
         Form {
-            if shownPasswordPrompt != nil {
+            if shownPasswordPrompt != nil && signInLayout.showsPasswordFields {   // Batch 495 (O3)
                 passwordNeededSection
             }
             serverSummarySection
@@ -1293,12 +1327,9 @@ struct ServerConnectionView: View {
                     // fields: a changed address has to be re-tested before it can be
                     // signed into. The "Sign in anyway" bypass goes with it — it was
                     // granted against one specific address and one specific failed
-                    // diagnosis, neither of which still applies. Same for an
-                    // auto-expanded "Other sign-in options": it was opened because THIS
-                    // address advertised OpenID, so a re-test against a different address
-                    // has to earn that expansion again rather than inherit it — otherwise
-                    // switching from an SSO server to a local-only one would leave the
-                    // disclosure open with nothing behind that expansion anymore.
+                    // diagnosis, neither of which still applies. Same for an opened
+                    // "Other sign-in options" disclosure (Batch 495: nothing auto-opens
+                    // it any more, so this only drops the listener's own expansion).
                     testResult = nil
                     acknowledgedInsecureConnection = false
                     bypassedTest = false
@@ -1791,6 +1822,9 @@ struct ServerConnectionView: View {
     /// insecure, or been explicitly bypassed — `serverSummarySection` above says which.
     private var credentialsSection: some View {
         Section {
+            // Batch 495 (REVIEW 2026-11-11 O3): an OpenID-only server has no password sign-in,
+            // so its fields and button aren't shown (`ServerConnectionRules.signInLayout`).
+            if signInLayout.showsPasswordFields {
             TextField("Username", text: $username)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -1877,8 +1911,18 @@ struct ServerConnectionView: View {
             .disabled(!isValid || isConnecting)
             .opacity(isValid ? 1 : 0.6)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
 
-            otherSignInOptionsDisclosure
+            switch signInLayout {
+            case .passwordWithSSODisclosure:
+                otherSignInOptionsDisclosure
+            case .passwordAndSSO:
+                singleSignOnButton(primary: false)
+                singleSignOnHelp
+            case .singleSignOnOnly:
+                singleSignOnButton(primary: true)
+                singleSignOnHelp
+            }
         } header: {
             Text("2\u{2002}\u{2002}Sign in")
         }
@@ -2073,55 +2117,99 @@ struct ServerConnectionView: View {
     /// first-run user can reach SSO *at all* — is met by it being in this form for both
     /// purposes; it doesn't require it to be always expanded.
     private var otherSignInOptionsDisclosure: some View {
+        // Batch 495 (O3): only for servers that didn't advertise OpenID (local-only, or
+        // `authMethods` unknown), so the title is always the neutral one and nothing
+        // auto-expands; a server that advertises OpenID gets `singleSignOnButton` inline.
         DisclosureGroup(isExpanded: $showOtherSignInOptions) {
-            Button {
-                signInWithSSO()
-            } label: {
-                HStack {
-                    Spacer()
-                    // Batch 490 (REVIEW 2026-11-11 O6): spins only for an SSO sign-in.
-                    if connectingMethod == .singleSignOn {
-                        // LS-13 (docs/design-review.md, Round 3): brand-tinted, was
-                        // falling back to the system tint.
-                        ProgressView()
-                            .shelfSpinner()
-                            .accessibilityLabel(Text("Signing in"))
-                    } else {
-                        // Batch 490 (REVIEW 2026-11-11 F8): the admin's button text when set.
-                        Label(ServerConnectionRules.singleSignOnButtonTitle(serverText: serverStatus?.openIDButtonText),
-                              systemImage: "person.badge.key.fill")
-                    }
-                    Spacer()
-                }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .disabled(!ServerConnectionRules.canStartSingleSignOn(serverURL: serverURL) || isConnecting)
-
-            Typo.fine(Text("For a server with OpenID Connect / Single Sign-On configured (Settings → Authentication on the server). Tap this instead of filling in username and password — Audiobookshelf runs the whole exchange with your identity provider."))
-                .foregroundStyle(Color.shelfMuted)
-                .fixedSize(horizontal: false, vertical: true)
-            // Batch 490 (REVIEW 2026-11-11 O4): the same setup sentence the
-            // redirect-URI error uses, so an admin can allow the address up front.
-            Typo.fine(Text(OIDCAuthService.redirectURISetupInstruction))
-                .foregroundStyle(Color.shelfMuted)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            singleSignOnButton(primary: nil)
+            singleSignOnHelp
         } label: {
-            Typo.secondaryAction(Text(ServerConnectionRules.otherSignInOptionsTitle(authMethods: advertisedAuthMethods)))
+            Typo.secondaryAction(Text("Other sign-in options"))
                 .foregroundStyle(Color.shelfAmberText)
                 .frame(minHeight: 44)
         }
         .tint(Color.shelfAmberText)
         .accessibilityHint("Single sign-on (OpenID Connect), for servers configured to use it.")
-        .onAppear {
-            // Fires once step 2 mounts, i.e. only after a passing test — so
-            // `advertisedAuthMethods` already has whatever `/status` reported by the time
-            // this runs. Expand-only, matching `syncHeadersDisclosure` above: a server
-            // that advertises OpenID opens this by itself, but nothing here ever
-            // collapses a disclosure the user opened themselves.
-            if ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: advertisedAuthMethods) {
-                showOtherSignInOptions = true
+    }
+
+    /// Batch 495 (O3): the SSO button. `primary` true = the page's one amber button
+    /// (SSO-only server), false = full-width outlined secondary under the Sign In button,
+    /// nil = the plain row inside the disclosure.
+    private func singleSignOnButton(primary: Bool?) -> some View {
+        Button {
+            signInWithSSO()
+        } label: {
+            HStack {
+                if primary == nil { Spacer() }
+                // Batch 490 (REVIEW 2026-11-11 O6): spins only for an SSO sign-in.
+                if connectingMethod == .singleSignOn {
+                    // LS-13 (docs/design-review.md, Round 3): brand-tinted, was
+                    // falling back to the system tint.
+                    if primary == true {
+                        ProgressView()
+                            .tint(Color.onAccent)
+                            .accessibilityLabel(Text("Signing in"))
+                    } else {
+                        ProgressView()
+                            .shelfSpinner()
+                            .accessibilityLabel(Text("Signing in"))
+                    }
+                } else {
+                    // Batch 490 (REVIEW 2026-11-11 F8): the admin's button text when set.
+                    Label(ServerConnectionRules.singleSignOnButtonTitle(serverText: serverStatus?.openIDButtonText),
+                          systemImage: "person.badge.key.fill")
+                        .fontWeight(primary == nil ? nil : .semibold)
+                }
+                if primary == nil { Spacer() }
+            }
+            .modifier(SSOButtonChrome(primary: primary))
+        }
+        .buttonStyle(.plain)
+        .disabled(!ServerConnectionRules.canStartSingleSignOn(serverURL: serverURL) || isConnecting)
+        .listRowInsets(primary == nil ? nil : EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+    }
+
+    /// Batch 495 (O3): the SSO explanation and the redirect-address setup line.
+    @ViewBuilder private var singleSignOnHelp: some View {
+        if signInLayout == .singleSignOnOnly {
+            // No password fields on this page, so the usual "instead of username and password" line would misread.
+            Typo.fine(Text("This server signs in with single sign-on only. You’ll finish signing in with your identity provider."))
+                .foregroundStyle(Color.shelfMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Typo.fine(Text("For a server with OpenID Connect / Single Sign-On configured (Settings → Authentication on the server). Tap this instead of filling in username and password — Audiobookshelf runs the whole exchange with your identity provider."))
+                .foregroundStyle(Color.shelfMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        // Batch 490 (REVIEW 2026-11-11 O4): the same setup sentence the
+        // redirect-URI error uses, so an admin can allow the address up front.
+        Typo.fine(Text(OIDCAuthService.redirectURISetupInstruction))
+            .foregroundStyle(Color.shelfMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
+    /// Chrome for `singleSignOnButton`: amber-ink primary (as `shelfButtonStyle`), outlined
+    /// secondary, or the plain disclosure row.
+    private struct SSOButtonChrome: ViewModifier {
+        let primary: Bool?
+        func body(content: Content) -> some View {
+            switch primary {
+            case .some(true):
+                content.shelfButtonStyle()
+            case .some(false):
+                content
+                    .font(.headline)
+                    .foregroundStyle(Color.shelfAmberText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .padding(.vertical, 8)
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.shelfAmberText, lineWidth: 1.5))
+                    .contentShape(RoundedRectangle(cornerRadius: 12))
+            case .none:
+                content
+                    .foregroundStyle(Color.shelfAmberText)   // plain style drops the tint the row had
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
         }
     }

@@ -325,6 +325,7 @@ enum RemoteProgressDecision {
             || a.isFinished != b.isFinished || a.lastUpdate != b.lastUpdate
             || a.duration != b.duration || a.startedAt != b.startedAt
             || a.finishedAt != b.finishedAt
+            || a.ebookProgress != b.ebookProgress   // Batch 495 (L12): reading progress refreshes tiles too
     }
 
     /// Batch 409: the pure decision behind `LibraryViewModel.applyRemoteProgressSnapshot`.

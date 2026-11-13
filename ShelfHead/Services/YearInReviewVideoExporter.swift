@@ -52,15 +52,19 @@ nonisolated enum YearInReviewSoundtrack {
 /// Batch 462: renders the Year in Review reel frame by frame (`ImageRenderer`, on the main
 /// actor) into a 1080×1920, 30 fps H.264 MP4 in the temp directory through `AVAssetWriter`.
 ///
-/// Apple docs checked (scripts/appledoc.sh, 28 Oct 2026): `AVAssetWriterInputPixelBufferAdaptor`
-/// is deprecated in iOS 27; its replacement `AVAssetWriter.inputPixelBufferReceiver(for:
-/// pixelBufferAttributes:)` returning `AVAssetWriterInput.PixelBufferReceiver` is iOS 26+. So
-/// iOS 26+ writes through the receiver, earlier systems through the adaptor. Swift only warns
-/// about a deprecation at or above the deployment target (17.6), so the adaptor path is
-/// warning-free on the iOS 27 SDK.
+/// Batch 495: frames go through `AVAssetWriterInputPixelBufferAdaptor` on every iOS version.
+/// The iOS 26+ `AVAssetWriterInput.PixelBufferReceiver.append(_:with:)` ("Suspends until the
+/// input is ready for more media data") was seen in the iOS 27 simulator to stay suspended for
+/// good mid-export while the input reported `isReadyForMoreMediaData == true` and the writer was
+/// still `.writing` with no error, and it ignores task cancellation. The adaptor's `append` is
+/// synchronous, and `waitUntilReady` polls readiness with cancellation, writer-failure and stall
+/// checks. Docs checked (scripts/appledoc.sh, 13 Nov 2026): the adaptor, its
+/// `append(_:withPresentationTime:)` and `isReadyForMoreMediaData` are deprecated in iOS 27 (not
+/// removed); Swift only warns at or above the deployment target (17.6), so this is warning-free.
 ///
-/// Cancellation is cooperative: cancel the `Task` running `export`; the writer is cancelled and
-/// the half-written file deleted.
+/// Cancellation: cancel the `Task` running `export`; the writer is cancelled and the
+/// half-written file deleted. Every wait on AVFoundation is bounded (`awaitBounded`), so a call
+/// that never comes back fails the export instead of hanging it.
 @MainActor
 @Observable
 final class YearInReviewVideoExporter {
@@ -68,6 +72,8 @@ final class YearInReviewVideoExporter {
         case cannotCreateWriter
         case cannotCreatePixelBuffer
         case writerFailed(String?)
+        /// Batch 495: an AVFoundation call didn't come back within its time limit.
+        case stalled(String)
     }
 
     /// 0…1 across the frames.
@@ -129,12 +135,9 @@ final class YearInReviewVideoExporter {
         ])
         videoInput.expectsMediaDataInRealTime = false
 
-        let sink: FrameSink
-        if #available(iOS 26.0, *) {
-            sink = ReceiverFrameSink(writer: writer, input: videoInput)
-        } else {
-            sink = AdaptorFrameSink(writer: writer, input: videoInput)
-        }
+        // Batch 495: the adaptor on every version (see the type's doc comment for why not the
+        // iOS 26 receiver).
+        let sink = AdaptorFrameSink(writer: writer, input: videoInput)
 
         guard writer.startWriting() else { throw ExportError.writerFailed(writer.error?.localizedDescription) }
         writer.startSession(atSourceTime: .zero)
@@ -155,13 +158,12 @@ final class YearInReviewVideoExporter {
                 await Task.yield()
             }
             sink.finish()
+            try await Self.finish(writer)
         } catch {
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: url)
             throw error
         }
-
-        await writer.finishWriting()
         guard writer.status == .completed else {
             try? FileManager.default.removeItem(at: url)
             throw ExportError.writerFailed(writer.error?.localizedDescription)
@@ -193,12 +195,12 @@ final class YearInReviewVideoExporter {
                 offset = end
             }
             input.markAsFinished()
+            try await finish(writer)
         } catch {
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: url)
             throw error
         }
-        await writer.finishWriting()
         guard writer.status == .completed else {
             try? FileManager.default.removeItem(at: url)
             throw ExportError.writerFailed(writer.error?.localizedDescription)
@@ -234,7 +236,11 @@ final class YearInReviewVideoExporter {
         let url = makeOutputURL()
         try? FileManager.default.removeItem(at: url)
         do {
-            try await session.export(to: url, as: .mp4)
+            // Batch 495: bounded too. Abandoning cancels the inner task, which the docs say
+            // cancels the export.
+            try await awaitBounded(timeout: .seconds(120), what: "Combining the video and music") {
+                try await session.export(to: url, as: .mp4)
+            }
         } catch {
             try? FileManager.default.removeItem(at: url)
             throw error
@@ -282,6 +288,39 @@ final class YearInReviewVideoExporter {
         }
     }
 
+    /// Batch 495: `finishWriting()` with a time limit. On cancel or timeout the writer is cancelled.
+    private static func finish(_ writer: AVAssetWriter) async throws {
+        try await awaitBounded(timeout: .seconds(60), what: "Finishing the file",
+                               onAbandon: { writer.cancelWriting() }) {
+            await writer.finishWriting()
+        }
+    }
+
+    /// Batch 495: runs `operation` in its own task and waits for it, but gives up when the
+    /// calling task is cancelled (throws `CancellationError`) or `timeout` passes (throws
+    /// `stalled`). Giving up runs `onAbandon` and cancels the operation's task; an AVFoundation
+    /// call that never returns is then left behind instead of holding the export forever.
+    static func awaitBounded<T>(timeout: Duration, what: String,
+                                onAbandon: @escaping () -> Void = {},
+                                _ operation: @escaping () async throws -> T) async throws -> T {
+        let gate = BoundedWait<T>(onAbandon: onAbandon)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                gate.start(continuation)
+                gate.work = Task { @MainActor in
+                    do { gate.resume(.success(try await operation())) } catch { gate.resume(.failure(error)) }
+                }
+                gate.timer = Task { @MainActor in
+                    try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled else { return }
+                    gate.abandon(ExportError.stalled(what))
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in gate.abandon(CancellationError()) }
+        }
+    }
+
     nonisolated private static func makeAudioSampleBuffer(_ samples: ArraySlice<Int16>, startFrame: Int) -> CMSampleBuffer? {
         let rate = Double(YearInReviewSoundtrack.sampleRate)
         var asbd = AudioStreamBasicDescription(
@@ -313,16 +352,50 @@ final class YearInReviewVideoExporter {
     }
 }
 
-// MARK: - Frame sinks
+// MARK: - Bounded waits
 
-/// Where finished frames go: the iOS 26+ pixel-buffer receiver or the older adaptor. The buffer
-/// is created inside `append` (from a pool) and filled by the caller's closure, so a new buffer
-/// is never shared across the two sides.
+/// Batch 495: the one-shot hand-off behind `awaitBounded`. Whichever comes first (the
+/// operation's result, the timeout, or cancellation) resumes the caller; the rest are ignored.
 @MainActor
-private protocol FrameSink: AnyObject {
-    func append(at time: CMTime, fill: (CVPixelBuffer) -> Void) async throws
-    func finish()
+private final class BoundedWait<T> {
+    private var continuation: CheckedContinuation<T, Error>?
+    private var pending: Result<T, Error>?
+    private var done = false
+    private let onAbandon: () -> Void
+    var work: Task<Void, Never>?
+    var timer: Task<Void, Never>?
+
+    init(onAbandon: @escaping () -> Void) { self.onAbandon = onAbandon }
+
+    func start(_ continuation: CheckedContinuation<T, Error>) {
+        if let pending {
+            continuation.resume(with: pending)
+        } else {
+            self.continuation = continuation
+        }
+    }
+
+    func resume(_ result: Result<T, Error>) {
+        guard !done else { return }
+        done = true
+        timer?.cancel()
+        work?.cancel()
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(with: result)
+        } else {
+            pending = result
+        }
+    }
+
+    func abandon(_ error: Error) {
+        guard !done else { return }
+        onAbandon()
+        resume(.failure(error))
+    }
 }
+
+// MARK: - Frame sink
 
 /// A BGRA pool for 1080×1920 frames.
 @MainActor
@@ -348,29 +421,12 @@ private final class FramePool {
     }
 }
 
-@available(iOS 26.0, *)
+/// Where finished frames go. The buffer is created inside `append` (from a pool) and filled by
+/// the caller's closure, so a new buffer is never shared across the two sides. Batch 495: the
+/// iOS 26+ `PixelBufferReceiver` sink was removed (it could suspend for good; see the exporter's
+/// doc comment).
 @MainActor
-private final class ReceiverFrameSink: FrameSink {
-    private let receiver: AVAssetWriterInput.PixelBufferReceiver
-    private let pool = FramePool()
-
-    init(writer: AVAssetWriter, input: AVAssetWriterInput) {
-        // Attaches `input` to the writer (no `add(_:)`), as documented.
-        receiver = writer.inputPixelBufferReceiver(for: input, pixelBufferAttributes: nil)
-    }
-
-    func append(at time: CMTime, fill: (CVPixelBuffer) -> Void) async throws {
-        let buffer = try pool.makeBuffer()
-        fill(buffer)
-        // Suspends until the encoder can take another frame.
-        try await receiver.append(CVReadOnlyPixelBuffer(unsafeBuffer: buffer), with: time)
-    }
-
-    func finish() { receiver.finish() }
-}
-
-@MainActor
-private final class AdaptorFrameSink: FrameSink {
+private final class AdaptorFrameSink {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
@@ -388,7 +444,7 @@ private final class AdaptorFrameSink: FrameSink {
         fill(buffer)
         try await YearInReviewVideoExporter.waitUntilReady(input, writer: writer)
         guard adaptor.append(buffer, withPresentationTime: time) else {
-            throw YearInReviewVideoExporter.ExportError.writerFailed(nil)
+            throw YearInReviewVideoExporter.ExportError.writerFailed(writer.error?.localizedDescription)
         }
     }
 

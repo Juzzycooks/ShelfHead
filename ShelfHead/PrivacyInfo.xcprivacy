@@ -48,7 +48,9 @@
                  low. The app must behave differently based on disk space in a way that is observable to
                  users" (here: the "Not enough free space" refusal). B728.1 is "if your app is a health
                  research app ... low disk space impacting the research data collection", which does not
-                 apply. 85F4.1 = display disk space to the person (not done on the phone). The 9 September
+                 apply. 85F4.1 = display disk space to the person: added in Batch 496 (13 November 2026) for
+                 Settings › Downloads › Storage, which shows "Free on this iPhone"
+                 (`DownloadManager.volumeAvailableBytes()`); it stays on the device. The 9 September
                  2026 edit had the E174.1 / 85F4.1 meanings swapped. Call sites: `DownloadManager
                  .hasSpaceAvailable(atLeast:)` and `availableBytes()` (bulk-download planner). -->
             <key>NSPrivacyAccessedAPIType</key>
@@ -56,6 +58,7 @@
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
                 <string>E174.1</string>
+                <string>85F4.1</string>
             </array>
         </dict>
         <dict>

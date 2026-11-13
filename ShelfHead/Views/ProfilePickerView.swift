@@ -3,11 +3,14 @@ import SwiftUI
 /// Batch 457: the full-screen picture picker. One big tile per saved account: a child's own symbol and colour, a
 /// person glyph for a grown-up. Tapping a tile switches to that account. When a child account exists, switching to
 /// a grown-up's needs the parent's Face ID or passcode (`ParentGate`). Shown at launch only when the user turned on
-/// "Show profile picker at launch" (default off).
+/// "Show profile picker at launch" (default off). Batch 496 (N5): also presented from Home's profile button.
 struct ProfilePickerView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     /// Called when the picker should go away (a switch finished, or the current account was chosen).
     var onFinish: () -> Void
+    /// Batch 496 (REVIEW 2026-11-11 N5): set when Home presents the picker mid-session, so it
+    /// can be closed without choosing (the launch picker has no Cancel). Closing changes nothing.
+    var onCancel: (() -> Void)? = nil
 
     @State private var isSwitching = false
     /// Batch 490 (REVIEW 2026-11-11 O5): the same alerts and sheets every other switching
@@ -42,6 +45,21 @@ struct ProfilePickerView: View {
                     .padding(.horizontal, 24)
                 }
                 .padding(.bottom, 40)
+            }
+            if let onCancel {
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.shelfCream)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(showsSpinner)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
             if showsSpinner {
                 // Batch 490 (REVIEW 2026-11-11 O5): the brand spinner, with a spoken label.
@@ -99,7 +117,13 @@ struct ProfilePickerView: View {
         pendingTargetId = nil
         // Review 2 High 1 (30 October 2026): the picker gates every grown-up tile while a child profile is saved,
         // including the active account's. `switchAccount` is then told the check is done, so it doesn't ask twice.
-        let gated = ParentGate.pickerNeedsGate(target: account.id)
+        // Batch 497 (REVIEW 2026-11-11 N5): from Home (`onCancel` set), tapping the account already signed in
+        // just closes the picker, with no gate. The launch picker and every real switch keep it.
+        let store = KidProfileStore.standard
+        let gated = ParentGate.pickerTapNeedsGate(
+            currentAccountId: authViewModel.isAuthenticated ? AccountStore.currentAccountId : nil,
+            tappedAccountId: account.id, tappedIsKid: store.isKid(account.id),
+            anyKidSaved: store.hasAnyKid, openedInSession: onCancel != nil)
         if gated {
             let ok = await ParentGate.authenticate(reason: String(localized: "Open a grown-up's account", comment: "Reason shown in the Face ID / passcode prompt when leaving a child's profile"))
             guard ok else { return }

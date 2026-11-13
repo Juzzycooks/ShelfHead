@@ -381,6 +381,80 @@ struct BrowseStarredSplit<T> {
     var displayedFirst: T? { BrowseStarredSections.displayedFirst(starred: starred, rest: rest) }
 }
 
+// MARK: - Letter sections (Batch 496, REVIEW 2026-11-11 L8)
+
+struct BrowseLetterSection<T> {
+    /// "A"–"Z", or "#" for a name that doesn't start with a letter.
+    let key: String
+    let items: [T]
+}
+
+/// Pure grouping for the Authors / Narrators section index, pinned by `Batch496BrowseSortTests`.
+/// Chinese (and other non-Latin) names are keyed by the first letter of their Latin
+/// transliteration (`StringTransform.toLatin`: pinyin for Han characters), so 张三 files under Z
+/// and sorts with the Z names; a name that still has no Latin letter goes under "#".
+enum BrowseLetterIndex {
+    static let otherKey = "#"
+
+    /// The transliterated, case- and diacritic-folded form a name is sectioned and sorted by.
+    static func sortKey(_ name: String, locale: Locale? = .current) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Most names are plain ASCII: skip the transliteration (the slow step) for those. This runs
+        // for every name on each pass over a list that can hold thousands.
+        if trimmed.utf8.allSatisfy({ $0 < 128 }) { return trimmed.lowercased() }
+        let latin = trimmed.applyingTransform(.toLatin, reverse: false) ?? trimmed
+        return latin.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: locale)
+    }
+
+    static func sectionKey(for name: String, locale: Locale? = .current) -> String {
+        sectionKey(fromSortKey: sortKey(name, locale: locale))
+    }
+
+    /// The section for an already computed `sortKey`, so a list computes each key once.
+    static func sectionKey(fromSortKey key: String) -> String {
+        guard let first = key.unicodeScalars.first,
+              first.value >= 97, first.value <= 122 else { return otherKey }   // a–z after folding
+        return String(Character(first)).uppercased()
+    }
+
+    /// Sorted by `sortKey` (natural number order, then the plain name as a tie-break).
+    static func sorted<T>(_ items: [T], name: (T) -> String, locale: Locale? = .current) -> [T] {
+        sortedWithKeys(items, name: name, locale: locale).map(\.item)
+    }
+
+    private static func sortedWithKeys<T>(_ items: [T], name: (T) -> String, locale: Locale?) -> [(item: T, key: String, name: String)] {
+        let keyed = items.map { (item: $0, key: sortKey(name($0), locale: locale), name: name($0)) }
+        return keyed.sorted { a, b in
+            let c = a.key.localizedStandardCompare(b.key)
+            if c != .orderedSame { return c == .orderedAscending }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    /// A–Z sections in order, "#" last; empty sections left out.
+    static func sections<T>(_ items: [T], name: (T) -> String, locale: Locale? = .current) -> [BrowseLetterSection<T>] {
+        var buckets: [String: [T]] = [:]
+        for entry in sortedWithKeys(items, name: name, locale: locale) {
+            buckets[sectionKey(fromSortKey: entry.key), default: []].append(entry.item)
+        }
+        let letters = (97...122).map { String(UnicodeScalar(UInt8($0))).uppercased() }
+        return (letters + [otherKey]).compactMap { key in
+            buckets[key].map { BrowseLetterSection(key: key, items: $0) }
+        }
+    }
+
+    /// Starred people stay in one section at the top (also sorted); the rest are lettered.
+    static func layout<T>(starred: [T], rest: [T], name: (T) -> String, locale: Locale? = .current)
+        -> (starred: [T], sections: [BrowseLetterSection<T>]) {
+        (sorted(starred, name: name, locale: locale), sections(rest, name: name, locale: locale))
+    }
+
+    /// The row shown first, for scroll-to-top.
+    static func displayedFirst<T>(starred: [T], sections: [BrowseLetterSection<T>]) -> T? {
+        starred.first ?? sections.first?.items.first
+    }
+}
+
 struct AuthorsBrowseView: View {
     var search: String = ""
     /// Critique 2026-10-05 (Library): tab re-tap scroll-to-top, as in Books.
@@ -431,6 +505,27 @@ struct AuthorsBrowseView: View {
                     subtitle: search.isEmpty ? "Author data will appear once your library is scanned"
                                              : "No authors match “\(search)”"
                 )
+            } else if #available(iOS 26.0, *) {
+                // Batch 496 (REVIEW 2026-11-11 L8): letter sections + section index (iOS 26+).
+                let layout = BrowseLetterIndex.layout(starred: split.starred, rest: split.rest, name: { $0.name })
+                List {
+                    if !layout.starred.isEmpty {
+                        Section {
+                            ForEach(layout.starred, id: \.id) { author in authorRow(author) }
+                        } header: { RetroSectionHeader(title: .verbatim(BrowseStarredSections.starredTitle)) }
+                        .sectionIndexLabel(Text(Image(systemName: "star.fill")))
+                    }
+                    ForEach(layout.sections, id: \.key) { section in
+                        Section {
+                            ForEach(section.items, id: \.id) { author in authorRow(author) }
+                        } header: { RetroSectionHeader(title: .verbatim(section.key)) }
+                        .sectionIndexLabel(Text(section.key))
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .transition(.opacity)
+                .scrollsToTop(signal: scrollToTopSignal,
+                              firstID: BrowseLetterIndex.displayedFirst(starred: layout.starred, sections: layout.sections)?.id)
             } else {
                 List {
                     if !BrowseStarredSections.showsSections(starredCount: split.starred.count) {
@@ -942,6 +1037,27 @@ struct NarratorsBrowseView: View {
                     subtitle: search.isEmpty ? "Narrator data will appear once your library is scanned"
                                              : "No narrators match “\(search)”"
                 )
+            } else if #available(iOS 26.0, *) {
+                // Batch 496 (REVIEW 2026-11-11 L8): letter sections + section index (iOS 26+).
+                let layout = BrowseLetterIndex.layout(starred: split.starred, rest: split.rest, name: { $0 })
+                List {
+                    if !layout.starred.isEmpty {
+                        Section {
+                            ForEach(layout.starred, id: \.self) { narrator in narratorRow(narrator) }
+                        } header: { RetroSectionHeader(title: .verbatim(BrowseStarredSections.starredTitle)) }
+                        .sectionIndexLabel(Text(Image(systemName: "star.fill")))
+                    }
+                    ForEach(layout.sections, id: \.key) { section in
+                        Section {
+                            ForEach(section.items, id: \.self) { narrator in narratorRow(narrator) }
+                        } header: { RetroSectionHeader(title: .verbatim(section.key)) }
+                        .sectionIndexLabel(Text(section.key))
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .transition(.opacity)
+                .scrollsToTop(signal: scrollToTopSignal,
+                              firstID: BrowseLetterIndex.displayedFirst(starred: layout.starred, sections: layout.sections))
             } else {
                 List {
                     if !BrowseStarredSections.showsSections(starredCount: split.starred.count) {

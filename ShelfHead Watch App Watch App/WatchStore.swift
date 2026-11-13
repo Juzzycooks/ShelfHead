@@ -316,8 +316,24 @@ final class WatchStore {
         case sessionExpired
     }
 
-    private(set) var authState: WatchAuthState = .checking
+    private(set) var authState: WatchAuthState = .checking {
+        didSet {
+            guard authState != oldValue else { return }
+            // Batch 496 (REVIEW 2026-11-11 W13): a new session answers "Signed out on iPhone".
+            if authState == .active, signedOutOnPhone { setSignedOutOnPhone(false) }
+            // After the current synchronous step, so `sessionKind` set alongside is included.
+            Task { @MainActor in self.publishSetupReport() }
+        }
+    }
     private(set) var authFailureMessage: String?
+
+    /// Batch 496 (REVIEW 2026-11-11 W13): the iPhone's account switch or sign-out wiped a
+    /// session this Watch held. The Shelf says so, with the action, until the listener sets
+    /// up again or taps Not Now (`WatchRunSetupPrompt.prompt`).
+    private(set) var signedOutOnPhone = UserDefaults.standard.bool(forKey: WatchRunSetupPrompt.signedOutOnPhoneDefaultsKey)
+
+    /// Batch 496 (W13): the iPhone account id the current session was handed over from.
+    static let handoffAccountIdDefaultsKey = "watchSetup.handoffAccountId"
     /// §9.1 items 1–2 (public-release amendment) — `nil` until the first probe
     /// completes (screens should default to showing the sessions row rather than
     /// flashing it in after a delay); `true`/`false` once `probeServerCapabilities()`
@@ -483,8 +499,12 @@ final class WatchStore {
                     // Review 6 Medium 8: an adopted session for a different server must not
                     // keep the old library on screen or flush old queues under the new token.
                     if switchesServer { await self.resetAccountScopedState() }
+                    // Batch 496 (W13): which iPhone account this is, for its Settings › Apple
+                    // Watch status. Additive key; an older iPhone build sends none.
+                    UserDefaults.standard.set(reply["accountId"] as? String, forKey: Self.handoffAccountIdDefaultsKey)
                     self.sessionKind = incomingKind
                     self.authState = .active
+                    self.publishSetupReport()
                     self.authFailureMessage = nil
                     // §9.1 item 3 — surfaced at this exact moment, not discovered
                     // later when a background refresh silently fails against a
@@ -733,6 +753,8 @@ final class WatchStore {
                 // pre-approved.
                 Self.rememberInsecureAcknowledgement(cleanURL: cleanURL)
             }
+            // Batch 496 (W13): this Watch's own sign-in, not an iPhone account's.
+            UserDefaults.standard.removeObject(forKey: Self.handoffAccountIdDefaultsKey)
             authState = .active
             authFailureMessage = nil
             // Polish pass (WA-3): a fresh sign-in must not show the previous sign-in's cached shelf.
@@ -920,7 +942,12 @@ final class WatchStore {
         return comparableServerURL(existingServerURL) != comparableServerURL(incomingServerURL)
     }
 
-    func wipeCredentials() async {
+    /// Batch 496 (REVIEW 2026-11-11 W13): `initiatedByPhone` is true for the iPhone's
+    /// `wipeCredentials` signal (account switch or sign-out). When it wiped a session this
+    /// Watch held, the Shelf says "Signed out on iPhone" with Set Up Again. It does not ask
+    /// for a new credential by itself: see `WatchShelfView.signedOutPage`.
+    func wipeCredentials(initiatedByPhone: Bool = false) async {
+        let hadSession = api.isConfigured
         // Before `api.wipeCredentials()`: this is the last moment the access token
         // still works.
         await standalone.stopAndWriteOutProgress()
@@ -929,6 +956,13 @@ final class WatchStore {
         // classification — see that method's own doc comment for why `.durable` and
         // `.shared` are deliberately left open.
         await api.wipeCredentials()
+        // Batch 496 (W13): a sign-out on this Watch is the wearer's own choice and says nothing.
+        UserDefaults.standard.removeObject(forKey: Self.handoffAccountIdDefaultsKey)
+        if initiatedByPhone {
+            if hadSession { setSignedOutOnPhone(true) }
+        } else {
+            setSignedOutOnPhone(false)
+        }
         authState = .noSession
         authFailureMessage = nil
         sessionKind = nil
@@ -953,6 +987,60 @@ final class WatchStore {
         // `shouldDeferModeChange(...)` guard would otherwise have refused, which is
         // half of why this was left inconsistent before.
         resolveMode()
+        publishSetupReport()
+    }
+
+    // MARK: - Setup state (Batch 496, REVIEW 2026-11-11 W13)
+
+    private func setSignedOutOnPhone(_ value: Bool) {
+        signedOutOnPhone = value
+        UserDefaults.standard.set(value, forKey: WatchRunSetupPrompt.signedOutOnPhoneDefaultsKey)
+    }
+
+    /// "Not Now" on the Shelf's "Signed out on iPhone" page.
+    func dismissSignedOutOnPhone() {
+        setSignedOutOnPhone(false)
+        publishSetupReport()
+    }
+
+    /// The iPhone's Settings › Apple Watch "Send Sign-In to Watch": a tokenless nudge that
+    /// asks this Watch to request the hand-over through the usual interactive path
+    /// (`requestHandoffFromPhone`, which keeps a working dedicated session over a borrowed one).
+    func acceptSignInOfferFromPhone() async {
+        await requestHandoffFromPhone()
+    }
+
+    /// The setup state as `WatchSetupReport`, or nil while still checking.
+    nonisolated static func setupReport(authState: WatchAuthState, sessionKind: WatchSessionKind?,
+                                        serverURL: String?, handoffAccountId: String?,
+                                        signedOutOnPhone: Bool, now: Int64) -> WatchSetupReport? {
+        let state: WatchSetupReport.State
+        switch authState {
+        case .checking: return nil
+        case .noSession: state = .notSetUp
+        case .active: state = .active
+        case .sessionExpired: state = .expired
+        }
+        let hasSession = state != .notSetUp
+        return WatchSetupReport(state: state,
+                                sessionKind: hasSession ? sessionKind?.rawValue : nil,
+                                serverURL: hasSession ? serverURL : nil,
+                                handoffAccountId: hasSession ? handoffAccountId : nil,
+                                signedOutOnPhone: !hasSession && signedOutOnPhone,
+                                updatedAt: now)
+    }
+
+    /// Sends the setup state to the iPhone. `updateApplicationContext` replaces the last
+    /// one and may be called while the iPhone is out of reach; it needs an activated session.
+    func publishSetupReport() {
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
+              let report = Self.setupReport(authState: authState, sessionKind: sessionKind,
+                                            serverURL: AuthStore.shared.isConfigured ? AuthStore.shared.serverURL : nil,
+                                            handoffAccountId: UserDefaults.standard.string(forKey: Self.handoffAccountIdDefaultsKey),
+                                            signedOutOnPhone: signedOutOnPhone,
+                                            now: Int64(Date().timeIntervalSince1970)),
+              let data = try? JSONEncoder().encode(report) else { return }
+        try? WCSession.default.updateApplicationContext([WatchSetupReport.contextKey: data])
     }
 
     // MARK: - Auth session management (Stage 2 revocation UI)

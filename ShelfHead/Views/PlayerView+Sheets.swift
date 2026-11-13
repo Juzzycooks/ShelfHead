@@ -633,7 +633,7 @@ struct BookmarksSheet: View {
                 Haptics.success()
                 editingBookmark = nil
             } else {
-                Haptics.impact(.heavy)
+                Haptics.error()   // Batch 495 (V7)
                 editSaveError = BookmarkEditFeedback.failureMessage
                 // Critique 2026-10-06 (polish): the message appears below the editor, out
                 // of VoiceOver focus (the Save button keeps it), so it's announced too.

@@ -147,11 +147,18 @@ final class WatchRemoteCommandRouter {
             forward = state?.skipForwardInterval ?? 30
             backward = state?.skipBackwardInterval ?? 15
         case .standalone:
-            forward = StandaloneAudioEngine.skipForwardSeconds
-            backward = StandaloneAudioEngine.skipBackwardSeconds
+            // Batch 495 (REVIEW 2026-11-11 W7): the iPhone's intervals, not fixed 15/30.
+            let engine = WatchStore.shared.standalone
+            forward = engine.skipForwardInterval
+            backward = engine.skipBackwardInterval
         }
         center.skipForwardCommand.preferredIntervals = [NSNumber(value: forward)]
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: backward)]
+    }
+
+    /// Batch 495 (W7): re-applies the skip intervals after the iPhone's settings change.
+    func refreshPreferredIntervals() {
+        applyPreferredIntervals(for: WatchStore.shared.mode)
     }
 
     // MARK: - Dispatch

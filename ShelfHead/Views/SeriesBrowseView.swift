@@ -7,6 +7,83 @@ private func seriesBookCountPhrase(_ count: Int) -> String {
         : String(localized: "\(count) books", comment: "Count phrase for several books in a series; %lld is the count")
 }
 
+// MARK: - Sort / filter (Batch 496, REVIEW 2026-11-11 L8)
+
+/// The sorts the Series list offers. Each raw value is a `sort` key the server's series list
+/// accepts: `getFilteredSeries` in `server/utils/queries/seriesFilters.js` handles `name`,
+/// `numBooks`, `addedAt`, `totalDuration`, `lastBookAdded`, `lastBookUpdated` and `random`
+/// (the controller is `getAllSeriesForLibrary` in `server/controllers/LibraryController.js`).
+enum SeriesSortOption: String, CaseIterable, Identifiable {
+    case name
+    case addedAt
+    case numBooks
+    case totalDuration
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .name: return String(localized: "Name", comment: "Series sort option")
+        case .addedAt: return String(localized: "Recently Added", comment: "Series sort option: by when the series was added")
+        case .numBooks: return String(localized: "Books", comment: "Series sort option: by number of books in the series")
+        case .totalDuration: return String(localized: "Total Length", comment: "Series sort option: by the combined length of all books in the series")
+        }
+    }
+
+    /// Name reads A to Z first; the rest start with the biggest / newest.
+    var defaultDescending: Bool { self != .name }
+
+    func directionLabel(descending: Bool) -> String {
+        switch self {
+        case .name:
+            return descending ? String(localized: "Z to A", comment: "Series sort direction for Name")
+                              : String(localized: "A to Z", comment: "Series sort direction for Name")
+        case .addedAt:
+            return descending ? String(localized: "Newest First", comment: "Series sort direction for Recently Added")
+                              : String(localized: "Oldest First", comment: "Series sort direction for Recently Added")
+        case .numBooks:
+            return descending ? String(localized: "Most Books First", comment: "Series sort direction for Books")
+                              : String(localized: "Fewest Books First", comment: "Series sort direction for Books")
+        case .totalDuration:
+            return descending ? String(localized: "Longest First", comment: "Series sort direction for Total Length")
+                              : String(localized: "Shortest First", comment: "Series sort direction for Total Length")
+        }
+    }
+}
+
+/// Sort + Hide finished as one comparable value, and the pure mapping to server parameters.
+struct SeriesListQuery: Equatable {
+    var sort: SeriesSortOption = .name
+    var descending: Bool = false
+    var hideFinished: Bool = false
+
+    struct Request: Equatable {
+        let sort: String
+        let desc: Bool
+        let filter: String?
+    }
+
+    /// The server's series filter for "has at least one book that isn't finished":
+    /// `progress.` + base64("not-finished") (`seriesFilters.js`: the `progress` group,
+    /// value `not-finished`; the filter value is base64-decoded server side).
+    static let hideFinishedFilter = "progress." + Data("not-finished".utf8).base64EncodedString()
+
+    var request: Request {
+        Request(sort: sort.rawValue, desc: descending, filter: hideFinished ? Self.hideFinishedFilter : nil)
+    }
+
+    /// Client-side pass over what the server returned, so a book finished on this device since
+    /// the last load (progress not yet on the server) also drops its series. A series with no
+    /// book data is kept. `isFinished` answers for one book.
+    static func visible(_ series: [Series], hideFinished: Bool, isFinished: (LibraryItem) -> Bool) -> [Series] {
+        guard hideFinished else { return series }
+        return series.filter { s in
+            guard let books = s.books, !books.isEmpty else { return true }
+            return books.contains { !isFinished($0) }
+        }
+    }
+}
+
 struct SeriesBrowseView: View {
     /// Clearance for the mini-player + tab bar (passed from LibraryView).
     var bottomInset: CGFloat = 0
@@ -20,7 +97,9 @@ struct SeriesBrowseView: View {
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 16)]
 
     private var filteredSeries: [Series] {
-        let all = libraryViewModel.seriesList
+        let all = SeriesListQuery.visible(libraryViewModel.seriesList, hideFinished: libraryViewModel.seriesHideFinished) { book in
+            libraryViewModel.progressFor(itemId: book.id)?.isFinished ?? book.isFinished
+        }
         guard !search.isEmpty else { return all }
         return all.filter { $0.displayName.localizedCaseInsensitiveContains(search) }
     }
@@ -48,12 +127,15 @@ struct SeriesBrowseView: View {
                 // UI-11: distinguishes "the load failed" from "this library genuinely
                 // has no series" — previously both looked identical.
                 LoadFailedStateView(action: { Task { await libraryViewModel.loadSeries() } })
-            } else if libraryViewModel.seriesList.isEmpty {
+            } else if libraryViewModel.seriesList.isEmpty && !libraryViewModel.seriesHideFinished {
                 EmptyStateView(
                     icon: "square.stack.3d.up",
                     title: LocalizedStringResource("No series"),
                     subtitle: LocalizedStringResource("This library has no series yet")
                 )
+            } else if filteredSeries.isEmpty && search.isEmpty && libraryViewModel.seriesHideFinished {
+                EmptyStateView(icon: "checkmark.circle", title: "No unfinished series",
+                               subtitle: "Every series here is finished. Turn off Hide finished to see them.")
             } else if filteredSeries.isEmpty {
                 EmptyStateView(icon: "magnifyingglass", title: "No matches",
                                subtitle: "No series match “\(search)”")
@@ -84,13 +166,81 @@ struct SeriesBrowseView: View {
             }
         }
         .shelfAnimation(.easeInOut(duration: 0.25), value: showsSkeleton)
-        .task {
-            if libraryViewModel.seriesList.isEmpty {
-                await libraryViewModel.loadSeries()
+        // Batch 496 (L8): the sort control lives in the view's own content (a top inset), so it
+        // stays put whichever state is showing and needs nothing from LibraryView's toolbar.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !showsSkeleton && showsSortControl { sortControl }
+        }
+        // Reloads when the sort or Hide finished changes, and on first appearance.
+        .task(id: libraryViewModel.seriesQuery) {
+            let vm = libraryViewModel
+            if vm.seriesList.isEmpty || vm.loadedSeriesQuery != vm.seriesQuery {
+                await vm.loadSeries()
             }
         }
         .refreshable { await libraryViewModel.loadSeries() }
         .reexpandsTabBarOnAppear()
+    }
+
+    /// Hidden for a library that genuinely has no series, and while a failed load shows Retry.
+    private var showsSortControl: Bool {
+        let vm = libraryViewModel
+        if vm.seriesList.isEmpty && vm.seriesLoadFailed { return false }
+        return !vm.seriesList.isEmpty || vm.seriesHideFinished
+    }
+
+    private var sortControl: some View {
+        let vm = libraryViewModel
+        let summary = "\(vm.seriesSort.label), \(vm.seriesSort.directionLabel(descending: vm.seriesSortDescending))"
+        return HStack(spacing: 8) {
+            Menu {
+                Section("Sort by") {
+                    Picker("Sort by", selection: Binding(
+                        get: { vm.seriesSort },
+                        set: { newValue in
+                            guard newValue != vm.seriesSort else { return }
+                            vm.seriesSort = newValue
+                            vm.seriesSortDescending = newValue.defaultDescending
+                        }
+                    )) {
+                        ForEach(SeriesSortOption.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                }
+                Section("Order") {
+                    Picker("Order", selection: Binding(
+                        get: { vm.seriesSortDescending },
+                        set: { vm.seriesSortDescending = $0 }
+                    )) {
+                        Text(vm.seriesSort.directionLabel(descending: false)).tag(false)
+                        Text(vm.seriesSort.directionLabel(descending: true)).tag(true)
+                    }
+                    .pickerStyle(.inline)
+                }
+                Toggle("Hide finished", isOn: Binding(
+                    get: { vm.seriesHideFinished },
+                    set: { vm.seriesHideFinished = $0 }
+                ))
+            } label: {
+                Label {
+                    Typo.supporting(Text(summary))
+                } icon: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .foregroundStyle(Color.shelfCream)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Sort series")
+            .accessibilityValue(vm.seriesHideFinished ? "\(summary), finished hidden" : summary)
+            Spacer(minLength: 0)
+            if vm.seriesHideFinished {
+                Typo.fine(Text("Finished hidden"))
+                    .foregroundStyle(Color.shelfMuted)
+            }
+        }
+        .padding(.horizontal, Space.pageH)
+        .background(Color.shelfBackground)
     }
 }
 
@@ -295,6 +445,8 @@ struct SeriesDetailView: View {
     private var orderedBooks: [LibraryItem] {
         books.sortedBySeriesSequence(inSeriesNamed: series.displayName)
     }
+    /// Batch 497 (L12): listening only (`progress` is the server's listening fraction), so a
+    /// read companion ebook never turns the hero into Resume.
     private func hasStarted(_ item: LibraryItem) -> Bool {
         (libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent) > 0
     }
@@ -462,7 +614,7 @@ struct SeriesDetailView: View {
                                     let mp = libraryViewModel.progressFor(itemId: item.id)
                                     let lift = Self.sequenceBadgeBottomInset(
                                         progressLine: CassetteTile.showsProgressLine(
-                                            progress: mp?.progress ?? item.progressPercent,
+                                            progress: item.shownProgress(mp),  // Batch 497 (L12): as the tile
                                             isFinished: mp?.isFinished ?? item.isFinished),
                                         reelBand: CassetteTile.showsReelBand(
                                             isNowPlaying: playerViewModel.currentBook?.id == item.id,
@@ -858,7 +1010,7 @@ struct SeriesDetailView: View {
             resultMessage = Self.failureMessage(count: failed)
         }
         // LS-10: success haptic only when every request in the batch succeeded.
-        if failed == 0 { Haptics.success() } else { Haptics.impact(.heavy) }
+        if failed == 0 { Haptics.success() } else { Haptics.error() }   // Batch 495 (V7)
     }
 
     /// Undo: every book back to its snapshot in one batch, as Library's bulk Undo.

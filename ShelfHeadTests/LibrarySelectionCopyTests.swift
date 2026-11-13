@@ -42,7 +42,8 @@ final class LibrarySelectionCopyTests: XCTestCase {
 
     func testBulkActionTitlesAndGlyphs() {
         // Glyphs match the swipe actions and BookContextMenu (plan §3.2).
-        XCTAssertEqual(LibraryView.BulkAction.allCases, [.upNext, .download, .markFinished])
+        // Batch 496 (REVIEW 2026-11-11 D5): Remove Download joins the bar before Mark Finished.
+        XCTAssertEqual(LibraryView.BulkAction.allCases, [.upNext, .download, .removeDownload, .markFinished])
         XCTAssertEqual(LibraryView.BulkAction.upNext.systemImage, "text.badge.plus")
         XCTAssertEqual(LibraryView.BulkAction.download.systemImage, "arrow.down.circle")
         XCTAssertEqual(LibraryView.BulkAction.markFinished.systemImage, "checkmark.circle")

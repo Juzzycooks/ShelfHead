@@ -382,7 +382,7 @@ private struct AddChildSheet: View {
         } header: {
             RetroSectionHeader(title: "Account created")
         } footer: {
-            formFooter("This password is shown only now. The child’s account is already saved on this iPhone; switch to it from Settings or the profile picker.")
+            formFooter("This password is shown only now. The child’s account is already saved on this iPhone; switch to it with the profile button at the top of Home.")
         }
         .listRowBackground(Color.shelfCard)
     }

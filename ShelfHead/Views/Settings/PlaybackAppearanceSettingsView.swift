@@ -90,6 +90,11 @@ struct SettingsDestinationView: View {
                 ReadingSitesView()
                     .settingsRowAnchor(SettingsRow.readingSites)
             }
+        case .appleWatch:
+            // Batch 496 (REVIEW 2026-11-11 W13): what the Watch can do and whether it is signed in.
+            SettingsCategoryPage(title: .verbatim(page.title), bottomInset: bottomInset, focusRow: focusRow) {
+                AppleWatchSettingsSection()
+            }
         case .featuresTips:
             FeaturesTipsView(bottomInset: bottomInset, focusRow: focusRow)
         }

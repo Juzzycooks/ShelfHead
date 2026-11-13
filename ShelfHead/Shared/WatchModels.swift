@@ -620,10 +620,30 @@ enum WatchCommandValidator {
 /// received so standalone playback keeps honouring it with the phone gone.
 /// Values are seconds; 0 = off. `overrides[itemId]` is `[start, end]`, same shape the
 /// phone stores.
+///
+/// Batch 495 (REVIEW 2026-11-11 W7): the same payload now also carries the rest of the
+/// phone's playback settings standalone Watch playback honours. Every new field is
+/// optional and decoded leniently (`init(from:)` below), so a new phone and an old Watch
+/// app (unknown keys ignored) or an old phone and a new Watch app (keys missing, `nil`)
+/// still agree on chapter skip. `nil` means "the phone didn't say".
 nonisolated struct WatchChapterSkipSettings: Codable, Equatable, Sendable {
     var defaultStart: Int = 0
     var defaultEnd: Int = 0
     var overrides: [String: [Int]] = [:]
+    /// `SettingsStore.skipBackwardInterval` / `skipForwardInterval`, seconds.
+    var skipBackwardInterval: Double? = nil
+    var skipForwardInterval: Double? = nil
+    /// `SettingsStore.smartRewind`.
+    var smartRewind: Bool? = nil
+    /// `SettingsStore.defaultPlaybackSpeed`.
+    var defaultSpeed: Double? = nil
+    /// The phone's remembered per-book speeds (`SettingsKeys.perBookSpeed`), by item id.
+    var perBookSpeeds: [String: Double]? = nil
+
+    private nonisolated enum CodingKeys: String, CodingKey {
+        case defaultStart, defaultEnd, overrides
+        case skipBackwardInterval, skipForwardInterval, smartRewind, defaultSpeed, perBookSpeeds
+    }
 
     /// The (start, end) trim for `itemId`: its override when present, else the default.
     func resolved(forItem itemId: String) -> (start: Int, end: Int) {
@@ -644,6 +664,69 @@ nonisolated struct WatchChapterSkipSettings: Codable, Equatable, Sendable {
     func save(to defaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.defaultsKey)
+    }
+}
+
+// In an extension so the memberwise initializer stays.
+extension WatchChapterSkipSettings {
+    /// Batch 495 (W7): the chapter-skip fields decode as they always did; each newer field
+    /// is `try?`, so a missing or malformed one is `nil` instead of failing the whole
+    /// payload (and with it chapter skip).
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        defaultStart = try container.decodeIfPresent(Int.self, forKey: .defaultStart) ?? 0
+        defaultEnd = try container.decodeIfPresent(Int.self, forKey: .defaultEnd) ?? 0
+        overrides = try container.decodeIfPresent([String: [Int]].self, forKey: .overrides) ?? [:]
+        skipBackwardInterval = (try? container.decodeIfPresent(Double.self, forKey: .skipBackwardInterval)) ?? nil
+        skipForwardInterval = (try? container.decodeIfPresent(Double.self, forKey: .skipForwardInterval)) ?? nil
+        smartRewind = (try? container.decodeIfPresent(Bool.self, forKey: .smartRewind)) ?? nil
+        defaultSpeed = (try? container.decodeIfPresent(Double.self, forKey: .defaultSpeed)) ?? nil
+        perBookSpeeds = (try? container.decodeIfPresent([String: Double].self, forKey: .perBookSpeeds)) ?? nil
+    }
+}
+
+// MARK: - Watch book speed (Batch 497, REVIEW 2026-11-11 W7)
+
+/// A speed set on the Watch for one book, sent to the iPhone so it remembers it too
+/// (`SettingsStore.setSpeed(_:forItem:)`). Sent with `transferUserInfo` under
+/// `userInfoKey`: queued and delivered even while the iPhone app isn't running or
+/// reachable. Backward compatible both ways: an iPhone app without the receiver never
+/// reads the key, and an older Watch app never sends it.
+nonisolated struct WatchBookSpeedUpdate: Codable, Equatable, Sendable {
+    static let userInfoKey = "watchBookSpeed"
+
+    var itemId: String
+    var rate: Double
+
+    /// The iPhone's decision: the speed to store for `itemId`, or nil to drop the update.
+    /// Dropped for an empty id or an unusable rate, and during SharePlay
+    /// (`AudioPlayerService.isCoordinatingPlayback`): the group sets the rate then, and the
+    /// iPhone doesn't remember speeds for a book it plays with the group. Otherwise clamped
+    /// to 0.5×–3× and rounded to the nearest 0.05, as `PlayerViewModel.setPlaybackRate` does.
+    static func acceptedRate(itemId: String, rate: Double, isCoordinatingPlayback: Bool) -> Double? {
+        guard !itemId.isEmpty, rate.isFinite, rate > 0, !isCoordinatingPlayback else { return nil }
+        let clamped = min(max(rate, 0.5), 3.0)
+        return (clamped * 20).rounded() / 20
+    }
+}
+
+// MARK: - Smart rewind (Batch 495, mirrored for standalone Watch playback)
+
+/// Seconds to rewind when playback resumes, scaled by how long it was paused.
+///
+/// Under 10 s: 0, under a minute: 3, under 10 minutes: 5, under an hour: 10, longer: 20.
+/// The one scale for both devices: the iPhone's `SettingsStore.smartRewindAmount(pausedFor:)`
+/// forwards here, and the Watch's standalone engine calls it directly.
+nonisolated enum WatchSmartRewind {
+    static func seconds(pausedFor seconds: TimeInterval, isEnabled: Bool) -> Double {
+        guard isEnabled, seconds.isFinite else { return 0 }
+        switch seconds {
+        case ..<10: return 0
+        case ..<60: return 3
+        case ..<600: return 5
+        case ..<3600: return 10
+        default: return 20
+        }
     }
 }
 
@@ -692,4 +775,33 @@ enum WatchChapterSkipRule {
         }
         return nil
     }
+}
+
+// MARK: - Watch setup report (Batch 496, REVIEW 2026-11-11 W13)
+
+/// What the Watch tells the iPhone about its own sign-in, so Settings › Apple Watch can say
+/// whether this account is set up there. Sent Watch → iPhone with
+/// `updateApplicationContext` (latest wins, delivered when the iPhone app next runs) under
+/// `contextKey`. Carries no token: a state, the session kind's raw value, the server URL
+/// and the iPhone account id the last hand-over came from.
+nonisolated struct WatchSetupReport: Codable, Equatable, Sendable {
+    nonisolated enum State: String, Codable, Equatable, Sendable {
+        case notSetUp, active, expired
+    }
+
+    static let contextKey = "watchSetup"
+
+    var state: State
+    /// `WatchSessionKind` / `WatchHandoffSessionKind` raw value ("dedicated", "durable",
+    /// "shared"), nil when unknown.
+    var sessionKind: String?
+    var serverURL: String?
+    /// The iPhone's `ServerAccount.id` from the hand-over reply's `accountId` key. Nil after
+    /// a sign-in on the Watch itself, or a hand-over from an older iPhone build.
+    var handoffAccountId: String?
+    /// The iPhone's account switch or sign-out signed this Watch out, and it hasn't been
+    /// set up again or told "Not Now".
+    var signedOutOnPhone: Bool
+    /// Seconds since 1970, `Int64` for arm64_32.
+    var updatedAt: Int64
 }

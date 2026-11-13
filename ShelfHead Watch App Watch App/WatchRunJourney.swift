@@ -160,6 +160,28 @@ nonisolated enum WatchRunSetupPrompt {
     static func shouldShow(hasNoSession: Bool, wasDismissed: Bool, wasCompleted: Bool) -> Bool {
         hasNoSession && !wasDismissed && !wasCompleted
     }
+
+    /// Batch 496 (REVIEW 2026-11-11 W13): set when the iPhone's account switch or sign-out
+    /// wiped a session this Watch held, cleared by a new session or "Not Now".
+    static let signedOutOnPhoneDefaultsKey = "watchSetup.signedOutOnPhone"
+
+    /// Batch 496 (W13): which setup page the Shelf shows, if any. A Watch the iPhone just
+    /// signed out is told so even though it was set up before (`wasCompleted`) or
+    /// dismissed the first-run page once: otherwise it is left silently un-set-up.
+    static func prompt(hasNoSession: Bool, wasDismissed: Bool, wasCompleted: Bool,
+                       signedOutOnPhone: Bool) -> WatchSetupPromptKind? {
+        guard hasNoSession else { return nil }
+        if signedOutOnPhone { return .signedOutOnPhone }
+        return shouldShow(hasNoSession: true, wasDismissed: wasDismissed, wasCompleted: wasCompleted) ? .firstRun : nil
+    }
+}
+
+/// Batch 496 (REVIEW 2026-11-11 W13): the two setup pages the Shelf can show.
+nonisolated enum WatchSetupPromptKind: Equatable, Sendable {
+    /// "Get this Watch ready for runs": never set up.
+    case firstRun
+    /// The iPhone switched accounts or signed out, which signed this Watch out too.
+    case signedOutOnPhone
 }
 
 /// Copy on Account's iPhone handoff button.

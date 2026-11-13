@@ -100,10 +100,8 @@ final class ReachabilityStore {
         /// (no second call is made), for a server too old to report the field, or for any
         /// failure along the way (timeout, non-2xx, malformed JSON) — `/ping`'s outcome
         /// stays authoritative regardless. Feeds
-        /// `ServerConnectionRules.advertisesSingleSignOn`/`otherSignInOptionsTitle`/
-        /// `otherSignInOptionsStartExpanded`, which `AddServerView`'s "Other sign-in
-        /// options" disclosure was already written against — this is what stops it being
-        /// dormant. Defaulted to `nil` in the initializer below so every existing call
+        /// `ServerConnectionRules.signInLayout`, which decides what the sign-in page shows
+        /// (Batch 495, O3). Defaulted to `nil` in the initializer below so every existing call
         /// site and test that only names `outcome:`/`resolvedURL:` keeps compiling.
         let authMethods: [String]?
         /// Critique 2026-10-06 (harden): WHY an `.unreachable` failed, so the form can say

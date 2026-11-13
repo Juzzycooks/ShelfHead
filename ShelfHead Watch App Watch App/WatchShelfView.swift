@@ -39,8 +39,6 @@ struct WatchShelfView: View {
     private var engine: StandaloneAudioEngine { store.standalone }
     private var library: WatchStandaloneLibraryStore { store.library }
 
-    private static let runSetupPageId = "shelf.runSetup"
-
     // MARK: - Inputs
 
     private var input: WatchShelfInput {
@@ -68,21 +66,32 @@ struct WatchShelfView: View {
         input.isStandaloneMode = store.mode == .standalone
         input.phoneIsReachable = companion.isReachable
         input.hasWatchSession = store.authState == .active
+        // Batch 495 (REVIEW 2026-11-11 W6): what the downloaded mark and an offline
+        // stream's dimmed cover need.
+        input.downloadedItemIds = Set(store.localDownloads.downloads.keys.filter { store.localDownloads.isDownloaded(itemId: $0) })
+        input.networkIsAvailable = store.progressSync.isNetworkAvailable
+        input.serverIsReachable = !library.inProgressIsFromCache
         return input
     }
 
     private var sleeves: [WatchShelfSleeve] { WatchShelf.sleeves(for: input) }
 
-    private var showsRunSetupPrompt: Bool {
-        // The Setup sleeve already says it when it's the only page.
-        sleeves.first?.kind != .setup && WatchRunSetupPrompt.shouldShow(hasNoSession: store.authState == .noSession,
-                                       wasDismissed: runSetupDismissed,
-                                       wasCompleted: runSetupCompleted)
+    /// Batch 496 (REVIEW 2026-11-11 W13): which setup page, if any. Its place on the Shelf
+    /// (second, not last) is `WatchShelf.pages(sleeves:prompt:)`.
+    private var setupPrompt: WatchSetupPromptKind? {
+        WatchRunSetupPrompt.prompt(hasNoSession: store.authState == .noSession,
+                                   wasDismissed: runSetupDismissed,
+                                   wasCompleted: runSetupCompleted,
+                                   signedOutOnPhone: store.signedOutOnPhone)
     }
 
-    private var pageIds: [String] {
-        sleeves.map(\.id) + (showsRunSetupPrompt ? [Self.runSetupPageId] : [])
-    }
+    private var pages: [WatchShelfPage] { WatchShelf.pages(sleeves: sleeves, prompt: setupPrompt) }
+
+    private var pageIds: [String] { pages.map(\.id) }
+
+    /// Batch 496 (W13): Set Up Again's hand-over in flight.
+    @State private var isRequestingHandoff = false
+    @State private var handoffFailed = false
 
     /// Nothing to show yet but something is on its way: the first iPhone snapshot, or the
     /// Watch's own in-progress fetch.
@@ -103,8 +112,10 @@ struct WatchShelfView: View {
         return "\(ids)|\(engine.isLoaded)"
     }
 
+    /// Batch 495 (W6): includes the network, so a list restored from the saved copy while
+    /// offline is fetched again (and its sleeves undimmed) when the network returns.
     private var inProgressKey: String {
-        "\(store.authState == .active)|\(library.selectedLibraryId ?? "")|\(engine.isLoaded)|\(companion.playbackState?.itemId ?? "")"
+        "\(store.authState == .active)|\(library.selectedLibraryId ?? "")|\(engine.isLoaded)|\(companion.playbackState?.itemId ?? "")|\(store.progressSync.isNetworkAvailable)"
     }
 
     // MARK: - Body
@@ -116,13 +127,22 @@ struct WatchShelfView: View {
                     WatchShelfSkeletonPage()
                         .tag(Optional("shelf.loading"))
                 } else {
-                    ForEach(Array(sleeves.enumerated()), id: \.element.id) { index, sleeve in
-                        page(for: sleeve, index: index, count: sleeves.count)
-                            .tag(Optional(sleeve.id))
-                    }
-                    if showsRunSetupPrompt {
-                        runSetupPage
-                            .tag(Optional(Self.runSetupPageId))
+                    // Batch 496 (REVIEW 2026-11-11 W13): the setup page sits second, not last.
+                    let shelfPages = pages
+                    ForEach(Array(shelfPages.enumerated()), id: \.element.id) { index, shelfPage in
+                        switch shelfPage {
+                        case .sleeve(let sleeve):
+                            page(for: sleeve, index: index, count: shelfPages.count)
+                                .tag(Optional(sleeve.id))
+                        case .setupPrompt(let kind):
+                            Group {
+                                switch kind {
+                                case .firstRun: runSetupPage
+                                case .signedOutOnPhone: signedOutPage
+                                }
+                            }
+                            .tag(Optional(WatchShelfPage.setupPromptId))
+                        }
                     }
                 }
             }
@@ -294,6 +314,75 @@ struct WatchShelfView: View {
         }
     }
 
+    /// Batch 496 (REVIEW 2026-11-11 W13): after the iPhone's account switch or sign-out.
+    /// Deliberately not an automatic hand-over: a switch on a shared iPhone means someone
+    /// else is using it (a parent's account must not land on a child's Watch), and an SSO
+    /// account can only lend a short-lived token. The wearer's tap is the consent, and the
+    /// hand-over stays interactive, as Batch 312 made it.
+    private var signedOutPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Signed out on iPhone")
+                    .font(WatchMetrics.navigationRowTitleFont(weight: .semibold))
+                    .foregroundStyle(WatchTheme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Your iPhone switched accounts or signed out, so this Watch did too. Set it up again to play here without your iPhone.")
+                    .font(WatchMetrics.secondaryFont())
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    setUpAgain()
+                } label: {
+                    Group {
+                        if isRequestingHandoff {
+                            ProgressView()
+                                .accessibilityLabel("Setting up")
+                        } else {
+                            Text("Set Up Again")
+                                .font(WatchMetrics.secondaryFont(weight: .semibold))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .watchProminentTint()
+                .disabled(isRequestingHandoff)
+                if handoffFailed, let message = store.authFailureMessage {
+                    Text(message)
+                        .font(WatchMetrics.secondaryFont())
+                        .foregroundStyle(WatchTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Not Now") {
+                    store.dismissSignedOutOnPhone()
+                }
+                .font(WatchMetrics.secondaryFont())
+                .buttonStyle(.plain)
+                .foregroundStyle(WatchTheme.secondaryText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .padding(.horizontal, WatchMetrics.scrollContentHorizontalPadding)
+        }
+    }
+
+    /// With the iPhone in reach, asks it for the account it is on now, right here. Otherwise
+    /// opens Account, which offers the Watch's own sign-in.
+    private func setUpAgain() {
+        WatchHaptics.tap()
+        guard companion.isReachable else {
+            path.append(.setup)
+            return
+        }
+        handoffFailed = false
+        isRequestingHandoff = true
+        Task {
+            let ok = await store.requestHandoffFromPhone()
+            isRequestingHandoff = false
+            handoffFailed = !ok
+        }
+    }
+
     // MARK: - Routing
 
     private var watchNowPlayingRoute: WatchShelfRoute {
@@ -403,7 +492,13 @@ struct WatchShelfView: View {
 
     private func loadInProgress() async {
         guard store.authState == .active else { return }
-        await library.loadLibrariesIfNeeded()
+        // Batch 495 (W6): a library list that failed offline is tried again once the
+        // network is back (`inProgressKey`), so the saved shelf gives way to the live one.
+        if case .failed = library.librariesState, store.progressSync.isNetworkAvailable {
+            await library.reloadLibraries()
+        } else {
+            await library.loadLibrariesIfNeeded()
+        }
         await library.loadInProgress()
     }
 
@@ -560,14 +655,48 @@ private struct WatchShelfSleeveView: View {
             WatchShelfProgressRing(progress: sleeve.book?.progress ?? 0,
                                    tint: isLive && !dimsForAlwaysOn ? WatchTheme.accent : WatchTheme.icon)
                 .frame(width: 13, height: 13)
-            Text(verbatim: WatchShelf.percentText(sleeve.book?.progress ?? 0))
-                .font(WatchMetrics.captionFont(weight: .medium).monospacedDigit())
-                .foregroundStyle(WatchTheme.secondaryText)
-            if let glyph = sleeve.sourceSystemImage {
-                Image(systemName: glyph)
+            if let reason = sleeve.unavailableReason {
+                // Batch 495 (REVIEW 2026-11-11 W6): a sleeve that can't play says why, in
+                // words at full contrast, beside the reason's glyph (Dim-the-Picture Rule).
+                Image(systemName: reason.systemImage)
                     .font(WatchMetrics.captionFont(weight: .semibold))
                     .foregroundStyle(WatchTheme.secondaryText)
+                Text(Self.unavailableCaption(reason))
+                    .font(WatchMetrics.captionFont(weight: .medium))
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            } else {
+                Text(verbatim: WatchShelf.percentText(sleeve.book?.progress ?? 0))
+                    .font(WatchMetrics.captionFont(weight: .medium).monospacedDigit())
+                    .foregroundStyle(WatchTheme.secondaryText)
+                if let glyph = sleeve.sourceSystemImage {
+                    Image(systemName: glyph)
+                        .font(WatchMetrics.captionFont(weight: .semibold))
+                        .foregroundStyle(WatchTheme.secondaryText)
+                }
+                // Batch 495 (W6): the downloaded mark. The sleeve's VoiceOver label says it.
+                if sleeve.isDownloaded {
+                    Image(systemName: WatchShelfSleeve.downloadedSystemImage)
+                        .font(WatchMetrics.captionFont(weight: .semibold))
+                        .foregroundStyle(WatchTheme.icon)
+                }
             }
+        }
+    }
+
+    /// Batch 495 (W6): the status line's words for a sleeve that can't play.
+    private static func unavailableCaption(_ reason: WatchShelfUnavailableReason) -> String {
+        switch reason {
+        case .phoneOutOfReach:
+            // The same words as Now Playing's out-of-range line, so one key and one translation.
+            return String(localized: "iPhone out of range")
+        case .noWatchSession:
+            return String(localized: "Not signed in", comment: "Shelf sleeve status: the Watch has no sign-in of its own to stream with, and the book isn't downloaded")
+        case .offline:
+            return String(localized: "Offline", comment: "Shelf sleeve status: no network and the book isn't downloaded")
+        case .serverUnreachable:
+            return String(localized: "Server unreachable", comment: "Shelf sleeve status: the server didn't answer and the book isn't downloaded")
         }
     }
 
@@ -576,6 +705,10 @@ private struct WatchShelfSleeveView: View {
     private var accessibilityLabel: String {
         guard let book = sleeve.book else { return titleText }
         let percent = WatchShelf.percentText(book.progress)
+        // Batch 495 (REVIEW 2026-11-11 W6): the downloaded mark, spoken.
+        if sleeve.isDownloaded {
+            return String(localized: "\(book.title), by \(book.author), \(percent) listened, downloaded to this Watch", comment: "Shelf sleeve: title, author, percent listened, and that the book is downloaded to the Watch")
+        }
         return String(localized: "\(book.title), by \(book.author), \(percent) listened", comment: "Shelf sleeve: title, author, percent listened")
     }
 
@@ -584,7 +717,19 @@ private struct WatchShelfSleeveView: View {
         case .current(let source, _):
             return source == .watch ? String(localized: "Opens Now Playing on this Watch") : String(localized: "Opens Now Playing on your iPhone")
         case .book(let target, let isAvailable):
-            if !isAvailable { return String(localized: "Unavailable, your iPhone isn\u{2019}t reachable. Opens Book Details.") }
+            if !isAvailable {
+                // Batch 495 (REVIEW 2026-11-11 W6): the hint names the sleeve's reason.
+                switch sleeve.unavailableReason ?? .phoneOutOfReach {
+                case .phoneOutOfReach:
+                    return String(localized: "Unavailable, your iPhone isn\u{2019}t reachable. Opens Book Details.")
+                case .noWatchSession:
+                    return String(localized: "Unavailable, this Watch isn\u{2019}t signed in and the book isn\u{2019}t downloaded. Opens Book Details.")
+                case .offline:
+                    return String(localized: "Unavailable offline, the book isn\u{2019}t downloaded to this Watch. Opens Book Details.")
+                case .serverUnreachable:
+                    return String(localized: "Unavailable, the server isn\u{2019}t answering and the book isn\u{2019}t downloaded. Opens Book Details.")
+                }
+            }
             return target == .watch ? String(localized: "Plays on this Watch") : String(localized: "Plays on your iPhone")
         case .browse:
             return String(localized: "Opens Library")

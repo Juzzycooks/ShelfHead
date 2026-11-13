@@ -609,13 +609,15 @@ actor AudiobookshelfAPI {
         return try await get("/api/libraries/\(libraryId)/items\(encodedQuery(params))")
     }
 
-    func getSeries(libraryId: String, limit: Int = 100, page: Int = 0, sort: String = "name", desc: Bool = false) async throws -> SeriesResponse {
-        let params: [(String, String)] = [
+    func getSeries(libraryId: String, limit: Int = 100, page: Int = 0, sort: String = "name", desc: Bool = false, filter: String? = nil) async throws -> SeriesResponse {
+        var params: [(String, String)] = [
             ("limit", "\(limit)"),
             ("page", "\(page)"),
             ("sort", sort),
             ("desc", desc ? "1" : "0")
         ]
+        // Batch 496 (REVIEW 2026-11-11 L8): the server's series `filter` (e.g. `progress.<base64>`).
+        if let filter { params.append(("filter", filter)) }
         return try await get("/api/libraries/\(libraryId)/series\(encodedQuery(params))")
     }
 
@@ -931,6 +933,22 @@ actor AudiobookshelfAPI {
         let clamped = min(max(progress, 0), 1)
         let body = EbookProgressUpdate(ebookLocation: location, ebookProgress: clamped)
         try await patchNoResponse("/api/me/progress/\(pc(itemId))", body: body, expectedScope: expectedScope)
+        invalidateUserCache()
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 L12): the EPUB reader's write. Sends `ebookProgress` only,
+    /// never `ebookLocation`: the web reader keeps an epub.js CFI there, which this reader
+    /// can't produce (Batch 430). Audiobookshelf applies only the keys present
+    /// (`MediaProgress.applyProgressUpdate` → `this.set(payload)`; a new record gets
+    /// `ebookLocation: null` in `User.createUpdateMediaProgressFromPayload`), so the CFI stays.
+    func updateEbookReadingProgress(itemId: String, progress: Double, expectedScope: String? = nil) async throws {
+        struct EbookReadingProgressUpdate: Codable {
+            let ebookProgress: Double
+        }
+        let clamped = min(max(progress.isFinite ? progress : 0, 0), 1)
+        try await patchNoResponse("/api/me/progress/\(pc(itemId))",
+                                  body: EbookReadingProgressUpdate(ebookProgress: clamped),
+                                  expectedScope: expectedScope)
         invalidateUserCache()
     }
 

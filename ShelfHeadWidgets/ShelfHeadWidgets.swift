@@ -850,48 +850,38 @@ private struct PlayButton: View {
 /// tile went on showing book B and a play triangle until the next timeline (an hour
 /// later, `policy: .after(now + 1h)`).
 ///
-/// Why a link and not a "play THIS book" intent: there is no channel for one from this
-/// target. The Darwin names carry no payload, so the widget can't say *which* book; the
-/// app-side `PlayAudiobookIntent` (`ShelfHead/Services/PlaybackIntents.swift`) is in the
-/// app target (not compiled into this extension) and matches on a spoken *title*, not an
-/// id. Wiring a real one would mean a new App-Group request record plus a new observer in
-/// `AudioPlayerService` — app-target changes, outside this extension. Until that exists,
-/// the honest affordance is navigation: one tap opens this book in the app, where a real
-/// Play button lives. Labelled as "open", not "play", so it doesn't make the same promise
-/// the old triangle did.
-private struct PinnedOpenButton: View {
-    @Environment(\.widgetFamily) private var family
-    /// `PlaybackEntry.deepLinkURL` — `shelfhead://book/<id>` for this pinned book.
-    let url: URL?
+/// Batch 495 (REVIEW 2026-11-11 Y5): this used to be a link to Book Detail drawn as a play
+/// disc ("Open in ShelfHead"), because the name-only Darwin channels couldn't say *which*
+/// book. `PlayPinnedBookIntent` (WidgetPlaybackIntents.swift) now carries the item id
+/// through the App Group, so the disc plays this book. Acts only on a tap. If the app can't
+/// confirm playback within its bound the intent fails rather than claiming success, and the
+/// tile keeps showing this book with its Play disc (the provider only swaps to the live
+/// layout once the pinned book is the session).
+private struct PinnedPlayButton: View {
+    let itemId: String
+    let title: String
     let diameter: CGFloat
 
     var body: some View {
-        // systemSmall has exactly one tap target — the whole widget, via `widgetURL` —
-        // and `Link` is inert there, so only medium/large wrap the glyph in one. Both
-        // paths end at the same URL: on small, the surrounding `.widgetURL` (which is
-        // this same book URL for a pinned entry) handles the tap.
-        if family == .systemSmall || url == nil {
-            glyph
-        } else if let url {
-            Link(destination: url) { glyph }
+        Button(intent: PlayPinnedBookIntent(itemId: itemId)) {
+            ZStack {
+                Circle().fill(Retro.amber)
+                Image(systemName: "play.fill")
+                    .font(.system(size: diameter * 0.42, weight: .bold))
+                    .foregroundStyle(Retro.onAccent)
+                    .offset(x: 1)
+            }
+            // Same 44pt tap-target floor as `PlayButton` (finding 20, code review 26 Aug 2026).
+            .frame(width: max(44, diameter), height: max(44, diameter))
+            .contentShape(Rectangle())
+            // Same pending treatment as `PlayButton` while the app loads the book.
+            .invalidatableContent()
+            // W11 (REVIEW_2026-09-04_UI.md Pass 4): same accent treatment as `PlayButton`
+            // under iOS 18's tinted Home Screen mode.
+            .widgetAccentable()
         }
-    }
-
-    private var glyph: some View {
-        ZStack {
-            Circle().fill(Retro.amber)
-            Image(systemName: "play.fill")
-                .font(.system(size: diameter * 0.42, weight: .bold))
-                .foregroundStyle(Retro.onAccent)
-                .offset(x: 1)
-        }
-        // Same 44pt tap-target floor as `PlayButton` (finding 20, code review 26 Aug 2026).
-        .frame(width: max(44, diameter), height: max(44, diameter))
-        .contentShape(Rectangle())
-        .accessibilityLabel("Open in ShelfHead")
-        // W11 (REVIEW_2026-09-04_UI.md Pass 4): this is the pinned-mode stand-in for
-        // `PlayButton` — same accent treatment under iOS 18's tinted Home Screen mode.
-        .widgetAccentable()
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Play \(title)", comment: "VoiceOver label for the pinned widget's play button. %@ is the book title."))
     }
 }
 
@@ -899,6 +889,14 @@ private struct PinnedOpenButton: View {
 
 struct ShelfHeadWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    /// Batch 495 (REVIEW 2026-11-11 Y4): false in CarPlay and StandBy, where the system
+    /// removes the container background and draws the small widget on black (Apple,
+    /// "Adding StandBy and CarPlay support to your widget"). iOS 15+, so no gate.
+    @Environment(\.showsWidgetContainerBackground) private var showsContainerBackground
+    /// The tinted / clear Home Screen (`.accented`) also removes the background (Apple,
+    /// "Optimizing your widget for accented rendering mode and Liquid Glass"), and must keep
+    /// the Home Screen layout, so the glance layout is for the other background-less contexts.
+    @Environment(\.widgetRenderingMode) private var renderingMode
     var entry: PlaybackEntry
 
     var body: some View {
@@ -951,7 +949,10 @@ struct ShelfHeadWidgetView: View {
 
     @ViewBuilder
     private var homeScreen: some View {
-        if let snapshot = entry.snapshot {
+        if family == .systemSmall && !showsContainerBackground && renderingMode != .accented {
+            // Batch 495 (Y4): CarPlay / StandBy. The Home Screen rendering below is untouched.
+            GlanceSmallView(entry: entry)
+        } else if let snapshot = entry.snapshot {
             switch family {
             case .systemSmall: small(snapshot)
             case .systemLarge: large(snapshot)
@@ -1119,8 +1120,8 @@ struct ShelfHeadWidgetView: View {
                 // W1 (REVIEW_2026-09-04_UI.md Pass 4): a pinned tile drives a book that
                 // isn't loaded, so it gets the open affordance rather than transport.
                 // The live path is byte-for-byte what it was.
-                if entry.isPinned {
-                    PinnedOpenButton(url: entry.deepLinkURL, diameter: 38)
+                if let pinnedId = entry.pinnedItemId {
+                    PinnedPlayButton(itemId: pinnedId, title: s.title, diameter: 38)
                 } else {
                     PlayButton(isPlaying: s.isPlaying, diameter: 38)
                 }
@@ -1220,10 +1221,10 @@ struct ShelfHeadWidgetView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if entry.isPinned {
+            if let pinnedId = entry.pinnedItemId {
                 // W1 (REVIEW_2026-09-04_UI.md Pass 4): the skip buttons skipped inside the
-                // *live* book, not the pinned one — see `PinnedOpenButton`. Not drawn.
-                PinnedOpenButton(url: entry.deepLinkURL, diameter: 46)
+                // *live* book, not the pinned one — see `PinnedPlayButton`. Not drawn.
+                PinnedPlayButton(itemId: pinnedId, title: s.title, diameter: 46)
             } else {
                 VStack(spacing: 10) {
                     PlayButton(isPlaying: s.isPlaying, diameter: 46)
@@ -1313,13 +1314,13 @@ struct ShelfHeadWidgetView: View {
             .widgetScaledFont(11, weight: .semibold, design: .monospaced, relativeTo: .caption)
             .foregroundStyle(Retro.muted)
 
-            if entry.isPinned {
+            if let pinnedId = entry.pinnedItemId {
                 // W1 (REVIEW_2026-09-04_UI.md Pass 4): the whole transport cluster acted
                 // on the live session, not the book drawn above it — see
-                // `PinnedOpenButton`. One honest affordance replaces all three.
+                // `PinnedPlayButton`. One play-this-book button replaces all three.
                 HStack {
                     Spacer()
-                    PinnedOpenButton(url: entry.deepLinkURL, diameter: 58)
+                    PinnedPlayButton(itemId: pinnedId, title: s.title, diameter: 58)
                     Spacer()
                 }
                 .padding(.top, 2)
@@ -1366,7 +1367,7 @@ struct ShelfHeadWidgetView: View {
                 // a chapterless book/episode (`s.chapterTitle == nil`) keeps today's
                 // layout untouched. Not drawn for a pinned tile, same reason as the
                 // transport row just above: these buttons act on the *live* session, not
-                // the pinned book drawn at the top of this tile (see `PinnedOpenButton`).
+                // the pinned book drawn at the top of this tile (see `PinnedPlayButton`).
                 if let chapterTitle = s.chapterTitle {
                     HStack {
                         Button(intent: PreviousChapterIntent()) {
@@ -1440,6 +1441,95 @@ struct ShelfHeadWidgetView: View {
                 .multilineTextAlignment(.center)
         }
         .padding()
+    }
+}
+
+// MARK: - CarPlay and StandBy (Batch 495, REVIEW 2026-11-11 Y4)
+
+/// The Dark palette as fixed colours. With the container background removed the widget sits
+/// on black whatever the app's appearance, so the adaptive `Retro` tokens would draw Light's
+/// espresso ink on black when the app is set to Light. Same hexes as `Retro`'s dark side.
+private enum GlancePalette {
+    static var ink: Color { WidgetTheme.color(hex: "F4E9D6") }
+    static var muted: Color { WidgetTheme.color(hex: "A89177") }
+    static var surface: Color { WidgetTheme.color(hex: "32261A") }
+    static var accentText: Color { WidgetTheme.color(hex: WidgetTheme.amberTextHex.dark) }
+}
+
+/// The small widget in CarPlay and StandBy: cover, title and a large Play/Pause, nothing
+/// else. Apple's guidance for both: glanceable information, larger type, readable from a
+/// distance. No progress bar, time or tape band. Buttons stay real buttons (CarPlay runs a
+/// widget's buttons on touchscreen cars).
+private struct GlanceSmallView: View {
+    let entry: PlaybackEntry
+
+    var body: some View {
+        if let s = entry.snapshot {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    GlanceCover(pinnedItemId: entry.pinnedItemId, isGalleryPreview: entry.isGalleryPreview)
+                    Spacer(minLength: 4)
+                    if let pinnedId = entry.pinnedItemId {
+                        PinnedPlayButton(itemId: pinnedId, title: s.title, diameter: 60)
+                    } else {
+                        PlayButton(isPlaying: s.isPlaying, diameter: 60)
+                    }
+                }
+                Spacer(minLength: 0)
+                Text(s.title)
+                    .widgetScaledFont(17, weight: .bold, design: .rounded, relativeTo: .headline)
+                    .foregroundStyle(GlancePalette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .privacySensitive()
+                    .widgetAccentable()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(14)
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: "recordingtape")
+                    .widgetScaledFont(30, relativeTo: .headline)
+                    .foregroundStyle(GlancePalette.accentText)
+                Text(entry.isSignedIn == false ? "Sign in to ShelfHead" : "No tape loaded")
+                    .widgetScaledFont(15, weight: .semibold, design: .rounded, relativeTo: .headline)
+                    .foregroundStyle(GlancePalette.ink)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+        }
+    }
+}
+
+/// Plain cover for `GlanceSmallView`: the same cover file `WidgetCassette` reads, without
+/// the tape band, at a size that still reads when CarPlay scales the tile up.
+private struct GlanceCover: View {
+    var pinnedItemId: String?
+    var isGalleryPreview: Bool
+    private let size: CGFloat = 64
+
+    var body: some View {
+        Group {
+            if let data = WidgetCassette.coverData(pinnedItemId: pinnedItemId, isGalleryPreview: isGalleryPreview),
+               let ui = UIImage(data: data) {
+                if #available(iOS 18.0, *) {
+                    Image(uiImage: ui)
+                        .resizable()
+                        .widgetAccentedRenderingMode(.accentedDesaturated)
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(uiImage: ui).resizable().aspectRatio(contentMode: .fill)
+                }
+            } else {
+                GlancePalette.surface.overlay(
+                    Image(systemName: "book.closed.fill").foregroundStyle(GlancePalette.muted)
+                )
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: WidgetRadius.chip))
+        .privacySensitive()
+        .accessibilityHidden(true)
     }
 }
 

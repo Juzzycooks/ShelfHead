@@ -91,6 +91,7 @@ final class LibraryViewModel {
         // post the notification without going through that reset.)
         NotificationCenter.default.addObserver(forName: .shelfheadAccountChanged, object: nil, queue: .main) { _ in
             Task { @MainActor in HomeShelvesCache.removeAll() }
+            StatsCache.removeAllAsync()   // Batch 496 (E3): the Stats cache goes with it, even when Stats isn't on screen
         }
     }
 
@@ -426,7 +427,10 @@ final class LibraryViewModel {
             return source.filter { item in
                 let mp = progress(for: item)
                 guard mp?.isFinished != true else { return false }
-                return (mp?.progress ?? 0) >= 0.9
+                // Batch 497 (L12): what the tile shows — listening for a book with audio,
+                // reading for an ebook-only book. A companion ebook's reading never counts.
+                return LibraryItem.shownProgress(isEbookOnly: item.hasEbookAndNoAudio,
+                                                 listening: mp?.progress, reading: mp?.readingFraction) >= 0.9
             }
 
         case .stale:
@@ -569,6 +573,7 @@ final class LibraryViewModel {
         // Republished on the next personalized-view load.
         WidgetLibraryPublisher.clear()
         HomeShelvesCache.removeAll()   // Polish pass (J2-2)
+        StatsCache.removeAllAsync()    // Batch 496 (E3)
         shelvesFromCache = false
         listeningStatsCache = nil
         libraries = []
@@ -1287,6 +1292,23 @@ final class LibraryViewModel {
     /// that guard.
     var seriesLoadFailed = false
 
+    // Batch 496 (REVIEW 2026-11-11 L8): Series browse sort and Hide finished, persisted like
+    // `sortOption` (global, not per library). `seriesQuery` is what `SeriesBrowseView` keys its
+    // reload on; `loadedSeriesQuery` is the query `seriesList` was fetched with.
+    var seriesSort: SeriesSortOption = SettingsStore.seriesSortOption {
+        didSet { SettingsStore.seriesSortOption = seriesSort }
+    }
+    var seriesSortDescending: Bool = SettingsStore.seriesSortDescending {
+        didSet { SettingsStore.seriesSortDescending = seriesSortDescending }
+    }
+    var seriesHideFinished: Bool = SettingsStore.seriesHideFinished {
+        didSet { SettingsStore.seriesHideFinished = seriesHideFinished }
+    }
+    var seriesQuery: SeriesListQuery {
+        SeriesListQuery(sort: seriesSort, descending: seriesSortDescending, hideFinished: seriesHideFinished)
+    }
+    private(set) var loadedSeriesQuery: SeriesListQuery?
+
     /// Item 14 (REVIEW-2026-09-09-REMAINING.md): `getSeries` is itself paginated
     /// (`limit`/`page`, same shape `getLibraryItems` uses), but this used to fetch only
     /// page 0 and treat that as the whole Series browse mode — any library with more
@@ -1303,6 +1325,8 @@ final class LibraryViewModel {
         let libraryId = library.id
         isLoadingSeries = true
         seriesLoadFailed = false
+        let query = seriesQuery   // Batch 496 (L8)
+        let request = query.request
         let limit = 100
         // Defensive cap so a pathological/looping server response can't page forever —
         // same reasoning as `findSeries`'s `maxPages` and `fetchAllItemsForSmartFilter`'s
@@ -1313,9 +1337,13 @@ final class LibraryViewModel {
         var page = 0
         do {
             while true {
-                let response = try await AudiobookshelfAPI.shared.getSeries(libraryId: libraryId, limit: limit, page: page)
+                let response = try await AudiobookshelfAPI.shared.getSeries(
+                    libraryId: libraryId, limit: limit, page: page,
+                    sort: request.sort, desc: request.desc, filter: request.filter)
                 // Ignore a response for a library we've since switched away from.
                 guard selectedLibrary?.id == libraryId else { isLoadingSeries = false; return }
+                // Batch 496 (L8): or for a sort the user has since changed (a newer load is coming).
+                guard seriesQuery == query else { return }
                 all.append(contentsOf: response.results)
                 guard let next = Self.nextPage(
                     after: page, receivedInPage: response.results.count,
@@ -1327,6 +1355,7 @@ final class LibraryViewModel {
             // order fetched, never re-sorted here.
             seriesList = all
             seriesLoaded = true
+            loadedSeriesQuery = query
         } catch {
             // A cancelled pull-to-refresh (SwiftUI tears down the `.refreshable`
             // task) surfaces as a cancellation error — it must NOT wipe the list.
@@ -1339,6 +1368,7 @@ final class LibraryViewModel {
                     // have rather than discarding pages that loaded fine.
                     seriesList = all
                     seriesLoaded = true
+                    loadedSeriesQuery = query
                 } else if seriesList.isEmpty {
                     seriesList = []
                     seriesLoaded = true
@@ -1346,7 +1376,7 @@ final class LibraryViewModel {
                 }
             }
         }
-        isLoadingSeries = false
+        if seriesQuery == query { isLoadingSeries = false }   // Batch 496 (L8): a newer load owns the flag
     }
 
     /// Pure page-plan for `loadSeries()`'s pagination loop: given the page just fetched
@@ -1974,7 +2004,8 @@ final class LibraryViewModel {
         if player.currentItemId == item.id, player.currentTime > 1, item.duration > 0 {
             return await updateProgress(item: item, progress: min(1, player.currentTime / item.duration), currentTime: player.currentTime, isFinished: false, historyAction: .markedUnfinished)
         }
-        return await updateProgress(item: item, progress: current?.progress ?? 0, currentTime: current?.currentTime ?? 0, isFinished: false, historyAction: .markedUnfinished)
+        // Batch 495 (L12): `audioProgress` (Batch 497: now the same as `progress`, the listening fraction).
+        return await updateProgress(item: item, progress: current?.audioProgress ?? 0, currentTime: current?.currentTime ?? 0, isFinished: false, historyAction: .markedUnfinished)
     }
 
     /// Critique 2026-10-06 (harden): Reset Progress shares the single-book Undo with Mark
@@ -2112,6 +2143,9 @@ final class LibraryViewModel {
         progressUndoSnapshot = nil
         progressUndoHistoryId = nil
         progressUndoMessage = nil
+        // Batch 495 (REVIEW 2026-11-11 D6): undoing a Mark as Finished also stops the pending
+        // auto-delete of that book's download.
+        if !snapshot.isFinished { DownloadManager.shared.cancelPendingAutoDelete(itemId: snapshot.itemId) }
         Task {
             let history = PlaybackHistoryStore.shared
             let ok: Bool
@@ -2487,7 +2521,9 @@ final class LibraryViewModel {
         itemId: String, title: String, prior: MediaProgress?, duration: Double
     ) -> LibraryProgressSnapshot {
         let currentTime = max(0, prior?.currentTime ?? 0)
-        let fraction = prior?.progress ?? (duration > 0 ? currentTime / duration : 0)
+        // Batch 495 (L12): the listening fraction only; a reading fraction must never be restored
+        // as listening progress (Batch 497: `audioProgress` is now simply `progress`).
+        let fraction = prior?.audioProgress ?? (duration > 0 ? currentTime / duration : 0)
         return LibraryProgressSnapshot(
             itemId: itemId, title: title, currentTime: currentTime,
             progress: min(max(fraction, 0), 1), isFinished: prior?.isFinished ?? false,

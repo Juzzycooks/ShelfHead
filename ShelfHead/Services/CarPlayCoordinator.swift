@@ -1082,10 +1082,11 @@ final class CarPlayCoordinator: NSObject {
     private func reloadSetup() {
         let speedItem = CPListItem(text: String(localized: "Playback Speed"),
                                    detailText: Self.formattedPlaybackRate(AudioPlayerService.shared.playbackRate))
-        // Batch 490 (REVIEW 2026-11-11 C4): no disclosure chevron — a tap steps the speed
-        // in place and pushes nothing, so a chevron promised a screen that never came.
+        // Batch 495 (REVIEW 2026-11-11 C5): a tap now opens the Speed list, so the
+        // chevron the C4 change removed is right again.
+        speedItem.accessoryType = .disclosureIndicator
         speedItem.handler = { [weak self] _, completion in
-            self?.advancePlaybackRate()
+            self?.pushSpeedList()
             completion()
         }
 
@@ -1132,6 +1133,34 @@ final class CarPlayCoordinator: NSObject {
         let template = CPListTemplate(title: String(localized: "Listening Profile"), sections: [CPListSection(items: items)])
         interfaceController.pushTemplate(template, animated: true) { [weak self] _, error in
             self?.logTemplateResult("pushTemplate(\(template.title ?? "untitled"))", error: error)
+        }
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 C5): the Speed list behind the Now Playing rate button
+    /// and Setup's Playback Speed row. Same shape as `pushLibraryPicker(_:)`: current
+    /// marked "Current", a tap applies and pops back. Falls back to stepping the rate
+    /// when the template stack is already at its depth limit.
+    private func pushSpeedList() {
+        guard Self.canPushSpeedList(templateCount: interfaceController.templates.count) else {
+            advancePlaybackRate()
+            return
+        }
+        let options = Self.speedListOptions(current: AudioPlayerService.shared.playbackRate)
+        let items = options.prefix(Self.capItemCount(options.count)).map { option -> CPListItem in
+            let item = CPListItem(text: Self.formattedPlaybackRate(option.rate),
+                                  detailText: option.isCurrent ? String(localized: "Current", comment: "CarPlay: marks the currently selected item") : nil)
+            item.handler = { [weak self] _, completion in
+                self?.applyPlaybackRate(option.rate)
+                self?.interfaceController.popTemplate(animated: true) { _, error in
+                    self?.logTemplateResult("popTemplate(speedList)", error: error)
+                }
+                completion()
+            }
+            return item
+        }
+        let template = CPListTemplate(title: String(localized: "Playback Speed"), sections: [CPListSection(items: items)])
+        interfaceController.pushTemplate(template, animated: true) { [weak self] _, error in
+            self?.logTemplateResult("pushTemplate(speedList)", error: error)
         }
     }
 
@@ -1918,8 +1947,10 @@ final class CarPlayCoordinator: NSObject {
     /// picks the bookmark glyph (`bookmark` vs `bookmark.fill`); the handler is the same
     /// either way, so a tap during the confirmation flash still works.
     private func applyNowPlayingButtons(bookmarkFilled: Bool) {
+        // Batch 495 (REVIEW 2026-11-11 C5): the button opens a short Speed list instead of
+        // cycling the whole ladder, so any speed is two taps.
         let rateButton = CPNowPlayingPlaybackRateButton { [weak self] _ in
-            self?.advancePlaybackRate()
+            self?.pushSpeedList()
         }
 
         let bookmarkButton = CPNowPlayingImageButton(
@@ -1992,8 +2023,44 @@ final class CarPlayCoordinator: NSObject {
     /// Playing rate button and Setup's "Playback Speed" row (C6) — both need to
     /// advance the rate AND tell the driver what it landed on.
     private func advancePlaybackRate() {
-        let next = Self.nextPlaybackRate(after: AudioPlayerService.shared.playbackRate)
-        AudioPlayerService.shared.setPlaybackRate(next)
+        applyPlaybackRate(Self.nextPlaybackRate(after: AudioPlayerService.shared.playbackRate))
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 C5): the template stack is Apple-limited in depth
+    /// (CarPlay Developer Guide: five templates for audio apps — from memory; the
+    /// CarPlay API pages say only that `CPInterfaceController` manages a navigation
+    /// hierarchy). Now Playing can sit under several browse pushes, so the Speed list
+    /// is only pushed while there is room; otherwise the tap steps the rate as before.
+    nonisolated static let maxTemplateDepth = 5
+
+    nonisolated static func canPushSpeedList(templateCount: Int) -> Bool {
+        templateCount < maxTemplateDepth
+    }
+
+    /// Pure: the rows of the Speed list. 0.75× to 2× in quarter steps, plus `current`
+    /// when it is not one of them (the phone's fine stepper, or a rate above 2×), kept in
+    /// order, with the row matching `current` marked. Built from integer quarters so the
+    /// values are exact.
+    nonisolated static func speedListOptions(current: Float) -> [(rate: Float, isCurrent: Bool)] {
+        let tolerance: Float = 0.001
+        var rates: [Float] = (3...8).map { Float($0) * 0.25 }
+        if !rates.contains(where: { abs($0 - current) <= tolerance }) {
+            rates.append(current)
+            rates.sort()
+        }
+        return rates.map { (rate: $0, isCurrent: abs($0 - current) <= tolerance) }
+    }
+
+    /// The one place a CarPlay rate change lands: the player, the remembered per-book
+    /// speed (same rule as `PlayerViewModel.setPlaybackRate`, which skips it while a
+    /// SharePlay session drives the rate), and Setup's row.
+    private func applyPlaybackRate(_ next: Float) {
+        let player = AudioPlayerService.shared
+        player.setPlaybackRate(next)
+        if let id = player.currentItemId, !player.isCoordinatingPlayback {
+            // Rounded to 0.05 as the phone does, so a Float like 1.05 isn't saved as 1.0499999.
+            SettingsStore.setSpeed((Double(next) * 20).rounded() / 20, forItem: id)
+        }
         // C6: keeps Setup's "Playback Speed" row from going stale again the instant
         // this file itself is the one changing the rate.
         reloadSetup()

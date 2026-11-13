@@ -302,14 +302,12 @@ struct BookCollectionDetailView: View {
                                 .accessibilityHint(String(localized: "Plays this episode"))
                                 .contextMenu {
                                     Button {
-                                        Haptics.selection()
-                                        playerViewModel.playNext(item, episode: episode)
+                                        playerViewModel.playNext(item, episode: episode)   // Batch 495 (V7): playNext gives the feedback
                                     } label: {
                                         Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                                     }
                                     Button {
-                                        Haptics.selection()
-                                        playerViewModel.addToQueue(item, episode: episode)
+                                        playerViewModel.addToQueue(item, episode: episode)   // Batch 495 (V7): addToQueue gives the feedback
                                     } label: {
                                         Label("Add to Up Next", systemImage: "text.badge.plus")
                                     }

@@ -292,9 +292,27 @@ struct LibraryItem: Codable, Identifiable {
     /// having *both* an audio version and an ebook file, but that combined case isn't
     /// handled by this pass (see `Views/EbookReaderView.swift`'s scope note); only a
     /// pure ebook-only item gets the in-app "Read" entry point.
+    ///
+    /// Batch 497: true for every payload shape. List and shelf payloads carry `ebookFormat` in
+    /// place of `ebookFile` (Audiobookshelf `server/models/Book.js`, `toOldJSONMinified`;
+    /// `toOldJSONExpanded` has both), so checking `ebookFile` alone made this false on every
+    /// Library and Home tile, in playlists' Play in Order filter and in Library Doctor. The
+    /// audio count falls back to `audioFiles` for a payload with no `numAudioFiles` (the plain
+    /// `toOldJSON`), so a book with audio is never taken for an ebook.
     var isEbookOnly: Bool {
-        media?.ebookFile != nil && (media?.numAudioFiles ?? 0) == 0
+        Self.isEbookOnly(hasEbookFile: media?.ebookFile != nil, ebookFormat: media?.ebookFormat,
+                         numAudioFiles: media?.numAudioFiles, audioFileCount: media?.audioFiles?.count)
     }
+
+    /// Pure, pinned by `Batch497LibraryHomeTests`.
+    nonisolated static func isEbookOnly(hasEbookFile: Bool, ebookFormat: String?,
+                                        numAudioFiles: Int?, audioFileCount: Int?) -> Bool {
+        let hasEbook = hasEbookFile || !(ebookFormat ?? "").isEmpty
+        return hasEbook && (numAudioFiles ?? audioFileCount ?? 0) == 0
+    }
+
+    /// Batch 497 (L12): the name the progress display uses; the same rule as `isEbookOnly`.
+    var hasEbookAndNoAudio: Bool { isEbookOnly }
 }
 
 extension LibraryItem {
@@ -378,10 +396,16 @@ struct Media: Codable {
     /// it must never be written into the Up Next queue file.
     var droppedChapterNotes: [String] = []
 
+    /// Batch 497 (L12): the ebook's format ("epub", "pdf", …) as list and shelf payloads send
+    /// it in place of `ebookFile` (Audiobookshelf `Book.toOldJSONMinified`). Nil otherwise.
+    /// A `var` with a default so the memberwise initializer keeps its shape.
+    var ebookFormat: String? = nil
+
     enum CodingKeys: String, CodingKey {
         case metadata, coverPath, duration, chapters, audioFiles
         case numChapters, numAudioFiles, episodes, ebookFile
         case droppedChapterCount
+        case ebookFormat
     }
 }
 
@@ -410,6 +434,8 @@ extension Media {
         coverPath = try c.decodeIfPresent(String.self, forKey: .coverPath)
         audioFiles = try c.decodeIfPresent([AudioFile].self, forKey: .audioFiles)
         ebookFile = try c.decodeIfPresent(EbookFile.self, forKey: .ebookFile)
+        // Batch 497 (L12): `try?` so an odd value never fails the item.
+        ebookFormat = (try? c.decodeIfPresent(String.self, forKey: .ebookFormat)) ?? nil
         // Numbers through the §Sync-tolerant readers: a duration or count arriving as a
         // numeric string is the same class of single-field mismatch that used to fail a
         // whole item, and every consumer of these is already `?? 0`.
@@ -450,6 +476,12 @@ struct EbookFile: Codable {
 struct EbookFileMetadata: Codable {
     let filename: String?
     let ext: String?
+    /// Batch 497 (L11): the file's size in bytes and modified time in ms since 1970
+    /// (Audiobookshelf `server/objects/metadata/FileMetadata.js`), for `EbookStore.Fingerprint`.
+    var size: Int64? = nil
+    var mtimeMs: Double? = nil
+
+    enum CodingKeys: String, CodingKey { case filename, ext, size, mtimeMs }
 
     /// `ext` as Audiobookshelf sends it carries a leading dot (".epub") and any case. This is
     /// lowercased with leading dots stripped ("epub"), and "" when the server sent none.
@@ -458,6 +490,17 @@ struct EbookFileMetadata: Codable {
         var value = ext.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         while value.hasPrefix(".") { value.removeFirst() }
         return value
+    }
+}
+
+extension EbookFileMetadata {
+    /// Batch 497: `filename` and `ext` decode as before; the newer fields are lenient.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        filename = try c.decodeIfPresent(String.self, forKey: .filename)
+        ext = try c.decodeIfPresent(String.self, forKey: .ext)
+        size = c.lenientDouble(.size).flatMap { $0.isFinite && $0 >= 0 ? Int64($0) : nil }
+        mtimeMs = c.lenientDouble(.mtimeMs)
     }
 }
 
@@ -879,12 +922,33 @@ struct MediaProgress: Codable, Identifiable {
     /// server's Continue Listening shelf. A `var` with a default so the memberwise initializer
     /// `DownloadedBook.asLibraryItem()` and the tests use keeps its shape.
     var hideFromContinueListening: Bool? = nil
+    /// Batch 495 (REVIEW 2026-11-11 L12): the server's ebook reading fraction (0–1) and
+    /// location (a PDF page index from this app, an epub.js CFI from the web reader). Both
+    /// absent on older servers and on audio-only records; `var` with defaults so the
+    /// memberwise initializer keeps its shape. Field names from Audiobookshelf
+    /// `server/models/MediaProgress.js` (`getOldMediaProgress`).
+    var ebookProgress: Double? = nil
+    var ebookLocation: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, libraryItemId, episodeId, duration, progress, currentTime
         case isFinished, lastUpdate, startedAt, finishedAt
         case hideFromContinueListening
+        case ebookProgress, ebookLocation
     }
+
+    /// Batch 495 (L12): the reading fraction worth showing (strictly between 0 and 1 after
+    /// clamping, else nil). Book Detail's "Continue Reading · 60%" reads this.
+    var readingFraction: Double? {
+        guard let ebookProgress, ebookProgress.isFinite, ebookProgress > 0 else { return nil }
+        return min(ebookProgress, 1)
+    }
+
+    /// Batch 495 (L12): the listening fraction to send back to the server (Undo and Mark as
+    /// Unfinished restore a snapshot of it). Batch 497: `progress` is again exactly what the
+    /// server sent (listening only; a tile picks the reading fraction itself through
+    /// `LibraryItem.shownProgress`), so this is simply `progress`. Kept for its two callers.
+    var audioProgress: Double? { progress }
 }
 
 extension MediaProgress {
@@ -923,10 +987,15 @@ extension MediaProgress {
         // `null`/absent/garbage becomes `nil` rather than a decode failure — these are
         // all already optional to their consumers (`?? 0` / `?? false` at each use).
         duration = c.lenientDouble(.duration)
-        progress = c.lenientDouble(.progress)
         currentTime = c.lenientDouble(.currentTime)
         // Some server/plugin versions send 0/1 (or "true") rather than a JSON bool.
         isFinished = c.lenientBool(.isFinished)
+        // Batch 495 (REVIEW 2026-11-11 L12): lenient like the numbers above; absent on older
+        // servers. Batch 497: `progress` stays the server's listening fraction; tiles choose
+        // the reading fraction for ebook-only books (`LibraryItem.shownProgress`).
+        ebookProgress = c.lenientDouble(.ebookProgress)
+        ebookLocation = (try? c.decodeIfPresent(String.self, forKey: .ebookLocation)) ?? nil
+        progress = c.lenientDouble(.progress)
         // Epoch milliseconds. Sent as an integer normally, but a fractional/exponent
         // form (`1.7e12`) fails a plain `Int` decode, which is exactly the class of
         // single-field mismatch that used to blank every book's progress.
@@ -1327,8 +1396,30 @@ extension LibraryItem {
         media?.droppedChapterCount ?? 0
     }
 
+    /// The listening fraction the item itself carries (never the reading fraction).
     var progressPercent: Double {
         mediaProgress?.progress ?? 0
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 L12): the ebook reading fraction the item carries, if any.
+    var readingFraction: Double? {
+        mediaProgress?.readingFraction
+    }
+
+    /// Batch 497 (REVIEW 2026-11-11 L12): pure. The fraction a tile, row or header shows: the
+    /// reading fraction for a book with no audio, the listening progress for anything with
+    /// audio. A book with audio never shows its companion ebook's reading as listening.
+    nonisolated static func shownProgress(isEbookOnly: Bool, listening: Double?, reading: Double?) -> Double {
+        if isEbookOnly, let reading, reading.isFinite, reading > 0 { return min(reading, 1) }
+        return listening ?? 0
+    }
+
+    /// Batch 497: `shownProgress` for this item, from the freshest record (the progress map's,
+    /// usually) falling back to what the item carried, as every display site did before.
+    func shownProgress(_ record: MediaProgress?) -> Double {
+        Self.shownProgress(isEbookOnly: hasEbookAndNoAudio,
+                           listening: record?.progress ?? progressPercent,
+                           reading: record?.readingFraction ?? readingFraction)
     }
 
     var currentTime: Double {

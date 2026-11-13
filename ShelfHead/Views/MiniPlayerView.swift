@@ -154,7 +154,7 @@ struct MiniPlayerView: View {
             // swallowed by this element in VoiceOver, so offer the same toggle as an action
             // here too. DEVICE CHECK: confirm it shows in the actions rotor.
             .accessibilityAction(named: playerViewModel.isPlaying ? "Pause" : "Resume") {
-                Haptics.impact(.light)
+                Haptics.impact(.medium)   // Batch 495 (V7): play/pause class
                 playerViewModel.togglePlayPause()
             }
             .accessibilityAction(named: "Stop Playback") {
@@ -392,7 +392,7 @@ struct MiniPlayerView: View {
                 // see the `HStack`'s header comment and the VoiceOver custom actions
                 // in `body`.
                 Button {
-                    Haptics.impact(.light)
+                    Haptics.impact(.medium)   // Batch 495 (V7): play/pause class
                     playerViewModel.togglePlayPause()
                 } label: {
                     // iOS 26/27 Liquid Glass polish pass (26 August 2026): same
@@ -595,7 +595,7 @@ private struct MiniPlayerMenuItems: View {
         }
         .disabled(pending)
         Button {
-            Haptics.impact(.light)
+            Haptics.impact(.medium)   // Batch 495 (V7): play/pause class
             player.togglePlayPause()
         } label: {
             Label(player.isPlaying ? "Pause" : "Resume",

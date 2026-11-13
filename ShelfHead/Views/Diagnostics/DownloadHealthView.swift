@@ -57,7 +57,9 @@ struct DownloadHealthView: View {
         List {
             Section {
                 healthRow("Downloaded books", value: "\(DownloadManager.shared.downloadedItems.count)")
-                healthRow("In progress", value: "\(DownloadManager.shared.activeDownloads.count - pausedCount)")
+                // Batch 497: waiting books are counted apart from the ones transferring.
+                healthRow("In progress", value: "\(DownloadManager.shared.activeDownloads.values.filter { !$0.isPaused && !$0.isQueued }.count)")
+                healthRow("Queued", value: "\(DownloadManager.shared.activeDownloads.values.filter { !$0.isPaused && $0.isQueued }.count)")
                 healthRow("Paused", value: "\(pausedCount)")
             } header: {
                 RetroSectionHeader(title: "Summary")

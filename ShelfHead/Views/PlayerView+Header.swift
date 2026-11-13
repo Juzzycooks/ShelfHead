@@ -164,12 +164,13 @@ extension PlayerView {
 
             // Section 4: sound and skipping.
             Section {
-                // Batch 439: quiet rain/fire/train/brown-noise bed under the narration.
+                // Batch 496 (REVIEW 2026-11-11 P3): one Sound… row (volume, tone, voices, spatial and
+                // the Batch 439 ambient bed). The glyph still shows the current bed, as the old row did.
                 Button {
                     Haptics.selection()
                     AmbientBedEngine.shared.pickerRequested = true
                 } label: {
-                    Label("Ambient Sound", systemImage: AmbientBedEngine.shared.bed?.icon ?? "waveform")
+                    Label("Sound\u{2026}", systemImage: AmbientBedEngine.shared.bed?.icon ?? "waveform")
                 }
                 Button {
                     Haptics.selection()
@@ -225,7 +226,7 @@ extension PlayerView {
         // after `.popoverTip`, so the tip keeps the root tint.
         .systemChromeTint()
         .accessibilityLabel("More options")
-        // Batch 439: hosts the Ambient Sound sheet without new state in PlayerView.swift.
+        // Batch 439/496: hosts the Sound sheet without new state in PlayerView.swift.
         .background(AmbientSheetHost())
         // Stage 6 (REDESIGN_PROPOSAL_2026-08-26.md §10, §5.3): Driving Mode's only
         // entry point is inside this menu — see `DrivingModeTip`'s own doc comment

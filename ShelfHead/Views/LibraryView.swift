@@ -123,6 +123,10 @@ struct LibraryView: View {
     @State private var selectedItemsById: [String: LibraryItem] = [:]
     @State private var showMarkFinishedConfirm = false
     @State private var pendingDownloadPlan: BulkDownloadPlan?
+    /// Batch 496 (REVIEW 2026-11-11 D5): the downloaded part of the selection, awaiting confirmation.
+    @State private var pendingRemovalPlan: BulkRemovalPlan?
+    /// Batch 496 (D5): "Removed 3 downloads, freeing 1.2 GB".
+    @State private var bulkInfoMessage: String?
     @State private var isMarkingFinished = false
     @State private var markingCount = 0
     /// Refusals and failures from a bulk action (plan §3.2): one message, error style.
@@ -241,13 +245,16 @@ struct LibraryView: View {
     /// The three bulk actions in the select-mode bar. Glyphs match the swipe actions and
     /// `BookContextMenu`.
     enum BulkAction: CaseIterable {
-        case upNext, download, markFinished
+        // Batch 496 (REVIEW 2026-11-11 D5): Remove Download, for the selected books on this device.
+        case upNext, download, removeDownload, markFinished
 
         /// The short visible label under the glyph.
         var title: String {
             switch self {
             case .upNext: return String(localized: "Up Next", comment: "Bulk action label under the glyph in the Library select-mode bar: add the selected books to the Up Next queue")
             case .download: return String(localized: "Download", comment: "Bulk action label under the glyph in the Library select-mode bar (verb)")
+            // The list swipe's wording and glyph for the same action.
+            case .removeDownload: return String(localized: "Remove", comment: "Bulk action label under the glyph in the Library select-mode bar: delete the selected books' downloads from this device")
             case .markFinished: return String(localized: "Mark Finished", comment: "Bulk action label under the glyph in the Library select-mode bar")
             }
         }
@@ -256,6 +263,7 @@ struct LibraryView: View {
             switch self {
             case .upNext: return "text.badge.plus"
             case .download: return "arrow.down.circle"
+            case .removeDownload: return "trash"
             case .markFinished: return "checkmark.circle"
             }
         }
@@ -289,6 +297,10 @@ struct LibraryView: View {
         case .download: return count < 1
             ? String(localized: "Download", comment: "Accessibility label for the bulk Download action with nothing selected (verb)")
             : String(localized: "Download \(books)", comment: "Accessibility label for the bulk Download action; %@ is a count phrase like '12 books'")
+        // Batch 496 (D5): here `count` is how many of the selected books are downloaded.
+        case .removeDownload: return count < 1
+            ? String(localized: "Remove Downloads", comment: "Accessibility label for the bulk Remove Download action when none of the selection is downloaded")
+            : String(localized: "Remove \(downloadsPhrase(count))", comment: "Accessibility label for the bulk Remove Download action; %@ is a count phrase like '3 downloads'")
         case .markFinished: return count < 1
             ? String(localized: "Mark Finished", comment: "Accessibility label for the bulk Mark Finished action with nothing selected")
             : String(localized: "Mark \(books) finished", comment: "Accessibility label for the bulk Mark Finished action; %@ is a count phrase like '12 books'")
@@ -357,6 +369,46 @@ struct LibraryView: View {
         let title = downloadConfirmTitle(count: count)
         guard summary.hasPrefix(title) else { return summary }
         return String(summary.dropFirst(title.count)).trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: Batch 496 (REVIEW 2026-11-11 D5): bulk Remove Download copy (pinned by Batch496LibraryBulkRemoveTests)
+
+    /// "1 download" / "3 downloads". The number is formatted first, so it never gets digit grouping.
+    static func downloadsPhrase(_ count: Int) -> String {
+        let number = String(count)
+        return count == 1
+            ? String(localized: "1 download", comment: "Count phrase for exactly one download, embedded in select-mode sentences")
+            : String(localized: "\(number) downloads", comment: "Count phrase for several downloads, embedded in select-mode sentences; %@ is the count")
+    }
+
+    /// "Remove 3 downloads?"
+    static func removeDownloadsConfirmTitle(count: Int) -> String {
+        String(localized: "Remove \(downloadsPhrase(count))?", comment: "Bulk Remove Download confirmation title; %@ is a count phrase like '3 downloads'")
+    }
+
+    /// The destructive button: "Remove Download" for one (the single-book wording), "Remove 3 Downloads".
+    static func removeDownloadsConfirmButton(count: Int) -> String {
+        guard count != 1 else { return RemoveDownloadConfirmation.button }
+        let number = String(count)
+        return String(localized: "Remove \(number) Downloads", comment: "Destructive bulk confirmation button; %@ is the number of downloads")
+    }
+
+    /// Says what goes (the size, when known) and what stays (progress), like the single-book dialog.
+    static func removeDownloadsConfirmMessage(bytes: Int64) -> String {
+        guard bytes > 0 else {
+            return String(localized: "The audio will be deleted from this device. Your progress is kept.", comment: "Bulk Remove Download confirmation message when the size isn't known")
+        }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return String(localized: "\(size) will be deleted from this device. Your progress is kept.", comment: "Bulk Remove Download confirmation message; %@ is a size like '1.2 GB'")
+    }
+
+    /// The toast once they're gone.
+    static func removedDownloadsToast(count: Int, bytes: Int64) -> String {
+        guard bytes > 0 else {
+            return String(localized: "Removed \(downloadsPhrase(count))", comment: "Toast after a bulk Remove Download; %@ is a count phrase like '3 downloads'")
+        }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return String(localized: "Removed \(downloadsPhrase(count)), freeing \(size)", comment: "Toast after a bulk Remove Download; first %@ is a count phrase like '3 downloads', second a size like '1.2 GB'")
     }
 
     /// The line above the action bar: progress while marking, the reason while offline,
@@ -510,6 +562,7 @@ struct LibraryView: View {
                             markingCount: markingCount,
                             onUpNext: performUpNext,
                             onDownload: performDownload,
+                            onRemoveDownloads: performRemoveDownloads,
                             onMarkFinished: { showMarkFinishedConfirm = true }
                         )
                         // Anchored on the bar so the iPad/iOS 26 popover points at the
@@ -547,6 +600,22 @@ struct LibraryView: View {
                             Button("Cancel", role: .cancel) {}
                         } message: { plan in
                             Text(Self.downloadConfirmDetail(summary: plan.summary, count: plan.toDownload.count))
+                        }
+                        .systemChromeTint()
+                        // Batch 496 (REVIEW 2026-11-11 D5): one confirmation naming the count and size.
+                        .confirmationDialog(
+                            Self.removeDownloadsConfirmTitle(count: pendingRemovalPlan?.count ?? 0),
+                            isPresented: Binding(get: { pendingRemovalPlan != nil },
+                                                 set: { if !$0 { pendingRemovalPlan = nil } }),
+                            titleVisibility: .visible,
+                            presenting: pendingRemovalPlan
+                        ) { plan in
+                            Button(Self.removeDownloadsConfirmButton(count: plan.count), role: .destructive) {
+                                removeDownloads(plan)
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: { plan in
+                            Text(Self.removeDownloadsConfirmMessage(bytes: plan.totalBytes))
                         }
                         .systemChromeTint()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -687,6 +756,8 @@ struct LibraryView: View {
             // Batch 490 (REVIEW 2026-11-11 F14): `shelfhead://search?q=` fills the search field.
             .onChange(of: libraryViewModel.requestedSearchText) { _, _ in consumeRequestedSearchText() }
             .onAppear { consumeRequestedSearchText() }
+            // Batch 496 (REVIEW 2026-11-11 N6): the Search tab may have run its own query meanwhile.
+            .onAppear { resyncSharedSearch() }
             .onChange(of: availableModes) { _, modes in
                 // If the current mode turns out not to exist, fall back to Books.
                 if !modes.contains(browseMode) { browseMode = .books }
@@ -873,6 +944,7 @@ struct LibraryView: View {
             .toast(message: $finishUndoMessage, style: .success, duration: 6, bottomInset: bottomInset,
                    action: ToastAction(label: "Undo") { undoMarkFinished() })
             .toast(message: $bulkErrorMessage, duration: 4, bottomInset: bottomInset)
+            .toast(message: $bulkInfoMessage, style: .success, duration: 4, bottomInset: bottomInset)   // Batch 496 (D5)
             // Exit triggers (plan §3.2 "Reach", §5): sort, filter or account change.
             .onChange(of: libraryViewModel.sortOption) { _, _ in queryChanged() }
             .onChange(of: libraryViewModel.sortDescending) { _, _ in queryChanged() }
@@ -930,6 +1002,7 @@ struct LibraryView: View {
         selectedItemsById = [:]
         showMarkFinishedConfirm = false
         pendingDownloadPlan = nil
+        pendingRemovalPlan = nil
     }
 
     private func toggleSelection(_ item: LibraryItem) {
@@ -992,7 +1065,7 @@ struct LibraryView: View {
         guard !items.isEmpty else { return }
         let plan = downloadManager.bulkDownloadPlan(for: items)
         if let refusal = plan.refusal {
-            Haptics.impact(.heavy)
+            Haptics.warning()   // Batch 495 (V7): refused before anything started
             bulkErrorMessage = refusal.message
             return
         }
@@ -1006,6 +1079,29 @@ struct LibraryView: View {
     private func startDownloads(_ plan: BulkDownloadPlan) {
         downloadManager.downloadBooks(plan)
         Haptics.success()
+        exitSelectMode()
+    }
+
+    /// Batch 496 (REVIEW 2026-11-11 D5): plans the removal of the selected books that are on this
+    /// device and asks once. Books that aren't downloaded are left alone (the button is disabled
+    /// when that's all of them).
+    private func performRemoveDownloads() {
+        let items = selectedItemsInOrder(booksWindow)
+        let plan = BulkRemovalPlan.make(items.map { (id: $0.id, serverSize: $0.size) },
+                                        isDownloaded: { downloadManager.isDownloaded(itemId: $0) },
+                                        storedBytes: downloadManager.itemStorageBytes)
+        guard plan.count > 0 else { Haptics.warning(); return }
+        pendingRemovalPlan = plan
+    }
+
+    /// Batch 496 (D5): the same per-book removal as the swipe and Book Detail (each one a
+    /// deliberate removal, so auto-download won't fetch it again), then one toast.
+    private func removeDownloads(_ plan: BulkRemovalPlan) {
+        for id in plan.itemIds {
+            downloadManager.removeDownload(itemId: id, userInitiated: true)
+        }
+        Haptics.success()
+        bulkInfoMessage = Self.removedDownloadsToast(count: plan.count, bytes: plan.totalBytes)
         exitSelectMode()
     }
 
@@ -1031,7 +1127,7 @@ struct LibraryView: View {
                 exitSelectMode()
             } else {
                 // The ones that failed stay selected, so Try Again is one tap.
-                Haptics.impact(.heavy)
+                Haptics.error()   // Batch 495 (V7)
                 let failed = Set(result.failed)
                 selection = selection.intersection(failed)
                 selectedItemsById = selectedItemsById.filter { failed.contains($0.key) }
@@ -1076,7 +1172,7 @@ struct LibraryView: View {
             libraryViewModel.progressFor(itemId: $0.id) == nil
         }
         guard let pick = unstarted.randomElement() else {
-            Haptics.impact(.heavy)
+            Haptics.warning()   // Batch 495 (V7): nothing to shuffle
             shuffleToastMessage = String(localized: "Every book in this library has already been started.", comment: "Toast when the B-side shuffle finds no unstarted book")
             return
         }
@@ -1828,6 +1924,7 @@ struct LibraryView: View {
     @ViewBuilder
     private func leadingPlayAction(for item: LibraryItem) -> some View {
         let finished = libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished
+        // Batch 497 (L12): listening progress only; reading never makes this say Resume.
         let progress = libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent
         Button {
             playerViewModel.quickPlayOrPause(item)
@@ -1876,7 +1973,7 @@ struct LibraryView: View {
 
         if playerViewModel.currentBook?.id != item.id {
             Button {
-                Haptics.selection(); playerViewModel.addToQueue(item)
+                playerViewModel.addToQueue(item)   // Batch 495 (V7): addToQueue gives the feedback
             } label: { Label("Up Next", systemImage: "text.badge.plus") }
             .tint(LibrarySwipeTint.neutral)
         }
@@ -2203,7 +2300,7 @@ struct LibraryView: View {
             // identical to one never started. `isFinished` is the real state.
             let tile = LibraryGridTile(
                 item: item,
-                progress: mp?.progress ?? item.progressPercent,
+                progress: item.shownProgress(mp),  // Batch 497 (L12)
                 isFinished: mp?.isFinished ?? item.isFinished,
                 isNowPlaying: playerViewModel.currentBook?.id == item.id,
                 isPlaying: playerViewModel.isPlaying,
@@ -2248,64 +2345,11 @@ struct LibraryView: View {
 
     // MARK: - Search Results
 
+    /// Batch 496 (REVIEW 2026-11-11 N6): the results moved into `LibrarySearchResultsView`, which
+    /// the iOS 26 Search tab renders too.
     private var searchResultsView: some View {
-        // Critique 2026-10-05 (Library): rows are plain (cover, text, divider) like the list
-        // layout's rows instead of each sitting in its own card (Fewer Containers).
-        // Batch 490 (REVIEW 2026-11-11 L7): the previous results stay on screen while the
-        // next keystroke's request runs; the spinner only shows when there's nothing yet.
-        let hasAnyResult = !libraryViewModel.searchResults.isEmpty
-            || !libraryViewModel.searchAuthors.isEmpty || !libraryViewModel.searchNarrators.isEmpty
-            || !libraryViewModel.searchGenres.isEmpty || !libraryViewModel.searchTags.isEmpty
-            || !libraryViewModel.searchEpisodes.isEmpty
-        return LazyVStack(spacing: 0) {
-            if libraryViewModel.isSearching && !hasAnyResult {
-                LoadingView("Searching\u{2026}")
-            } else if !hasAnyResult {
-                searchEmptyState
-            } else {
-                searchStatusNote
-                ForEach(libraryViewModel.searchResults) { item in
-                    bookLink(item) {
-                        SearchResultRow(item: item)
-                    }
-                    .buttonStyle(.plain)
-                    // L4 (REVIEW_2026-08-20_UI_SECURITY.md): this was the only book-
-                    // listing surface with no context menu and no swipe actions —
-                    // search is exactly where "found it, queue it" is the intent.
-                    .bookContextMenu(item)
-                    Divider().overlay(Color.shelfMuted.opacity(0.2))
-                    // Batch 490 (REVIEW 2026-11-11 L1): the old note here said the search
-                    // endpoint couldn't be limited or paged. It takes `limit` (ABS's
-                    // `LibraryController.search`: `req.query.limit || 12`), so the request now
-                    // asks for `AudiobookshelfAPI.searchResultLimit` (50). It still has no
-                    // page cursor, so there's no "load more" here.
-                }
-                // Batch 493 (L1): ABS passes `limit` straight to the query with no cap, but a
-                // longer list is better narrowed than scrolled, so a full page says so.
-                if SearchGroupDisplay.booksHitLimit(libraryViewModel.searchResults.count, limit: AudiobookshelfAPI.searchResultLimit),
-                   !libraryViewModel.searchIsLocal, !libraryViewModel.searchFailed {
-                    Typo.supporting(Text("Showing the first \(AudiobookshelfAPI.searchResultLimit) matches. Search for something more specific to narrow them."))
-                        .foregroundStyle(Color.shelfMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                }
-                // Batch 493: a podcast library's matching episodes, under the shows.
-                SearchGroupSection(group: .episodes, limit: SearchGroupDisplay.inlineLimit,
-                                   bottomInset: bottomInset) { showAllGroup = .episodes }
-                SearchGroupSection(group: .authors, limit: SearchGroupDisplay.inlineLimit,
-                                   bottomInset: bottomInset) { showAllGroup = .authors }
-                SearchGroupSection(group: .narrators, limit: SearchGroupDisplay.inlineLimit,
-                                   bottomInset: bottomInset) { showAllGroup = .narrators }
-                // Batch 492 (REVIEW 2026-11-11 L1): Genres and Tags open the same filtered books page.
-                SearchGroupSection(group: .genres, limit: SearchGroupDisplay.inlineLimit,
-                                   bottomInset: bottomInset) { showAllGroup = .genres }
-                SearchGroupSection(group: .tags, limit: SearchGroupDisplay.inlineLimit,
-                                   bottomInset: bottomInset) { showAllGroup = .tags }
-            }
-        }
-        .padding(.horizontal, Space.pageH)
-        .padding(.vertical, 12)
-        .padding(.bottom, bottomInset)
+        LibrarySearchResultsView(searchText: $searchText, bottomInset: bottomInset,
+                                 detailSelection: detailSelection) { showAllGroup = $0 }
     }
 
     /// Batch 490 (REVIEW 2026-11-11 L7): the rows under an empty search field. Books only (the
@@ -2325,26 +2369,9 @@ struct LibraryView: View {
                         .searchCompletion(example)
                     }
                 }
-            } else if !recentSearches.isEmpty {
-                Section {
-                    ForEach(recentSearches, id: \.self) { query in
-                        Label {
-                            Text(verbatim: query)
-                        } icon: {
-                            Image(systemName: "clock.arrow.circlepath")
-                        }
-                        .searchCompletion(query)
-                    }
-                    Button {
-                        recentSearches = RecentLibrarySearches.clear()
-                    } label: {
-                        Text("Clear")
-                            .foregroundStyle(Color.shelfAmberText)
-                    }
-                    .accessibilityLabel(Text("Clear recent searches"))
-                } header: {
-                    Text("Recent searches")
-                }
+            } else {
+                // Batch 496 (N6): shared with the iOS 26 Search tab.
+                RecentSearchSuggestionRows(recentSearches: $recentSearches)
             }
         }
     }
@@ -2418,58 +2445,16 @@ struct LibraryView: View {
         .padding(.bottom, bottomInset)
     }
 
-    /// Critique 2026-10-05 (Library): three different situations used to render as "No
-    /// results": nothing matched, the server couldn't be reached, and the device was
-    /// offline. They are different, and only one of them is fixed by a different search term.
-    @ViewBuilder
-    private var searchEmptyState: some View {
-        if libraryViewModel.searchFailed {
-            EmptyStateView(
-                icon: "wifi.exclamationmark",
-                title: LocalizedStringResource("Couldn\u{2019}t reach your server"),
-                subtitle: LocalizedStringResource("Search needs your server. No downloaded books match either."),
-                actionTitle: LocalizedStringResource("Retry"),
-                action: { Task { await libraryViewModel.search() } }
-            )
-        } else if libraryViewModel.searchIsLocal {
-            EmptyStateView(
-                icon: "magnifyingglass",
-                title: "No downloaded matches",
-                subtitle: "You\u{2019}re offline, so only downloaded books are searched.",
-                actionTitle: "Clear Search",
-                action: { searchText = "" }
-            )
-        } else {
-            EmptyStateView(
-                icon: "magnifyingglass",
-                title: "No results",
-                subtitle: "Try a different search term",
-                actionTitle: "Clear Search",
-                action: { searchText = "" }
-            )
-        }
-    }
-
-    /// One quiet line above results that came from the downloaded books on this device
-    /// rather than the server (offline), with Retry when the server request itself failed.
-    @ViewBuilder
-    private var searchStatusNote: some View {
-        if libraryViewModel.searchFailed || libraryViewModel.searchIsLocal {
-            HStack(spacing: 8) {
-                Typo.supporting(Text(libraryViewModel.searchFailed
-                    ? "Couldn\u{2019}t reach your server. Showing downloaded matches."
-                    : "Offline. Searching downloaded books only."))
-                    .foregroundStyle(Color.shelfMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if libraryViewModel.searchFailed {
-                    Button("Retry") { Task { await libraryViewModel.search() } }
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.shelfAmberText)
-                        .frame(minHeight: 44)
-                }
-            }
-            .padding(.bottom, 4)
-        }
+    /// Batch 496 (REVIEW 2026-11-11 N6): both search fields share the view model's one result
+    /// set. Back on Library, re-run Library's own Titles query when the Search tab's replaced it.
+    private func resyncSharedSearch() {
+        recentSearches = RecentLibrarySearches.load()   // the Search tab records to the same list
+        guard browseMode == .books, searchScope == .titles,
+              LibrarySharedSearch.needsRerun(fieldText: searchText, viewModelQuery: libraryViewModel.searchQuery)
+        else { return }
+        searchTask?.cancel()
+        libraryViewModel.searchQuery = searchText
+        Task { await libraryViewModel.search() }
     }
 }
 
@@ -3096,7 +3081,7 @@ struct SearchResultRow: View {
     // Critique 2026-10-05 (Library): the row read only the (often absent) progress on the
     // search payload, so a finished book showed nothing. Same resolution as the list rows.
     private var isFinished: Bool { libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished }
-    private var progress: Double { libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent }
+    private var progress: Double { item.shownProgress(libraryViewModel.progressFor(itemId: item.id)) }  // Batch 497 (L12)
 
     /// UI-7: previously this row had no `accessibilityElement` at all, so VoiceOver
     /// emitted a separate, unlabelled stop for the cover image plus a separate stop for
@@ -3325,7 +3310,7 @@ struct BookGridTile: View {
         LibraryGridTile(
             item: item,
             subtitle: subtitle,
-            progress: mp?.progress ?? item.progressPercent,
+            progress: item.shownProgress(mp),  // Batch 497 (L12)
             isFinished: mp?.isFinished ?? item.isFinished,
             isNowPlaying: playerViewModel.currentBook?.id == item.id,
             isPlaying: playerViewModel.isPlaying,
@@ -3412,7 +3397,7 @@ struct LibraryListRow: View {
 
     var body: some View {
         let finished = libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished
-        let progress = libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent
+        let progress = item.shownProgress(libraryViewModel.progressFor(itemId: item.id))  // Batch 497 (L12)
         let downloaded = downloadManager.isDownloaded(itemId: item.id)
         Group {
             if navigates, let onOpen {
@@ -3882,8 +3867,8 @@ struct LibraryPlaceholderRow: View {
 
 // MARK: - Select mode action bar (Library browse plan §3.2, 2026-10-05)
 
-/// The three bulk actions along the bottom while selecting: Up Next, Download, Mark
-/// Finished, each an icon with a text label. Its own view so the per-book download reads
+/// The bulk actions along the bottom while selecting: Up Next, Download, Remove (Batch 496,
+/// D5), Mark Finished, each an icon with a text label. Its own view so the per-book download reads
 /// (which change at transfer-callback rate) invalidate only this bar, not the Library body
 /// (the same reason as `LibraryGridTile`, Item 10).
 ///
@@ -3899,11 +3884,16 @@ struct LibrarySelectionBar: View {
     let markingCount: Int
     let onUpNext: () -> Void
     let onDownload: () -> Void
+    /// Batch 496 (REVIEW 2026-11-11 D5).
+    let onRemoveDownloads: () -> Void
     let onMarkFinished: () -> Void
     @State private var downloadManager = DownloadManager.shared
 
     var body: some View {
         let count = selected.count
+        // Batch 496 (D5): Remove works offline (it only touches this device), so only the
+        // selection's downloaded count and a running Mark Finished turn it off.
+        let downloadedCount = selected.filter { downloadManager.isDownloaded(itemId: $0.id) }.count
         // Plan §3.2 "Disabled states": Download is off when every selected book is already
         // downloaded or downloading, or is a podcast (podcasts aren't downloadable).
         let anyDownloadable = selected.contains {
@@ -3939,6 +3929,12 @@ struct LibrarySelectionBar: View {
                                         : nil),
                                  action: onDownload)
                 }
+                actionButton(.removeDownload, count: downloadedCount,
+                             enabled: downloadedCount > 0 && !isMarkingFinished,
+                             disabledHint: count > 0 && downloadedCount == 0
+                                ? String(localized: "None of these are downloaded", comment: "VoiceOver hint on the disabled bulk Remove Download action")
+                                : nil,
+                             action: onRemoveDownloads)
                 actionButton(.markFinished, count: count,
                              enabled: count > 0 && serverReachable && !isMarkingFinished,
                              disabledHint: !serverReachable
@@ -3975,6 +3971,33 @@ struct LibrarySelectionBar: View {
         .opacity(enabled ? 1 : 0.4)
         .accessibilityLabel(LibraryView.bulkActionLabel(action, count: count))
         .accessibilityHint(enabled ? "" : (disabledHint ?? ""))
+    }
+}
+
+/// Batch 496 (REVIEW 2026-11-11 D5): what a bulk Remove Download will remove: the selected books
+/// that are downloaded (each once, in selection order) and their size on disk. The size is the
+/// measured one where `DownloadManager` has it, else the server's figure for the book, else 0
+/// (the dialog then leaves the size out). Pure, pinned by `Batch496LibraryBulkRemoveTests`.
+nonisolated struct BulkRemovalPlan: Equatable {
+    let itemIds: [String]
+    let totalBytes: Int64
+    var count: Int { itemIds.count }
+
+    static func make(_ candidates: [(id: String, serverSize: Int?)],
+                     isDownloaded: (String) -> Bool,
+                     storedBytes: [String: Int64]) -> BulkRemovalPlan {
+        var ids: [String] = []
+        var seen = Set<String>()
+        var total: Int64 = 0
+        for candidate in candidates where isDownloaded(candidate.id) && seen.insert(candidate.id).inserted {
+            ids.append(candidate.id)
+            if let stored = storedBytes[candidate.id], stored > 0 {
+                total += stored
+            } else if let size = candidate.serverSize, size > 0 {
+                total += Int64(size)
+            }
+        }
+        return BulkRemovalPlan(itemIds: ids, totalBytes: total)
     }
 }
 
@@ -4197,6 +4220,320 @@ struct SearchShowAllView: View {
         .background(Color.shelfBackground.ignoresSafeArea())
         .navigationTitle(Text(group.title))
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Shared search (Batch 496, REVIEW 2026-11-11 N6)
+
+/// Batch 496 (N6): what Library search renders (books or shows, the 50-match note, episodes,
+/// authors, narrators, genres and tags with Show All, and the offline / unreachable states),
+/// extracted from `LibraryView` so the iOS 26 Search tab shows the same thing. It reads the one
+/// result set on `LibraryViewModel`; the host owns the field and the Show All push.
+struct LibrarySearchResultsView: View {
+    @Binding var searchText: String
+    var bottomInset: CGFloat = 0
+    /// iPhone Duo (§3): Library's detail column at regular width. Nil pushes Book Detail.
+    var detailSelection: Binding<LibraryItem?>? = nil
+    let onShowAll: (SearchShowAll) -> Void
+
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+
+    var body: some View {
+        // Critique 2026-10-05 (Library): rows are plain (cover, text, divider) like the list
+        // layout's rows instead of each sitting in its own card (Fewer Containers).
+        // Batch 490 (REVIEW 2026-11-11 L7): the previous results stay on screen while the
+        // next keystroke's request runs; the spinner only shows when there's nothing yet.
+        let hasAnyResult = !libraryViewModel.searchResults.isEmpty
+            || !libraryViewModel.searchAuthors.isEmpty || !libraryViewModel.searchNarrators.isEmpty
+            || !libraryViewModel.searchGenres.isEmpty || !libraryViewModel.searchTags.isEmpty
+            || !libraryViewModel.searchEpisodes.isEmpty
+        LazyVStack(spacing: 0) {
+            if libraryViewModel.isSearching && !hasAnyResult {
+                LoadingView("Searching\u{2026}")
+            } else if !hasAnyResult {
+                searchEmptyState
+            } else {
+                searchStatusNote
+                ForEach(libraryViewModel.searchResults) { item in
+                    bookLink(item) {
+                        SearchResultRow(item: item)
+                    }
+                    .buttonStyle(.plain)
+                    // L4 (REVIEW_2026-08-20_UI_SECURITY.md): this was the only book-
+                    // listing surface with no context menu and no swipe actions —
+                    // search is exactly where "found it, queue it" is the intent.
+                    .bookContextMenu(item)
+                    Divider().overlay(Color.shelfMuted.opacity(0.2))
+                    // Batch 490 (REVIEW 2026-11-11 L1): the old note here said the search
+                    // endpoint couldn't be limited or paged. It takes `limit` (ABS's
+                    // `LibraryController.search`: `req.query.limit || 12`), so the request now
+                    // asks for `AudiobookshelfAPI.searchResultLimit` (50). It still has no
+                    // page cursor, so there's no "load more" here.
+                }
+                // Batch 493 (L1): ABS passes `limit` straight to the query with no cap, but a
+                // longer list is better narrowed than scrolled, so a full page says so.
+                if SearchGroupDisplay.booksHitLimit(libraryViewModel.searchResults.count, limit: AudiobookshelfAPI.searchResultLimit),
+                   !libraryViewModel.searchIsLocal, !libraryViewModel.searchFailed {
+                    Typo.supporting(Text("Showing the first \(AudiobookshelfAPI.searchResultLimit) matches. Search for something more specific to narrow them."))
+                        .foregroundStyle(Color.shelfMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                }
+                // Batch 493: a podcast library's matching episodes, under the shows.
+                SearchGroupSection(group: .episodes, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { onShowAll(.episodes) }
+                SearchGroupSection(group: .authors, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { onShowAll(.authors) }
+                SearchGroupSection(group: .narrators, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { onShowAll(.narrators) }
+                // Batch 492 (REVIEW 2026-11-11 L1): Genres and Tags open the same filtered books page.
+                SearchGroupSection(group: .genres, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { onShowAll(.genres) }
+                SearchGroupSection(group: .tags, limit: SearchGroupDisplay.inlineLimit,
+                                   bottomInset: bottomInset) { onShowAll(.tags) }
+            }
+        }
+        .padding(.horizontal, Space.pageH)
+        .padding(.vertical, 12)
+        .padding(.bottom, bottomInset)
+    }
+
+    /// iPhone Duo (§3): a book's link. In the inner display's split view (`detailSelection`
+    /// set) it puts the book in the detail column; otherwise it pushes Book Detail.
+    @ViewBuilder
+    private func bookLink<Label: View>(_ item: LibraryItem, @ViewBuilder label: () -> Label) -> some View {
+        if let detailSelection {
+            Button { detailSelection.wrappedValue = item } label: { label() }
+                .accessibilityAddTraits(detailSelection.wrappedValue?.id == item.id ? .isSelected : [])
+        } else {
+            NavigationLink(destination: BookDetailView(item: item)) { label() }
+        }
+    }
+
+    /// Critique 2026-10-05 (Library): three different situations used to render as "No
+    /// results": nothing matched, the server couldn't be reached, and the device was
+    /// offline. They are different, and only one of them is fixed by a different search term.
+    @ViewBuilder
+    private var searchEmptyState: some View {
+        if libraryViewModel.searchFailed {
+            EmptyStateView(
+                icon: "wifi.exclamationmark",
+                title: LocalizedStringResource("Couldn\u{2019}t reach your server"),
+                subtitle: LocalizedStringResource("Search needs your server. No downloaded books match either."),
+                actionTitle: LocalizedStringResource("Retry"),
+                action: { Task { await libraryViewModel.search() } }
+            )
+        } else if libraryViewModel.searchIsLocal {
+            EmptyStateView(
+                icon: "magnifyingglass",
+                title: "No downloaded matches",
+                subtitle: "You\u{2019}re offline, so only downloaded books are searched.",
+                actionTitle: "Clear Search",
+                action: { searchText = "" }
+            )
+        } else {
+            EmptyStateView(
+                icon: "magnifyingglass",
+                title: "No results",
+                subtitle: "Try a different search term",
+                actionTitle: "Clear Search",
+                action: { searchText = "" }
+            )
+        }
+    }
+
+    /// One quiet line above results that came from the downloaded books on this device
+    /// rather than the server (offline), with Retry when the server request itself failed.
+    @ViewBuilder
+    private var searchStatusNote: some View {
+        if libraryViewModel.searchFailed || libraryViewModel.searchIsLocal {
+            HStack(spacing: 8) {
+                Typo.supporting(Text(libraryViewModel.searchFailed
+                    ? "Couldn\u{2019}t reach your server. Showing downloaded matches."
+                    : "Offline. Searching downloaded books only."))
+                    .foregroundStyle(Color.shelfMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if libraryViewModel.searchFailed {
+                    Button("Retry") { Task { await libraryViewModel.search() } }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.shelfAmberText)
+                        .frame(minHeight: 44)
+                }
+            }
+            .padding(.bottom, 4)
+        }
+    }
+}
+
+/// Batch 490 (REVIEW 2026-11-11 L7) / Batch 496 (N6): the recent Titles searches under an empty
+/// field, each filling the field through `searchCompletion`, with Clear. Shared by Library's
+/// field and the Search tab's, which record to the same per-account list.
+struct RecentSearchSuggestionRows: View {
+    @Binding var recentSearches: [String]
+
+    var body: some View {
+        if !recentSearches.isEmpty {
+            Section {
+                ForEach(recentSearches, id: \.self) { query in
+                    Label {
+                        Text(verbatim: query)
+                    } icon: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .searchCompletion(query)
+                }
+                Button {
+                    recentSearches = RecentLibrarySearches.clear()
+                } label: {
+                    Text("Clear")
+                        .foregroundStyle(Color.shelfAmberText)
+                }
+                .accessibilityLabel(Text("Clear recent searches"))
+            } header: {
+                Text("Recent searches")
+            }
+        }
+    }
+}
+
+/// Batch 496 (N6): the pure parts of two fields sharing one result set. Pinned by
+/// `Batch496SearchRoutingTests`.
+nonisolated enum LibrarySharedSearch {
+    /// A field showing results must re-run its query when the view model holds another one (the
+    /// other field searched since). An empty field shows no results, so it never re-runs.
+    static func needsRerun(fieldText: String, viewModelQuery: String) -> Bool {
+        !fieldText.isEmpty && fieldText != viewModelQuery
+    }
+
+    /// The Search tab's field prompt: Library's Books wording, or "Search shows" in a podcast library.
+    static func prompt(isPodcastLibrary: Bool) -> String {
+        isPodcastLibrary
+            ? String(localized: "Search shows", comment: "Library search field prompt for a podcast library")
+            : String(localized: "Search books, authors, series…", comment: "Library search field prompt, Books scope")
+    }
+}
+
+/// Batch 496 (N6): the iOS 26 Search tab's field state. `MainTabView` holds it, so a search link
+/// can fill it before the tab has ever been shown. It runs the same debounced server search as
+/// Library's Titles field (`LibraryViewModel.search()`), not a second implementation.
+@MainActor
+@Observable
+final class SearchTabModel {
+    var text = ""
+    /// Bound to `searchable(isPresented:)`: true asks the system to focus the field.
+    var isPresented = false
+    var recentSearches: [String] = []
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+
+    /// The field changed: the same 300 ms debounce as Library's Titles field.
+    func textChanged(_ newValue: String, in viewModel: LibraryViewModel) {
+        searchTask?.cancel()
+        viewModel.searchQuery = newValue
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, viewModel.searchQuery == newValue else { return }
+            await viewModel.search()
+        }
+    }
+
+    /// Back on the Search tab: re-run its query if Library's field replaced it meanwhile.
+    func resync(with viewModel: LibraryViewModel) {
+        recentSearches = RecentLibrarySearches.load()
+        guard LibrarySharedSearch.needsRerun(fieldText: text, viewModelQuery: viewModel.searchQuery) else { return }
+        searchTask?.cancel()
+        viewModel.searchQuery = text
+        Task { await viewModel.search() }
+    }
+
+    func submitted() {
+        recentSearches = RecentLibrarySearches.record(text)
+    }
+
+    /// A `shelfhead://search` link or the Search quick action. With a query the results show;
+    /// without one the field is focused so the listener can type.
+    func receive(query: String?) {
+        if let query {
+            text = query
+        } else {
+            isPresented = true
+        }
+    }
+
+    /// Library or account change: the text and results belonged to the old one.
+    func reset() {
+        searchTask?.cancel()
+        searchTask = nil
+        text = ""
+    }
+}
+
+/// Batch 496 (N6): the Search tab's root. Library's results (`LibrarySearchResultsView`) under
+/// the system search field the tab view puts in the tab bar (`librarySearchTab(_:)`).
+struct LibrarySearchTabView: View {
+    @Bindable var model: SearchTabModel
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+    @State private var showAllGroup: SearchShowAll?
+
+    var body: some View {
+        ZStack {
+            Color.shelfBackground
+            if model.text.isEmpty {
+                ScrollView {
+                    EmptyStateView(
+                        icon: "magnifyingglass",
+                        title: LocalizedStringResource("Search Your Library", comment: "Search tab title before anything is typed"),
+                        subtitle: libraryViewModel.isPodcastLibrary
+                            ? LocalizedStringResource("Find shows and episodes.", comment: "Search tab subtitle before anything is typed, podcast library")
+                            : LocalizedStringResource("Find books, authors, narrators, series, genres and tags.", comment: "Search tab subtitle before anything is typed, book library")
+                    )
+                    .padding(.top, Space.xl)
+                }
+            } else {
+                ScrollView {
+                    LibrarySearchResultsView(searchText: $model.text) { showAllGroup = $0 }
+                }
+                // Batch 218 (R10.10): pulling re-runs the search, as in Library.
+                .refreshable { await Task { await libraryViewModel.search() }.value }
+            }
+        }
+        .background(Color.shelfBackground.ignoresSafeArea())
+        .navigationTitle(Text("Search", comment: "Navigation title of the Search tab"))
+        .navigationDestination(item: $showAllGroup) { SearchShowAllView(group: $0, bottomInset: 0) }
+        .onAppear { model.resync(with: libraryViewModel) }
+        .reexpandsTabBarOnAppear()
+    }
+}
+
+extension View {
+    /// Batch 496 (N6): the Search tab's field, applied to the `TabView` itself. Apple's
+    /// `TabRole.search`: "Searchable tab views will prefer to have the first tab with this role
+    /// implement search." Same prompt, suggestions, debounce and recent-search recording as
+    /// Library's Titles field. Ask stays in Library (it needs its own on-device snapshot).
+    func librarySearchTab(_ model: SearchTabModel, libraryViewModel: LibraryViewModel) -> some View {
+        modifier(LibrarySearchTabModifier(model: model, libraryViewModel: libraryViewModel))
+    }
+}
+
+private struct LibrarySearchTabModifier: ViewModifier {
+    @Bindable var model: SearchTabModel
+    let libraryViewModel: LibraryViewModel
+
+    func body(content: Content) -> some View {
+        content
+            .searchable(text: $model.text, isPresented: $model.isPresented,
+                        prompt: LibrarySharedSearch.prompt(isPodcastLibrary: libraryViewModel.isPodcastLibrary))
+            .searchSuggestions {
+                if model.text.isEmpty {
+                    RecentSearchSuggestionRows(recentSearches: $model.recentSearches)
+                }
+            }
+            .onSubmit(of: .search) { model.submitted() }
+            .onChange(of: model.text) { _, newValue in model.textChanged(newValue, in: libraryViewModel) }
+            .task(id: libraryViewModel.selectedLibrary?.id) {
+                model.recentSearches = RecentLibrarySearches.load()   // per account
+            }
+            // Review Low (search after library switch, 30 October 2026), as Library does.
+            .onChange(of: libraryViewModel.selectedLibrary?.id) { _, _ in model.reset() }
     }
 }
 

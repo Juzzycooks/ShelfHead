@@ -66,9 +66,13 @@ struct SettingsView: View {
             canUpdateLibrary: user?.canUpdateLibrary == true,
             isAdmin: user?.isAdmin == true,
             isInHousehold: HouseholdStore.shared.isInHousehold,
-            transcriptsSupported: TranscriptionCenter.shared.isSupportedOS)
+            transcriptsSupported: TranscriptionCenter.shared.isSupportedOS,
+            hasPairedWatch: watchSetup.showsSettingsPage)
         return SettingsSearchIndex.results(for: searchText, state: state)
     }
+
+    /// Batch 496 (REVIEW 2026-11-11 W13): pairing and the Watch's setup report.
+    private var watchSetup: WatchSetupModel { WatchSetupModel.shared }
 
     /// Batch 490 (REVIEW 2026-11-11 N3): public pages for the About section.
     private static let privacyPolicyURL = URL(string: "https://github.com/Juzzycooks/ShelfHead/blob/main/ShelfHead/AppStore/PRIVACY.md")!
@@ -140,12 +144,15 @@ struct SettingsView: View {
 
     /// The Settings root, as data so a test can pin it. No group has more than four rows. Server
     /// Tools is left out for an account that has none of the permissions its rows need.
-    static func rootGroups(showsServerTools: Bool) -> [RootGroup] {
+    /// Batch 496 (REVIEW 2026-11-11 W13): Apple Watch joins Sharing & Services (the one group
+    /// with room), shown only with a Watch paired or the Watch app installed.
+    static func rootGroups(showsServerTools: Bool, showsAppleWatch: Bool = true) -> [RootGroup] {
         [
             RootGroup(title: "Server",
                       pages: [.account, .downloads] + (showsServerTools ? [.serverTools] : []) + [.kids]),
             RootGroup(title: "Listening", pages: [.playback, .sleepTimer, .sound, .transcripts]),
-            RootGroup(title: "Sharing & Services", pages: [.household, .readingSites, .releaseRadar]),
+            RootGroup(title: "Sharing & Services",
+                      pages: [.household, .readingSites, .releaseRadar] + (showsAppleWatch ? [.appleWatch] : [])),
             RootGroup(title: "App", pages: [.appearance, .systemPrivacy, .recentChanges, .diagnostics]),
         ]
     }
@@ -187,6 +194,10 @@ struct SettingsView: View {
             categoryLink(.readingSites, icon: "books.vertical.fill", subtitle: "Hardcover, Goodreads, StoryGraph")
         case .releaseRadar:
             categoryLink(.releaseRadar, icon: "calendar.badge.clock", subtitle: "Upcoming books in your series")
+        case .appleWatch:
+            // Batch 496 (REVIEW 2026-11-11 W13): the row says whether this account is set up there.
+            categoryLink(.appleWatch, icon: "applewatch",
+                         subtitle: AppleWatchSettingsSection.headline(for: watchSetup.status))
         case .appearance:
             categoryLink(.appearance, icon: "circle.lefthalf.filled", subtitle: "Theme, accent colour")
         case .systemPrivacy:
@@ -265,7 +276,8 @@ struct SettingsView: View {
                     // Earlier history: Critique 2026-10-06 (distill) split "Playback & Appearance"
                     // into five pages; P-7 (REVIEW_2026-09-14_DESIGN.md) → the tiles carry no amber
                     // `tint`, `menuRow`'s quiet tile is the default (DESIGN.md, One Light Rule).
-                    ForEach(Self.rootGroups(showsServerTools: showsServerTools)) { group in
+                    ForEach(Self.rootGroups(showsServerTools: showsServerTools,
+                                            showsAppleWatch: watchSetup.showsSettingsPage)) { group in
                         Section {
                             ForEach(group.pages, id: \.self) { page in
                                 rootRow(page)
@@ -311,6 +323,7 @@ struct SettingsView: View {
                 }
             }
             .task {
+                watchSetup.refresh()   // Batch 496 (W13)
                 await authViewModel.loadAccounts()
             }
             .reexpandsTabBarOnAppear()
@@ -539,4 +552,128 @@ enum FeedbackDiagnostics {
 struct DiagnosticsShare: Identifiable {
     let id = UUID()
     let text: String
+}
+
+// MARK: - Apple Watch (Batch 496, REVIEW 2026-11-11 W13)
+
+/// Settings › Apple Watch: whether this account is set up on the Watch, a way to send it
+/// the sign-in, and what the Watch does by itself versus as a remote. Routed by
+/// `SettingsDestinationView` inside a `SettingsCategoryPage`. The Watch's own preference
+/// (Play On) lives in Settings on the Watch; the phone has no Watch preferences to gather.
+struct AppleWatchSettingsSection: View {
+    private var model: WatchSetupModel { WatchSetupModel.shared }
+
+    /// The root row's subtitle and the status row's title.
+    static func headline(for status: WatchSetupStatus) -> LocalizedStringResource {
+        switch status {
+        case .unknown: return "Open ShelfHead on your Watch to check"
+        case .notSetUp: return "Not set up"
+        case .signedOutOnPhone: return "Signed out on iPhone"
+        case .thisAccount(let isBorrowed): return isBorrowed ? "Set up for a short while" : "Set up with this account"
+        case .ownSignInSameServer: return "Signed in on the Watch"
+        case .otherAccount: return "Set up with another account"
+        case .expired: return "Sign-in expired"
+        }
+    }
+
+    private static func detail(for status: WatchSetupStatus) -> LocalizedStringResource {
+        switch status {
+        case .unknown:
+            return "The Watch tells this iPhone whether it’s signed in once ShelfHead runs there."
+        case .notSetUp:
+            return "The Watch works as a remote for this iPhone. Set it up to play there on its own."
+        case .signedOutOnPhone:
+            return "Switching accounts or signing out on this iPhone signed the Watch out too."
+        case .thisAccount(let isBorrowed):
+            return isBorrowed
+                ? "This account signs in with single sign-on, so the Watch borrows this iPhone’s sign-in, which lasts about an hour. It asks again when your iPhone is nearby."
+                : "The Watch can play this account’s books without your iPhone."
+        case .ownSignInSameServer:
+            return "Someone signed in on the Watch itself, on this account’s server."
+        case .otherAccount:
+            return "The Watch is playing from an account that isn’t the one on this iPhone now."
+        case .expired:
+            return "The Watch’s sign-in ran out. Send it a new one, or sign in on the Watch."
+        }
+    }
+
+    private var actionTitle: LocalizedStringResource {
+        switch model.status {
+        case .unknown, .notSetUp, .signedOutOnPhone: return "Set Up Watch"
+        default: return "Send Sign-In to Watch"
+        }
+    }
+
+    var body: some View {
+        let status = model.status
+        Section {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.headline(for: status))
+                    .foregroundStyle(Color.shelfCream)
+                Typo.supporting(Text(Self.detail(for: status)))
+                    .foregroundStyle(Color.shelfMuted)
+            }
+            .padding(.vertical, 2)
+            .accessibilityElement(children: .combine)
+            .settingsRowAnchor(SettingsRow.watchStatus)
+
+            if status.offersSignIn {
+                Button {
+                    model.sendSignInToWatch()
+                } label: {
+                    settingRow("applewatch.radiowaves.left.and.right", actionTitle)
+                }
+                .disabled(!model.isReachable)
+                .accessibilityHint("Sends this account’s sign-in to ShelfHead on your Watch")
+                switch model.offerState {
+                case .sent:
+                    SettingsCaption(text: "Sent. Check your Watch.")
+                case .failed:
+                    SettingsCaption(text: "Couldn’t reach the Watch. Open ShelfHead on it and try again.")
+                case .idle:
+                    if !model.isReachable {
+                        SettingsCaption(text: "Open ShelfHead on your Watch first. It can also sign in on its own from its Settings.")
+                    }
+                }
+            }
+        } header: {
+            RetroSectionHeader(title: "On Your Watch")
+        } footer: {
+            Typo.supporting(Text("Switching accounts or signing out on this iPhone signs the Watch out too. It doesn’t sign back in by itself, so it never picks up an account you didn’t choose for it."))
+                .foregroundStyle(Color.shelfMuted)
+        }
+        .listRowBackground(Color.shelfCard)
+
+        Section {
+            capabilityRow(icon: "applewatch", title: "On its own",
+                          detail: "Once it’s set up, the Watch plays books you’ve downloaded to it, or streams over Wi-Fi or cellular, with your iPhone left behind.")
+                .settingsRowAnchor(SettingsRow.watchCapabilities)
+            capabilityRow(icon: "iphone.radiowaves.left.and.right", title: "As a remote",
+                          detail: "With your iPhone nearby, it controls what’s playing on the iPhone: play and pause, skips, chapters, speed, the sleep timer and bookmarks. No setup needed.")
+            capabilityRow(icon: "gearshape", title: "Play On",
+                          detail: "Choose where the Watch plays in Settings on the Watch: Automatic, iPhone or This Watch.")
+        } header: {
+            RetroSectionHeader(title: "What the Watch Can Do")
+        }
+        .listRowBackground(Color.shelfCard)
+        .task { model.refresh() }
+    }
+
+    private func capabilityRow(icon: String, title: LocalizedStringResource, detail: LocalizedStringResource) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .scaledFont(16, relativeTo: .body)
+                .foregroundStyle(Color.shelfMuted)
+                .frame(minWidth: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(Color.shelfCream)
+                Typo.supporting(Text(detail))
+                    .foregroundStyle(Color.shelfMuted)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
 }

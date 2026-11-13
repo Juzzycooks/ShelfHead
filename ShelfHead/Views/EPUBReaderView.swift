@@ -214,10 +214,21 @@ final class EPUBReaderModel {
             guard !parsed.spine.isEmpty else { throw ZipError.corrupt }
             backing.zip = zip
             package = parsed
-            let saved = EbookStore.position(itemId: itemId)
-            let index = min(max(0, saved?.spineIndex ?? 0), parsed.spine.count - 1)
+            var saved = EbookStore.position(itemId: itemId)
+            // Batch 495 (REVIEW 2026-11-11 L12): with iCloud position sync on, a newer position
+            // from the listener's other device wins, and is kept here with its own time.
+            let cloud = CloudPositionStore.shared.epubPosition(forItemId: itemId)
+            let localSavedAt = saved == nil ? nil : EbookStore.positionSavedAt(itemId: itemId)
+            if let cloud, CloudPositionStore.shouldAdoptCloudEPUBPosition(cloud: cloud, localSavedAt: localSavedAt) {
+                let adopted = EPUBPosition(spineIndex: cloud.spineIndex, fraction: cloud.fraction)
+                EbookStore.savePosition(adopted, itemId: itemId, savedAt: cloud.updatedAt)
+                lastSaved = adopted
+                saved = adopted
+            }
+            // Batch 497 (L11): a replaced file may have fewer chapters; clamp, don't discard.
+            let valid = EbookStore.clampedPosition(saved, spineCount: parsed.spine.count)
             isReady = true
-            await show(spineIndex: index, fraction: saved?.fraction)
+            await show(spineIndex: valid?.spineIndex ?? 0, fraction: valid?.fraction)
         } catch {
             ShelfLog.error(.storage, "EPUB open failed: \(error.localizedDescription)")
             EbookStore.delete(itemId: itemId)
@@ -247,6 +258,7 @@ final class EPUBReaderModel {
         }
         guard mine == generation else { return }
         await applyStyle()
+        await installChapterNav(spineIndex: spineIndex)
         if let fragment, !fragment.isEmpty {
             _ = try? await evaluate("document.getElementById(id)?.scrollIntoView(); return null;",
                                     arguments: ["id": fragment])
@@ -272,6 +284,37 @@ final class EPUBReaderModel {
 
     var canGoPrevious: Bool { currentSpineIndex > 0 }
     var canGoNext: Bool { (package?.spine.count ?? 0) > currentSpineIndex + 1 }
+
+    /// Batch 495 (REVIEW 2026-11-11 L13): the reader scrolls one chapter at a time, and the
+    /// end of a chapter offered nothing; the next-chapter control was only in the bottom bar.
+    /// Real links (Next Chapter: <title>, then Previous Chapter) are appended after the
+    /// chapter's text, so they read as part of the page and VoiceOver reaches them in order.
+    /// A tap goes through the navigation decider like any internal link (`followInternal`).
+    /// They are `<a>` in a `<nav>`, neither of which is a read-along block (`ReadAlongScript`
+    /// selects p, h1–h6, li, …), and they come last, so no block index shifts.
+    private func installChapterNav(spineIndex: Int) async {
+        guard let package else { return }
+        let spineHrefs = package.spine.map(\.href)
+        func link(_ index: Int) -> String {
+            guard spineHrefs.indices.contains(index) else { return "" }
+            var components = URLComponents()
+            components.scheme = Self.schemeName
+            components.host = "book"
+            components.path = "/" + spineHrefs[index]
+            return components.url?.absoluteString ?? ""
+        }
+        let nextTitle = EPUBChapterNav.title(forSpineIndex: spineIndex + 1, spineHrefs: spineHrefs, toc: package.toc)
+        let nextText = nextTitle.map {
+            String(localized: "Next Chapter: \($0)", comment: "Link at the end of a chapter in the ebook reader; %@ is the next chapter's title")
+        } ?? String(localized: "Next Chapter", comment: "Link at the end of a chapter in the ebook reader")
+        _ = try? await evaluate(EPUBChapterNav.script, arguments: [
+            "nextHref": link(spineIndex + 1),
+            "nextText": nextText,
+            "prevHref": link(spineIndex - 1),
+            "prevText": String(localized: "Previous Chapter", comment: "Link at the end of a chapter in the ebook reader"),
+            "label": String(localized: "Chapter navigation", comment: "VoiceOver label for the next/previous chapter links at the end of a chapter"),
+        ])
+    }
 
     /// Opens a table-of-contents `href` (full zip path, fragment kept).
     func show(href: String) async {
@@ -413,17 +456,64 @@ final class EPUBReaderModel {
         ])
     }
 
-    /// Reads the scroll fraction back and saves it when it moved.
-    func capturePosition() async {
+    /// Reads the scroll fraction back and saves it when it moved. `isFinal` (close,
+    /// backgrounding) forces the iCloud write and sends any remaining progress change.
+    func capturePosition(isFinal: Bool = false) async {
         guard isReady else { return }
         let value = try? await evaluate(
             "return window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight);")
         guard let number = value as? Double, number.isFinite else { return }
         let current = EPUBPosition(spineIndex: currentSpineIndex, fraction: min(1, max(0, number)))
         position = current
-        guard current != lastSaved else { return }
-        lastSaved = current
-        EbookStore.savePosition(current, itemId: itemId)
+        let moved = current != lastSaved
+        if moved {
+            lastSaved = current
+            EbookStore.savePosition(current, itemId: itemId)
+        }
+        // Batch 495 (REVIEW 2026-11-11 L12): the spine position to the listener's other
+        // devices (opt-in iCloud position sync; throttled to 20 s unless final), and the
+        // whole-book fraction to the server.
+        if moved || isFinal {
+            CloudPositionStore.shared.recordEPUB(itemId: itemId, spineIndex: current.spineIndex,
+                                                 fraction: current.fraction, force: isFinal)
+        }
+        sendReadingProgress(isFinal: isFinal)
+    }
+
+    // MARK: Reading progress to the server (Batch 495, REVIEW 2026-11-11 L12)
+
+    /// The fraction last attempted, and last confirmed by the server. Seeded on open with the
+    /// server's known value, so simply opening a book sends nothing.
+    @ObservationIgnored var lastSentReadingProgress: Double?
+    @ObservationIgnored private var lastConfirmedReadingProgress: Double?
+
+    func seedReadingProgress(_ known: Double?) {
+        lastSentReadingProgress = known
+        lastConfirmedReadingProgress = known
+    }
+
+    /// Sends `ebookProgress` only (never `ebookLocation`: Batch 430, the web reader keeps a
+    /// CFI there). While reading it compares against the last attempt, so an offline reader
+    /// doesn't retry every 2 s; on close it compares against the last confirmed write, so a
+    /// failed one is tried again then. Not queued in `PendingProgressQueue`: that queue's
+    /// ebook entries need a location to replay, and the next open or close sends again.
+    private func sendReadingProgress(isFinal: Bool) {
+        guard package != nil else { return }
+        let progress = overallProgress
+        let baseline = isFinal ? lastConfirmedReadingProgress : lastSentReadingProgress
+        guard EbookStore.shouldSendReadingProgress(current: progress, lastSent: baseline, isFinal: isFinal) else { return }
+        lastSentReadingProgress = progress
+        let itemId = itemId
+        let scope = EbookReaderView.currentProgressScope()   // captured before any await
+        Task { @MainActor [weak self] in
+            do {
+                try await AudiobookshelfAPI.shared.updateEbookReadingProgress(
+                    itemId: itemId, progress: progress, expectedScope: scope)
+                self?.lastConfirmedReadingProgress = progress
+            } catch {
+                ShelfLog.error(.sync, "Failed to sync EPUB reading progress for \(ShelfLog.redact(itemId)): \(error)")
+            }
+        }
     }
 
     /// Whole-book progress, 0...1.
@@ -477,6 +567,7 @@ struct EPUBReaderView: View {
                                           extraCSS: currentLineSpacing.css)
             created.openExternal = { openURL($0) }
             created.smoothScroll = !reduceMotion
+            created.seedReadingProgress(item.mediaProgress?.ebookProgress)   // Batch 495 (L12)
             model = created
             await created.open()
             await created.loadReadAlong()
@@ -517,9 +608,9 @@ struct EPUBReaderView: View {
         .onChange(of: lineSpacing) { _, _ in model?.extraCSS = currentLineSpacing.css }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
-            Task { await model?.capturePosition() }
+            Task { await model?.capturePosition(isFinal: true) }
         }
-        .onDisappear { Task { await model?.capturePosition() } }
+        .onDisappear { Task { await model?.capturePosition(isFinal: true) } }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 appearanceMenu
@@ -809,6 +900,53 @@ nonisolated enum EPUBPageTheme: String, CaseIterable, Sendable {
         case .black: return (background: "#000000", text: app.text, accent: app.accent)
         }
     }
+}
+
+/// Batch 495 (REVIEW 2026-11-11 L13): the next/previous chapter links appended after each
+/// chapter's text. Pure and not gated on iOS 26, so `Batch495ReaderNavTests` can pin it.
+nonisolated enum EPUBChapterNav {
+    /// The contents title for a spine item: the first contents entry (in book order) whose
+    /// path, fragment dropped, is that item. Nil when out of range or the contents don't
+    /// name it (the link then just says Next Chapter).
+    static func title(forSpineIndex index: Int, spineHrefs: [String], toc: [EPUBTOCEntry]) -> String? {
+        guard spineHrefs.indices.contains(index) else { return nil }
+        let target = spineHrefs[index]
+        for entry in toc {
+            let path = entry.href.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+                .first.map(String.init) ?? entry.href
+            let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if path == target, !title.isEmpty { return title }
+        }
+        return nil
+    }
+
+    /// Run in the reader's JS world with `nextHref`, `nextText`, `prevHref`, `prevText` and
+    /// `label` in scope. An empty href leaves that link out; with neither, nothing is added.
+    /// Replaces an earlier copy, so a reload or restyle never doubles it. Inline styles are
+    /// allowed by the reader's CSP (`style-src … 'unsafe-inline'`); the links take the
+    /// reader's accent colour from its own stylesheet, and are at least 44 pt tall.
+    static let script = #"""
+    const old = document.getElementById('shelfhead-chapter-nav');
+    if (old) { old.remove(); }
+    if (!document.body || (!nextHref && !prevHref)) { return null; }
+    const nav = document.createElement('nav');
+    nav.id = 'shelfhead-chapter-nav';
+    nav.setAttribute('aria-label', label);
+    nav.setAttribute('style', 'margin: 3em 0 2em; padding: 0; text-indent: 0;');
+    function add(href, text, strong) {
+        if (!href) { return; }
+        const a = document.createElement('a');
+        a.href = href;
+        a.textContent = text;
+        a.setAttribute('style', 'display: block; box-sizing: border-box; min-height: 44px; padding: 0.75em 0; '
+            + 'text-align: center; text-decoration: none; text-indent: 0; font-weight: ' + (strong ? '600' : '400') + ';');
+        nav.appendChild(a);
+    }
+    add(nextHref, nextText, true);
+    add(prevHref, prevText, false);
+    document.body.appendChild(nav);
+    return null;
+    """#
 }
 
 /// Batch 490 (REVIEW 2026-11-11 F31): the EPUB line spacing. `EPUBReaderStyle.css` sets

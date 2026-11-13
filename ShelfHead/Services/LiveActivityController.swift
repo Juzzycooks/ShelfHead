@@ -28,10 +28,12 @@ import ActivityKit
 /// that date actually moves (extend, reset, seek, speed change, pause/resume).
 ///
 /// **Starting needs the foreground.** `Activity.request` only works while the app is in
-/// the foreground (ActivityKit `Activity` documentation), so a timer armed from CarPlay,
-/// Siri or the bedtime window while backgrounded can't start one; the
+/// the foreground (ActivityKit `Activity` documentation), so a timer armed from CarPlay
+/// or the bedtime window while backgrounded can't start one; the
 /// `didBecomeActiveNotification` re-evaluation below starts it the next time the app is
-/// opened. Updating and ending work from the background.
+/// opened. Updating and ending work from the background. The exception (Batch 495, Y3) is
+/// a `LiveActivityIntent`: Siri's Set Sleep Timer and the Control Centre toggle arm inside
+/// `allowingIntentStart(_:)`, so their countdown starts at once.
 @MainActor
 final class LiveActivityController {
     // Same `nonisolated static let shared` + `nonisolated init()` shape as
@@ -235,15 +237,41 @@ final class LiveActivityController {
     /// After a refused request (Live Activities switched off for the app, the system's
     /// limit reached), don't retry on every countdown tick or progress change; the next
     /// try is after this long or on the next return to the foreground.
-    private static let requestRetryInterval: TimeInterval = 60
+    nonisolated static let requestRetryInterval: TimeInterval = 60
     private var lastRefusedRequestAt: [String: Date] = [:]
+
+    /// Batch 495 (REVIEW 2026-11-11 Y3): > 0 while code running inside a `LiveActivityIntent`'s
+    /// `perform()` (Siri "Set Sleep Timer", the Control Centre sleep-timer toggle) changes state.
+    /// ActivityKit lets such an intent start a Live Activity with the app in the background
+    /// (`Activity.request(attributes:content:pushType:)`, `LiveActivityIntent` docs).
+    private var intentStartDepth = 0
+
+    /// Runs `body` (synchronously) with background starts allowed. Only call it from a path
+    /// that a `LiveActivityIntent`'s `perform()` is waiting on.
+    func allowingIntentStart(_ body: () -> Void) {
+        intentStartDepth += 1
+        defer { intentStartDepth -= 1 }
+        body()
+    }
+
+    /// Batch 495 (Y3): whether to attempt `Activity.request` now. Inside a `LiveActivityIntent`
+    /// the listener just asked for this, so neither the background rule nor the retry
+    /// throttle applies; otherwise the app must not be in the background, and a recent
+    /// refusal holds off retries for `retryInterval`.
+    nonisolated static func mayRequestActivity(isInBackground: Bool, insideLiveActivityIntent: Bool,
+                                               lastRefusedAt: Date?, now: Date,
+                                               retryInterval: TimeInterval = requestRetryInterval) -> Bool {
+        if insideLiveActivityIntent { return true }
+        guard !isInBackground else { return false }
+        if let lastRefusedAt, now.timeIntervalSince(lastRefusedAt) < retryInterval { return false }
+        return true
+    }
 
     /// Whether a request for the activity `kind` is worth attempting now.
     private func canStartActivity(_ kind: String) -> Bool {
-        guard UIApplication.shared.applicationState != .background else { return false }
-        if let refused = lastRefusedRequestAt[kind],
-           Date().timeIntervalSince(refused) < Self.requestRetryInterval { return false }
-        return true
+        Self.mayRequestActivity(isInBackground: UIApplication.shared.applicationState == .background,
+                                insideLiveActivityIntent: intentStartDepth > 0,
+                                lastRefusedAt: lastRefusedRequestAt[kind], now: Date())
     }
 
     // MARK: - Sleep timer

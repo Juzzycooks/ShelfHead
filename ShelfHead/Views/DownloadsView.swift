@@ -90,6 +90,114 @@ enum DownloadCountCopy {
     }
 }
 
+/// Batch 496 (REVIEW 2026-11-11 D5): copy for removing several downloads at once from the
+/// Downloads page. Pure, pinned by `Batch496DownloadsSelectionTests`.
+enum DownloadsRemovalCopy {
+    /// Sum of the cached sizes of the selected books; nil when none of them is known yet.
+    static func totalBytes(of ids: Set<String>, sizes: [String: Int64]) -> Int64? {
+        let known = ids.compactMap { sizes[$0] }.filter { $0 > 0 }
+        return known.isEmpty ? nil : known.reduce(0, +)
+    }
+
+    /// "Remove (3) · 2.1 GB"; "Remove (3)" while sizes are unknown; "Remove" with nothing selected.
+    static func buttonTitle(count: Int, bytes: Int64?) -> String {
+        guard count > 0 else { return String(localized: "Remove", comment: "Downloads select mode: remove button with nothing selected") }
+        let number = count.formatted()
+        guard let bytes, bytes > 0 else {
+            return String(localized: "Remove (\(number))", comment: "Downloads select mode: remove button. %@ is how many books are selected")
+        }
+        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return String(localized: "Remove (\(number)) \u{00B7} \(size)",
+                      comment: "Downloads select mode: remove button. First %@ is how many books are selected, second the space freed, e.g. 2.1 GB")
+    }
+
+    static func confirmationTitle(count: Int) -> String {
+        guard count != 1 else { return String(localized: "Remove This Download?") }
+        let number = count.formatted()
+        return String(localized: "Remove \(number) Downloads?", comment: "Confirmation title. %@ is a number of books (2 or more)")
+    }
+
+    static func confirmButton(count: Int) -> String {
+        guard count != 1 else { return String(localized: "Remove Download") }
+        let number = count.formatted()
+        return String(localized: "Remove \(number) Downloads", comment: "Destructive confirmation button. %@ is a number of books (2 or more)")
+    }
+
+    static func message(count: Int) -> String {
+        count == 1
+            ? String(localized: "The downloaded audio will be deleted from this device. Your progress is kept.")
+            : String(localized: "The downloaded audio for these books will be deleted from this device. Your progress is kept.")
+    }
+}
+
+/// Batch 496 (REVIEW 2026-11-11 D4): the Storage section's bar, modelled on Settings › General ›
+/// iPhone Storage: one proportional strip, then a labelled row per segment so nothing is told
+/// apart by colour alone. Pure, pinned by `Batch496DownloadsStorageTests`.
+enum DownloadStorageBreakdown {
+    enum Kind: CaseIterable, Equatable {
+        case thisAccount, otherAccounts, signedOut, transcripts, covers, free
+    }
+
+    struct Segment: Equatable {
+        let kind: Kind
+        let bytes: Int64
+    }
+
+    /// The segments to draw, in order, skipping empty and unknown ones. `otherAccounts` is the
+    /// saved accounts' share only: signed-out servers are their own segment.
+    static func segments(thisAccount: Int64, otherAccounts: Int64, signedOut: Int64,
+                         transcripts: Int64?, covers: Int64?, free: Int64?) -> [Segment] {
+        let all: [(Kind, Int64?)] = [(.thisAccount, thisAccount), (.otherAccounts, otherAccounts),
+                                     (.signedOut, signedOut), (.transcripts, transcripts),
+                                     (.covers, covers), (.free, free)]
+        return all.compactMap { kind, bytes in
+            guard let bytes, bytes > 0 else { return nil }
+            return Segment(kind: kind, bytes: bytes)
+        }
+    }
+
+    /// Each segment's share of the bar's width. A non-empty segment never shrinks below
+    /// `minimumFraction`, so a small cache still shows; the rest are scaled to fit.
+    static func fractions(_ segments: [Segment], minimumFraction: Double = 0.02) -> [Double] {
+        let total = Double(segments.reduce(Int64(0)) { $0 + $1.bytes })
+        guard total > 0 else { return segments.map { _ in 0 } }
+        let raw = segments.map { Double($0.bytes) / total }
+        let floor = min(minimumFraction, 1 / Double(max(segments.count, 1)))
+        let lifted = raw.map { max($0, floor) }
+        let liftedTotal = lifted.reduce(0, +)
+        let bumpedExtra = liftedTotal - 1
+        guard bumpedExtra > 0 else { return lifted }
+        // Take the extra back from the segments above the floor, in proportion to their size.
+        let reducible = zip(lifted, raw).filter { $0.1 > floor }.reduce(0) { $0 + $1.0 }
+        guard reducible > 0 else { return lifted.map { $0 / liftedTotal } }
+        return zip(lifted, raw).map { value, original in
+            original > floor ? value - bumpedExtra * (value / reducible) : value
+        }
+    }
+
+    static func label(for kind: Kind) -> String {
+        switch kind {
+        case .thisAccount: return String(localized: "This account’s downloads", comment: "Storage row and bar segment")
+        case .otherAccounts: return String(localized: "Other accounts", comment: "Storage row and bar segment: downloads of other saved accounts")
+        case .signedOut: return String(localized: "Signed-out servers", comment: "Storage row and bar segment: downloads kept for servers the user signed out of")
+        case .transcripts: return String(localized: "Transcripts and ebooks", comment: "Storage row and bar segment")
+        case .covers: return String(localized: "Cover cache", comment: "Storage row and bar segment")
+        case .free: return String(localized: "Free on this iPhone", comment: "Storage row and bar segment: free space on the device")
+        }
+    }
+
+    /// What VoiceOver reads for the bar: every segment by name and size, in order.
+    static func accessibilitySummary(_ segments: [Segment]) -> String {
+        let parts = segments.map { segment in
+            let size = ByteCountFormatter.string(fromByteCount: segment.bytes, countStyle: .file)
+            return String(localized: "\(label(for: segment.kind)), \(size)",
+                          comment: "Storage bar, spoken. First %@ is a segment name, second its size")
+        }
+        return parts.isEmpty ? String(localized: "No storage figures yet", comment: "Storage bar, spoken, before sizes are known")
+                             : parts.joined(separator: "; ")
+    }
+}
+
 /// Critique 2026-10-06 (distill): the Downloads page's sort menu.
 enum DownloadsSortOrder: String, CaseIterable, Identifiable {
     case title, recentlyDownloaded, size
@@ -272,6 +380,17 @@ struct DownloadsView: View {
     /// manifest carries no download date, so this reads the folder's creation date once
     /// per change to the downloaded set, off the main thread.
     @State private var downloadedDates: [String: Date] = [:]
+    /// Batch 496 (REVIEW 2026-11-11 D5): standard list editing to remove several downloads.
+    @State private var editMode: EditMode = .inactive
+    @State private var selection: Set<String> = []
+    @State private var confirmingRemoval = false
+
+    private var isSelecting: Bool { editMode.isEditing }
+
+    /// Only downloaded books can be selected; ids that stopped being downloaded drop out.
+    private var selectedDownloads: Set<String> {
+        selection.intersection(downloadManager.downloadedItems)
+    }
 
     private var sortOrder: DownloadsSortOrder {
         DownloadsSortOrder(rawValue: sortOrderRaw) ?? .title
@@ -292,15 +411,40 @@ struct DownloadsView: View {
                     subtitle: LocalizedStringResource("Download a book from its detail page to listen to it here, fully offline.")
                 )
             } else {
-                List {
-                    DownloadsStorageSummarySection()
-                    DownloadsInFlightSections()
-                    DownloadedBooksSection(sortOrder: sortOrder, downloadedDates: downloadedDates)
+                // Batch 496 (D5): while selecting, only the downloaded books are listed, so
+                // only they can be selected.
+                List(selection: $selection) {
+                    if !isSelecting {
+                        DownloadsStorageSummarySection()
+                        DownloadsInFlightSections()
+                    }
+                    DownloadedBooksSection(sortOrder: sortOrder, downloadedDates: downloadedDates,
+                                           isSelecting: isSelecting)
                 }
+                .environment(\.editMode, $editMode)
                 .scrollContentBackground(.hidden)
             }
         }
-        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: bottomClearance) }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                if isSelecting { removeSelectionBar }
+                Color.clear.frame(height: bottomClearance)
+            }
+        }
+        .onChange(of: downloadManager.downloadedItems.isEmpty) { _, isEmpty in
+            if isEmpty { endSelecting() }
+        }
+        .confirmationDialog(DownloadsRemovalCopy.confirmationTitle(count: selectedDownloads.count),
+                            isPresented: $confirmingRemoval, titleVisibility: .visible) {
+            Button(DownloadsRemovalCopy.confirmButton(count: selectedDownloads.count), role: .destructive) {
+                downloadManager.removeDownloads(itemIds: Array(selectedDownloads))
+                Haptics.impact(.medium)
+                endSelecting()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(DownloadsRemovalCopy.message(count: selectedDownloads.count))
+        }
         .navigationTitle("Downloads")
         .navigationBarTitleDisplayMode(.inline)
         // Storage figures for the summary header and the Size order.
@@ -319,7 +463,19 @@ struct DownloadsView: View {
         }
         // HIG audit 2026-09-17 L17: monochrome toolbar icons (see View.monochromeToolbarItem)
         .toolbar {
+            // Batch 496 (REVIEW 2026-11-11 D5): Select / Done, the standard list-editing entry.
             if !downloadManager.downloadedItems.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if isSelecting { endSelecting() } else { withAnimation { editMode = .active } }
+                    } label: {
+                        Text(isSelecting ? "Done" : "Select")
+                            .fontWeight(isSelecting ? .semibold : .regular)
+                    }
+                    .accessibilityHint(isSelecting ? Text("Stops selecting") : Text("Select downloads to remove several at once"))
+                }
+            }
+            if !downloadManager.downloadedItems.isEmpty && !isSelecting {
                 ToolbarItem(placement: .topBarTrailing) {
                     // Critique 2026-10-06 (distill): Downloads had no sort.
                     Menu {
@@ -344,6 +500,33 @@ struct DownloadsView: View {
             }
         }
         .reexpandsTabBarOnAppear()
+    }
+
+    private func endSelecting() {
+        withAnimation { editMode = .inactive }
+        selection.removeAll()
+    }
+
+    /// Batch 496 (D5): "Remove (3) · 2.1 GB", pinned above the tab bar / mini player while
+    /// selecting. Disabled until something is selected.
+    private var removeSelectionBar: some View {
+        let ids = selectedDownloads
+        let title = DownloadsRemovalCopy.buttonTitle(
+            count: ids.count, bytes: DownloadsRemovalCopy.totalBytes(of: ids, sizes: downloadManager.itemStorageBytes))
+        return Button(role: .destructive) {
+            confirmingRemoval = true
+        } label: {
+            // DESIGN.md: orange is a fill, with `shelfOrangeInk` drawn on it (no orange text).
+            Label(title, systemImage: "trash")
+                .foregroundStyle(Color.shelfOrangeInk)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Color.shelfOrange)
+        .disabled(ids.isEmpty)
+        .padding(.horizontal, Space.pageH)
+        .padding(.vertical, Space.s)
+        .background(Color.shelfBackground)
     }
 }
 
@@ -381,10 +564,16 @@ private struct DownloadedBooksLinkLabel: View {
     @State private var downloadManager = DownloadManager.shared
 
     private var transferSummary: String? {
-        let active = downloadManager.activeDownloads.count
+        // Batch 496 (REVIEW 2026-11-11 D2): books waiting their turn are counted on their own.
+        let queued = downloadManager.activeDownloads.values.filter(\.isQueued).count
+        let active = downloadManager.activeDownloads.count - queued
         let failed = downloadManager.failedDownloads.count
         var parts: [String] = []
         if active > 0 { parts.append(String(localized: "\(active) downloading", comment: "%lld is a number of active downloads")) }
+        if queued > 0 {
+            let count = queued.formatted()
+            parts.append(String(localized: "\(count) queued", comment: "%@ is a number of downloads waiting their turn"))
+        }
         if failed > 0 { parts.append(String(localized: "\(failed) couldn\u{2019}t download", comment: "%lld is a number of failed downloads")) }
         return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
     }
@@ -406,6 +595,8 @@ private struct DownloadsInFlightSections: View {
     @State private var downloadManager = DownloadManager.shared
     /// D1: the waiting download the user is confirming "Download Now on Mobile Data" for.
     @State private var cellularConfirmation: DownloadTask?
+    /// Batch 496 (REVIEW 2026-11-11 D2): Cancel All is waiting on its confirmation.
+    @State private var confirmingCancelAll = false
 
     /// D1: whether this row is waiting for Wi-Fi right now (and so offers "Download Now").
     private func isWaitingForWiFi(_ task: DownloadTask) -> Bool {
@@ -432,7 +623,10 @@ private struct DownloadsInFlightSections: View {
         }
         if !downloadManager.activeDownloads.isEmpty {
             Section {
-                ForEach(downloadManager.activeDownloads.values.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }) { task in
+                // Batch 496 (REVIEW 2026-11-11 D2): queue order (transferring, then waiting in
+                // the order they'll start), not alphabetical.
+                ForEach(downloadManager.orderedActiveDownloads) { task in
+                    let position = downloadManager.queuePosition(of: task.id)
                     ActiveDownloadRow(task: task, onCancel: {
                         downloadManager.cancelDownload(itemId: task.id)
                     }, onPauseResume: {
@@ -441,11 +635,12 @@ private struct DownloadsInFlightSections: View {
                         } else {
                             downloadManager.pauseDownload(itemId: task.id)
                         }
-                    })
+                    }, queuePosition: position)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                     // D1 (REVIEW 2026-11-11): a download waiting for Wi-Fi can be sent over
                     // mobile data for this one book. Swipe and touch-and-hold both offer it.
+                    // Batch 496 (D2): a waiting book that isn't first also offers Download Next.
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if isWaitingForWiFi(task) {
                             Button {
@@ -455,8 +650,23 @@ private struct DownloadsInFlightSections: View {
                             }
                             .tint(Color.shelfAmber)
                         }
+                        if let position, position > 1 {
+                            Button {
+                                downloadManager.downloadNext(itemId: task.id)
+                            } label: {
+                                Label("Download Next", systemImage: "arrow.up.to.line")
+                            }
+                            .tint(Color.shelfAmberDark)
+                        }
                     }
                     .contextMenu {
+                        if let position, position > 1 {
+                            Button {
+                                downloadManager.downloadNext(itemId: task.id)
+                            } label: {
+                                Label("Download Next", systemImage: "arrow.up.to.line")
+                            }
+                        }
                         if isWaitingForWiFi(task) {
                             Button {
                                 cellularConfirmation = task
@@ -465,9 +675,57 @@ private struct DownloadsInFlightSections: View {
                             }
                         }
                     }
+                    .accessibilityActions {
+                        if let position, position > 1 {
+                            Button("Download Next") { downloadManager.downloadNext(itemId: task.id) }
+                        }
+                    }
                 }
             } header: {
-                RetroSectionHeader(title: LocalizedStringResource("Downloading", comment: "Downloads section header"))
+                // Batch 496 (D2): Pause All / Resume All / Cancel All for the whole queue, in one
+                // menu so the header stays one line at large text sizes.
+                HStack(spacing: Space.s) {
+                    RetroSectionHeader(title: LocalizedStringResource("Downloading", comment: "Downloads section header"))
+                    Menu {
+                        Button {
+                            downloadManager.pauseAllDownloads()
+                        } label: {
+                            Label("Pause All", systemImage: "pause.circle")
+                        }
+                        .disabled(!downloadManager.canPauseAll)
+                        Button {
+                            downloadManager.resumeAllDownloads()
+                        } label: {
+                            Label("Resume All", systemImage: "arrow.down.circle")
+                        }
+                        .disabled(!downloadManager.canResumeAll)
+                        Button(role: .destructive) {
+                            confirmingCancelAll = true
+                        } label: {
+                            Label("Cancel All", systemImage: "xmark.circle")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.body)
+                            .foregroundStyle(Color.shelfAmberText)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Download actions")
+                }
+            }
+            .confirmationDialog(
+                "Cancel All Downloads?",
+                isPresented: $confirmingCancelAll,
+                titleVisibility: .visible
+            ) {
+                Button("Cancel All Downloads", role: .destructive) {
+                    downloadManager.cancelAllQueuedDownloads()
+                    Haptics.impact(.medium)
+                }
+                Button("Keep Downloading", role: .cancel) {}
+            } message: {
+                Text("Books still downloading or waiting will stop, and what they’ve downloaded so far will be deleted.")
             }
             .confirmationDialog(
                 cellularConfirmation.map { DownloadPolicyStatus.downloadNowTitle(bytes: downloadNowSize($0)) } ?? "",
@@ -571,6 +829,9 @@ private struct DownloadedBooksSection: View {
     var sortOrder: DownloadsSortOrder = .title
     /// Folder creation dates, for `.recentlyDownloaded`.
     var downloadedDates: [String: Date] = [:]
+    /// Batch 496 (REVIEW 2026-11-11 D5): true while the page is in Select mode; the list's
+    /// edit mode owns the tap, so rows don't navigate and the swipe actions are off.
+    var isSelecting = false
     /// The book whose swipe-Remove is waiting on the "Remove this download?" confirmation.
     @State private var pendingRemoval: LibraryItem?
     @State private var downloadManager = DownloadManager.shared
@@ -648,28 +909,34 @@ private struct DownloadedBooksSection: View {
                     LibraryListRow(
                         item: item,
                         detail: DownloadRowDetail.text(forDuration: item.duration, bytes: downloadManager.itemStorageBytes[item.id]),
+                        navigates: !isSelecting,
                         onOpen: detailSelection.map { selection in { selection.wrappedValue = $0 } }
                     )
                         // Batch 490 (REVIEW 2026-11-11 D7): the same touch-and-hold menu as
                         // every other book row (Home, Library, Series), which this list lacked.
                         .bookContextMenu(item)
+                        // Batch 496 (D5): no swipe actions while selecting (an empty builder adds none).
                         .swipeActions(edge: .leading) {
-                            Button {
-                                playOrPause(item)
-                            } label: {
-                                Label(playActionLabel(for: item), systemImage: playActionSystemImage(for: item))
+                            if !isSelecting {
+                                Button {
+                                    playOrPause(item)
+                                } label: {
+                                    Label(playActionLabel(for: item), systemImage: playActionSystemImage(for: item))
+                                }
+                                .tint(Color.shelfAmber)
+                                .accessibilityLabel(playActionLabel(for: item))
                             }
-                            .tint(Color.shelfAmber)
-                            .accessibilityLabel(playActionLabel(for: item))
                         }
                         // Follow-up (30 September 2026): Book Detail asks "Remove this download?"
                         // first; this swipe deleted at once. Same confirmation and copy now, and
                         // no full-swipe so one long swipe can't delete by accident.
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                pendingRemoval = item
-                            } label: {
-                                Label("Remove", systemImage: "trash")
+                            if !isSelecting {
+                                Button(role: .destructive) {
+                                    pendingRemoval = item
+                                } label: {
+                                    Label("Remove", systemImage: "trash")
+                                }
                             }
                         }
                 }
@@ -677,7 +944,9 @@ private struct DownloadedBooksSection: View {
                 RetroSectionHeader(title: LocalizedStringResource("Downloaded Books", comment: "Downloads section header"))
             } footer: {
                 // Critique 2026-10-06 (distill): one line.
-                Typo.supporting(Text("Swipe right to play, or left to remove. Works offline."))
+                Typo.supporting(isSelecting
+                                ? Text("Select the books to remove.")
+                                : Text("Swipe right to play, or left to remove. Works offline."))
                     .foregroundStyle(Color.shelfMuted)
             }
             .listRowBackground(Color.shelfCard)
@@ -713,16 +982,12 @@ private struct DownloadPreferencesSection: View {
     @AppStorage(SettingsKeys.wifiOnlyDownloads) private var wifiOnlyDownloads = true
     @AppStorage(SettingsKeys.downloadWhileCharging) private var downloadWhileCharging = false
     @AppStorage(SettingsKeys.autoDeleteFinished) private var autoDeleteFinished = false
-    @AppStorage(SettingsKeys.notifyDownloadComplete) private var notifyDownloadComplete = false
 
     /// Only used on this section, computed here (`.task` below) rather than in the
     /// root `SettingsView`, which doesn't need to know it exists.
     @State private var cacheSizeText = ""
-    /// L3 (REVIEW_2026-08-20_UI_SECURITY.md): "Notify when downloads finish" used to fail
-    /// silently on denied permission (nothing happened, and the toggle stayed on despite
-    /// never being able to fire). It now reverts and shows this standard alert with a
-    /// deep link to Settings.
-    @State private var showNotificationsDeniedAlert = false
+    /// Batch 495 (D6): how many series have auto-download on; re-read when this list reappears.
+    @State private var seriesAutoDownloadCount = 0
 
     var body: some View {
         Section {
@@ -763,23 +1028,22 @@ private struct DownloadPreferencesSection: View {
             }
             .settingsRowAnchor(SettingsRow.autoDeleteFinished)
 
-            Toggle(isOn: $notifyDownloadComplete) {
-                settingRow("bell.badge", "Notify when downloads finish")
-            }
-            .onChange(of: notifyDownloadComplete) { _, on in
-                // L3: used to fire-and-forget the authorization request — on
-                // denial, nothing happened at all, and the toggle stayed on despite
-                // never being able to fire. Now: revert and explain via the alert.
-                if on {
-                    Task {
-                        if !(await NotificationManager.requestAuthorization()) {
-                            notifyDownloadComplete = false
-                            showNotificationsDeniedAlert = true
-                        }
-                    }
+            // Batch 495 (REVIEW 2026-11-11 Y1): "Notify when downloads finish" moved to
+            // System & Privacy › Notifications (same key), the one list of notification switches.
+
+            // Batch 495 (REVIEW 2026-11-11 D6): series turned on from a series page's menu had no
+            // overview anywhere; this lists them and lets each be turned off.
+            NavigationLink {
+                SeriesAutoDownloadListView()
+            } label: {
+                HStack {
+                    settingRow("square.stack.3d.down.right", "Auto-download series")
+                    Spacer()
+                    Typo.supporting(Text(verbatim: seriesAutoDownloadCount.formatted()))
+                        .foregroundStyle(Color.shelfMuted)
                 }
             }
-            .settingsRowAnchor(SettingsRow.notifyDownloadComplete)
+            .settingsRowAnchor(SettingsRow.seriesAutoDownload)
 
             Button {
                 CoverImageCache.shared.removeAllObjects()
@@ -798,6 +1062,8 @@ private struct DownloadPreferencesSection: View {
                 Task {
                     await Task.detached(priority: .userInitiated) { DiskCoverCache.clear() }.value
                     await refreshCacheSize()
+                    // Batch 497: the Storage section's cover-cache row, bar and free space follow.
+                    DownloadManager.shared.noteCoverCacheCleared()
                 }
             } label: {
                 HStack {
@@ -814,21 +1080,10 @@ private struct DownloadPreferencesSection: View {
         .task {
             await refreshCacheSize()
         }
-        .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
-        .alert("Notifications Are Off", isPresented: $showNotificationsDeniedAlert) {
-            Button("Open Settings") {
-                // HIG audit 2026-09-17 L4: was `openSettingsURLString` (the Settings
-                // root); this alert is specifically about notifications being off, so
-                // land directly on the app's Notifications page instead.
-                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Notifications are off for ShelfHead. Turn them on in Settings to use this.")
+        .onAppear {
+            seriesAutoDownloadCount = SeriesAutoDownloadList.names(from: SeriesAutoDownloadList.stored()).count
         }
-        .systemChromeTint()
+        .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
     }
 
     // T9 (REVIEW_2026-09-04_UI.md): extracted from `.task` so the "Clear image cache"
@@ -840,6 +1095,73 @@ private struct DownloadPreferencesSection: View {
             DiskCoverCache.totalBytes() + Int64(URLCache.shared.currentDiskUsage)
         }.value
         cacheSizeText = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+/// Batch 495 (REVIEW 2026-11-11 D6): which series have auto-download on. Pure so the
+/// filtering and order are pinned by a test.
+enum SeriesAutoDownloadList {
+    /// Series names whose flag is on, in a stable, case-insensitive alphabetical order.
+    static func names(from stored: [String: Bool]) -> [String] {
+        stored.filter { $0.value && !$0.key.isEmpty }.map(\.key).sorted {
+            let order = $0.localizedStandardCompare($1)
+            return order == .orderedSame ? $0 < $1 : order == .orderedAscending
+        }
+    }
+
+    /// What `SettingsStore.setSeriesAutoDownload` has written.
+    static func stored() -> [String: Bool] {
+        (UserDefaults.standard.dictionary(forKey: SettingsKeys.seriesAutoDownload) as? [String: Bool]) ?? [:]
+    }
+}
+
+/// Batch 495 (REVIEW 2026-11-11 D6): Settings › Downloads › Auto-download series. The list is
+/// read once when the page opens, so a series switched off stays on screen and can be switched
+/// back on during the same visit.
+private struct SeriesAutoDownloadListView: View {
+    @State private var names: [String] = []
+    @State private var enabled: Set<String> = []
+
+    var body: some View {
+        ZStack {
+            Color.shelfBackground.ignoresSafeArea()
+            List {
+                Section {
+                    if names.isEmpty {
+                        Typo.supporting(Text("No series yet. Turn on \u{201C}Auto-download next\u{201D} in a series\u{2019} menu."))
+                            .foregroundStyle(Color.shelfMuted)
+                    } else {
+                        ForEach(names, id: \.self) { name in
+                            Toggle(isOn: binding(for: name)) {
+                                Text(verbatim: name)
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Near the end of a book in one of these series, the next unfinished book downloads, following your download preferences.")
+                }
+                .listRowBackground(Color.shelfCard)
+            }
+            .scrollContentBackground(.hidden)
+            .tint(Color.shelfAmberText) // CO-7: see systemChromeTint()
+        }
+        .navigationTitle("Auto-download Series")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard names.isEmpty else { return }
+            names = SeriesAutoDownloadList.names(from: SeriesAutoDownloadList.stored())
+            enabled = Set(names)
+        }
+    }
+
+    private func binding(for name: String) -> Binding<Bool> {
+        Binding(
+            get: { enabled.contains(name) },
+            set: { on in
+                if on { enabled.insert(name) } else { enabled.remove(name) }
+                SettingsStore.setSeriesAutoDownload(on, for: name)
+            }
+        )
     }
 }
 
@@ -887,14 +1209,104 @@ private struct DownloadStorageSection: View {
     /// Critique 2026-10-06 (clarify): what the last signed-out removal did, shown under
     /// the Storage rows.
     @State private var signedOutRemovalOutcome: String?
+    /// Batch 496 (REVIEW 2026-11-11 D4): figures this section measures itself, off the main
+    /// thread (nil until measured). The download figures come from `DownloadManager`.
+    @State private var transcriptBytes: Int64?
+    @State private var coverCacheBytes: Int64?
+    @State private var freeBytes: Int64?
+
+    private struct StorageMeasureKey: Hashable {
+        let total: Int64
+        let coverRevision: Int
+    }
+
+    private var savedAccountsBytes: Int64 {
+        SignedOutStorage.savedAccountsShare(otherScopes: downloadManager.otherScopesStorageBytes,
+                                            signedOut: downloadManager.signedOutScopesStorageBytes)
+    }
+
+    private var segments: [DownloadStorageBreakdown.Segment] {
+        DownloadStorageBreakdown.segments(thisAccount: downloadManager.totalStorageBytes,
+                                          otherAccounts: savedAccountsBytes,
+                                          signedOut: downloadManager.signedOutScopesStorageBytes,
+                                          transcripts: transcriptBytes, covers: coverCacheBytes, free: freeBytes)
+    }
+
+    /// Each segment's colour, from the theme tokens. Never the only cue: every segment has a
+    /// labelled row below with the same swatch.
+    static func color(for kind: DownloadStorageBreakdown.Kind) -> Color {
+        switch kind {
+        case .thisAccount: return Color.shelfAmber
+        case .otherAccounts: return Color.shelfAmberDark
+        case .signedOut: return Color.shelfOrange
+        case .transcripts: return Color.shelfCream
+        case .covers: return Color.shelfMuted
+        case .free: return Color.shelfMuted.opacity(0.3)
+        }
+    }
+
+    private func swatch(_ kind: DownloadStorageBreakdown.Kind) -> some View {
+        RoundedRectangle(cornerRadius: Radius.chip / 2)
+            .fill(Self.color(for: kind))
+            .frame(width: 12, height: 12)
+            .frame(width: 24)
+            .accessibilityHidden(true)
+    }
+
+    private func sizeText(_ bytes: Int64?) -> String {
+        guard let bytes else { return "\u{2014}" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    /// One labelled breakdown row: swatch, name, optional caption, size.
+    private func breakdownRow(_ kind: DownloadStorageBreakdown.Kind, caption: LocalizedStringKey? = nil,
+                              value: String) -> some View {
+        HStack {
+            swatch(kind)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(DownloadStorageBreakdown.label(for: kind))
+                    .foregroundStyle(Color.shelfCream)
+                if let caption {
+                    Typo.fine(Text(caption))
+                        .foregroundStyle(Color.shelfMuted)
+                }
+            }
+            Spacer()
+            Typo.figure(Text(value))
+                .foregroundStyle(Color.shelfMuted)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Transcripts and ebooks, the cover cache and free space, measured off the main thread.
+    /// The two cache walks are the same ones Settings already ran (`TranscriptStore`, the
+    /// Preferences section's cover-cache figure); free space is one volume query.
+    private func measureOtherFigures() async {
+        let manager = downloadManager
+        let figures = await Task.detached(priority: .utility) {
+            (TranscriptStore.totalStorageBytes(),
+             DiskCoverCache.totalBytes() + Int64(URLCache.shared.currentDiskUsage),
+             manager.volumeAvailableBytes())
+        }.value
+        guard !Task.isCancelled else { return }   // Batch 497: a newer measurement owns the figures
+        transcriptBytes = figures.0
+        coverCacheBytes = figures.1
+        freeBytes = figures.2
+    }
 
     var body: some View {
         Section {
+            // Batch 496 (REVIEW 2026-11-11 D4): one proportional bar, like Settings › General ›
+            // iPhone Storage, read by VoiceOver as one summary of every segment.
+            DownloadStorageBar(segments: segments, colors: segments.map { Self.color(for: $0.kind) })
+                .padding(.vertical, Space.s)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("Storage"))
+                .accessibilityValue(Text(DownloadStorageBreakdown.accessibilitySummary(segments)))
+
             HStack {
-                Image(systemName: "internaldrive")
-                    .foregroundStyle(Color.shelfMuted)
-                    .frame(width: 24)
-                Text("Storage used")
+                swatch(.thisAccount)
+                Text(DownloadStorageBreakdown.label(for: .thisAccount))
                     .foregroundStyle(Color.shelfCream)
                 Spacer()
                 // Critique 2026-10-06 (clarify): "1 books" → `DownloadCountCopy`.
@@ -914,49 +1326,32 @@ private struct DownloadStorageSection: View {
             // a saved account under Settings › Servers reclaims that account's
             // scope, which is why the caption points there rather than adding a
             // second destructive button to this section.
-            if SignedOutStorage.savedAccountsShare(otherScopes: downloadManager.otherScopesStorageBytes,
-                                       signedOut: downloadManager.signedOutScopesStorageBytes) > 0 {
-                HStack {
-                    Image(systemName: "person.2")
-                        .foregroundStyle(Color.shelfMuted)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Other accounts")
-                            .foregroundStyle(Color.shelfCream)
-                        Typo.fine(Text("Remove a saved server to free its downloads"))
-                            .foregroundStyle(Color.shelfMuted)
-                    }
-                    Spacer()
-                    Typo.supporting(Text(ByteCountFormatter.string(
-                        fromByteCount: SignedOutStorage.savedAccountsShare(otherScopes: downloadManager.otherScopesStorageBytes,
-                                                               signedOut: downloadManager.signedOutScopesStorageBytes),
-                        countStyle: .file)))
-                        .foregroundStyle(Color.shelfMuted)
-                }
-                .accessibilityElement(children: .combine)
+            if savedAccountsBytes > 0 {
+                breakdownRow(.otherAccounts, caption: "Remove a saved server to free its downloads",
+                             value: sizeText(savedAccountsBytes))
             }
 
             // Critique 2026-10-06 (harden): downloads kept for servers the user signed out of (Batch 382
             // keeps them so a sign-in to the same server brings them back). Until now
             // they were counted under "Other accounts" with no way to free them.
+            // Batch 496 (D4): the figure is its own labelled row; the button below only acts.
             if downloadManager.signedOutScopesStorageBytes > 0 {
+                breakdownRow(.signedOut, caption: "Kept in case you sign in to them again",
+                             value: downloadManager.formattedSignedOutScopesStorage)
                 Button(role: .destructive) {
                     showRemoveSignedOutConfirmation = true
                 } label: {
                     HStack {
                         Image(systemName: "rectangle.portrait.and.arrow.right")
                             .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Remove Downloads from Signed-Out Servers")
-                            Typo.fine(Text("Kept in case you sign in to them again"))
-                                .foregroundStyle(Color.shelfMuted)
-                        }
-                        Spacer()
-                        Typo.supporting(Text(downloadManager.formattedSignedOutScopesStorage))
-                            .foregroundStyle(Color.shelfMuted)
+                        Text("Remove Downloads from Signed-Out Servers")
                     }
                 }
             }
+
+            breakdownRow(.transcripts, value: sizeText(transcriptBytes))
+            breakdownRow(.covers, caption: "Clear it under Preferences", value: sizeText(coverCacheBytes))
+            breakdownRow(.free, value: sizeText(freeBytes))
 
             if let signedOutRemovalOutcome {
                 Typo.supporting(Label {
@@ -997,6 +1392,13 @@ private struct DownloadStorageSection: View {
         .task(id: downloadManager.otherScopesStorageBytes) {
             downloadManager.measureSignedOutScopes(authViewModel.signedOutServerScopeKeys)
         }
+        // Batch 496 (D4): re-measured whenever the downloads total changes (a removal frees space).
+        // Batch 497: also after Clear image cache (`coverCacheRevision`). `.task(id:)` cancels the
+        // older measurement; `measureOtherFigures` drops a result that was cancelled.
+        .task(id: StorageMeasureKey(total: downloadManager.totalStorageBytes,
+                                    coverRevision: downloadManager.coverCacheRevision)) {
+            await measureOtherFigures()
+        }
         .confirmationDialog(SignedOutStorage.removeTitle, isPresented: $showRemoveSignedOutConfirmation, titleVisibility: .visible) {
             Button("Remove Downloads", role: .destructive) {
                 // The figure on screen when the user confirmed is what this frees.
@@ -1027,6 +1429,36 @@ private struct DownloadStorageSection: View {
             Text(RemoveAllDownloadsCopy.message(storageUsed: downloadManager.formattedStorageUsed))
         }
         .systemChromeTint()
+    }
+}
+
+/// Batch 496 (REVIEW 2026-11-11 D4): the proportional strip at the top of Settings › Downloads ›
+/// Storage. Purely visual; the caller gives it one accessibility summary.
+private struct DownloadStorageBar: View {
+    let segments: [DownloadStorageBreakdown.Segment]
+    /// One colour per segment, same order.
+    let colors: [Color]
+
+    var body: some View {
+        GeometryReader { geo in
+            let fractions = DownloadStorageBreakdown.fractions(segments)
+            // 1 pt gaps between segments, taken out of the width before it's shared.
+            let gaps = CGFloat(max(segments.count - 1, 0))
+            let width = max(geo.size.width - gaps, 0)
+            HStack(spacing: 1) {
+                if segments.isEmpty {
+                    Rectangle().fill(Color.shelfMuted.opacity(0.3))
+                } else {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                        Rectangle()
+                            .fill(index < colors.count ? colors[index] : Color.shelfMuted)
+                            .frame(width: width * CGFloat(fractions[index]))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.chip / 2))
+        }
+        .frame(height: 14)
     }
 }
 
@@ -1096,6 +1528,8 @@ struct ActiveDownloadRow: View {
     let task: DownloadTask
     let onCancel: () -> Void
     var onPauseResume: () -> Void = {}
+    /// Batch 496 (REVIEW 2026-11-11 D2): place among the waiting books, when this one is waiting.
+    var queuePosition: Int? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -1107,6 +1541,13 @@ struct ActiveDownloadRow: View {
                         .foregroundStyle(Color.shelfCream)
                         .lineLimit(1)
 
+                    // Batch 496 (D2): a waiting book says where it is in line ("Queued · 2nd")
+                    // rather than a network state that doesn't apply to it yet.
+                    if task.isQueued {
+                        Typo.supporting(Text(queuePosition.map { DownloadQueuePlan.queuedLabel(position: $0) }
+                                             ?? String(localized: "Queued", comment: "Download row status for a book waiting its turn")))
+                            .foregroundStyle(Color.shelfMuted)
+                    } else {
                     // Polish pass (DL-1): `NetworkMonitor` isn't observable, so re-read it on
                     // a slow timeline; with Wi-Fi-only on and no Wi-Fi the row says it is
                     // waiting rather than "Downloading… 37%".
@@ -1117,6 +1558,7 @@ struct ActiveDownloadRow: View {
                             isOnWiFi: NetworkMonitor.shared.isOnWiFi,
                             cellularOverridden: task.cellularOverride).text))
                             .foregroundStyle(Color.shelfMuted)
+                    }
                     }
                     // Polish pass (DL-2): "120 MB of 1.4 GB · about 4 min left" — sign of life
                     // for a multi-GB book still at a few percent. Published with the progress

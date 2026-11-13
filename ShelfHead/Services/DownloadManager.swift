@@ -172,6 +172,9 @@ final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegate {
         // to the compiler to run on the main actor even though it happens to execute on
         // the main thread.
         Task { @MainActor in
+            // Batch 496 (REVIEW 2026-11-11 D2): the app was woken for finished transfers, so
+            // hand any waiting books to the system now, before it suspends again.
+            DownloadManager.shared.advanceQueue(inBackground: true)
             DownloadManager.shared.backgroundCompletionHandler?()
             DownloadManager.shared.backgroundCompletionHandler = nil
         }
@@ -202,12 +205,55 @@ final class DownloadManager {
     /// why an unconditional exemption made ARCH-5's reclamation a permanent no-op.
     private static let recentManifestGracePeriod: TimeInterval = 24 * 3600
 
-    var activeDownloads: [String: DownloadTask] = [:]
+    var activeDownloads: [String: DownloadTask] = [:] {
+        didSet {
+            // Batch 496 (REVIEW 2026-11-11 D2): a book finishing, failing or being cancelled frees
+            // a queue slot. Every removal path ends here, so the queue advances from one place.
+            guard oldValue.count != activeDownloads.count
+                    || oldValue.keys.contains(where: { activeDownloads[$0] == nil }) else { return }
+            scheduleQueueSync()
+        }
+    }
+    /// Batch 496 (REVIEW 2026-11-11 D2): the download queue, first in first out. Holds every
+    /// non-repair entry of `activeDownloads` (transferring, paused and waiting), in the order
+    /// the listener sees them. At most `DownloadQueuePlan.maxConcurrentBooks` transfer at once
+    /// while the app is in the foreground. Persisted per account (`downloadQueueKey`).
+    private(set) var downloadQueue: [String] = []
+    @ObservationIgnored private var queueRestored = false
+    @ObservationIgnored private var queueLoadedScope: String?
+    @ObservationIgnored private var queueSyncScheduled = false
+    @ObservationIgnored private var queueObserversInstalled = false
     var downloadedItems: Set<String> = []
     /// Surfaced to the UI (as a toast) when a download fails, so failures aren't silent.
     var downloadError: String?
     /// D1 (REVIEW 2026-11-11): a non-error note ("Will download on Wi‑Fi."), shown as an info toast.
     var downloadInfo: String?
+    /// Batch 495 (REVIEW 2026-11-11 D6): "Removing the finished download of …", shown by `MainTabView`
+    /// as a toast with Undo. Auto-delete finished only removes the files once this toast has gone
+    /// (`AutoDeletePlan`), so Undo just forgets the plan. Clearing it (timeout, swipe, Undo) is
+    /// what commits or drops the pending removal.
+    var autoDeleteUndoMessage: String? {
+        didSet {
+            guard autoDeleteUndoMessage == nil, oldValue != nil else { return }
+            // The toast's Undo button clears the message *then* runs its handler, so wait one
+            // turn: an Undo in the same tap has emptied `pendingAutoDelete` by then.
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.commitPendingAutoDelete()
+            }
+        }
+    }
+    /// Batch 495 (D6): finished downloads waiting out the Undo window, oldest first, with titles.
+    @ObservationIgnored private var pendingAutoDelete: [(id: String, title: String)] = []
+    @ObservationIgnored private var pendingAutoDeleteScope: String?
+    /// Batch 495 (D6): commits anyway if the toast never clears (e.g. a background refresh that
+    /// no screen showed). A relaunch in between simply leaves the files for the next refresh.
+    @ObservationIgnored private var autoDeleteFallbackTask: Task<Void, Never>?
+    /// Batch 495 (D6): books the listener kept with Undo. Auto-delete leaves them alone until the
+    /// server says they're no longer finished (a re-listen), then they're forgotten.
+    @ObservationIgnored private var autoDeleteKept: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: DownloadManager.autoDeleteKeptDefaultsKey) ?? [])
+    nonisolated static let autoDeleteKeptDefaultsKey = "shelfhead_autoDeleteKept"
     /// Set by `reconcile(serverProgress:)` when a downloaded book's local and server
     /// progress diverge too much to resolve silently via last-write-wins — see that
     /// method's doc comment. `MainTabView` presents this as an alert regardless of
@@ -399,6 +445,8 @@ final class DownloadManager {
         // from adoption's own completion instead, strictly after `activeDownloads`
         // reflects every in-flight task this call found.
         adoptInFlightDownloads(generation: generation) { [weak self] liveTaskItemIds in
+            // Batch 496 (D2): before the sweep, so a waiting book's partial folder counts as known.
+            self?.restoreQueue(liveTaskItemIds: liveTaskItemIds)
             self?.sweepOrphanedDownloadDirectories(additionallyExcluding: liveTaskItemIds)
         }
     }
@@ -722,6 +770,7 @@ final class DownloadManager {
     func ensureSessionReady() {
         _ = downloadSession
         bootstrapIfNeeded()
+        installQueueObserversIfNeeded()   // Batch 496 (D2)
         // Batch 406: the one Live Activity hook. Runs at launch, on a background-session
         // relaunch and from background refresh; from then on the controller follows
         // `activeDownloads`/`downloadedItems`/`failedDownloads` itself (start, progress,
@@ -756,10 +805,21 @@ final class DownloadManager {
         }
         let startedTask = DownloadTask(itemId: item.id, title: item.title)
         if let sizeBytes = item.size, sizeBytes > 0 { startedTask.knownSizeBytes = Int64(sizeBytes) }
+        // Batch 496 (REVIEW 2026-11-11 D2): every book joins the queue; `advanceQueue` starts it
+        // when a slot is free. Hand-started books go ahead of waiting automatic ones.
+        startedTask.isQueued = true
+        startedTask.isAutomatic = automatic
+        let index = DownloadQueuePlan.insertionIndex(automatic: automatic, queue: queueEntries())
+        downloadQueue.insert(item.id, at: min(index, downloadQueue.count))
         activeDownloads[item.id] = startedTask
         if waitsForWiFi && announceWait { downloadInfo = DownloadPolicyStatus.willDownloadOnWiFiMessage }
-        // Review 2 Low (cancel-then-restart, 30 October 2026): this start's token.
-        let runId = startedTask.runId
+        saveQueue()
+        advanceQueue()
+    }
+
+    /// Batch 496 (D2): starts one queued book's transfer. Factored out of `downloadBook` so the
+    /// queue can admit a book later; the comments below are unchanged from there.
+    private func startEnqueueDownload(itemId: String, title: String, runId: UUID) -> Task<Void, Never> {
         // Fix 9 (REVIEW-2026-09-09.md), superseded by Item 27 (perf review):
         // `SWIFT_APPROACHABLE_CONCURRENCY = YES` turns on `NonisolatedNonsendingByDefault`,
         // which quietly undid ARCH-6: a `nonisolated async` function no longer runs
@@ -778,7 +838,311 @@ final class DownloadManager {
         // comment back to `Task.detached { await self.enqueueDownload(item) }`. The `assert`
         // at the top of `enqueueDownload` stays either way — it makes a regression loud in
         // DEBUG instead of silent.
-        Task { await self.enqueueDownload(item, runId: runId) }
+        return Task { await self.enqueueDownload(itemId: itemId, title: title, runId: runId) }
+    }
+
+    // MARK: - Download queue (Batch 496, REVIEW 2026-11-11 D2)
+    //
+    // Before this batch every `downloadBook` call started all of a book's tracks at once, so
+    // a Library bulk plan of 30 books meant hundreds of concurrent tasks sharing the
+    // session's six connections and no book finishing early. Now books wait in a FIFO queue
+    // (`downloadQueue`) and `advanceQueue` starts at most `maxConcurrentBooks` while the app
+    // is in the foreground. When the app goes to the background every waiting book is handed
+    // to the background session at once, because the system rate-limits tasks started from the
+    // background and the delay grows each time the app is relaunched for session events
+    // ("Downloading files in the background"). The queue is rebuilt after a relaunch from
+    // `downloadQueueKey`, the manifests and the session's outstanding tasks (`restoreQueue`).
+
+    /// Queue entries in queue order, for the pure planner. Repairs and cancelled entries are
+    /// not part of the queue.
+    func queueEntries() -> [DownloadQueuePlan.Entry] {
+        downloadQueue.compactMap { id in
+            guard let task = activeDownloads[id], !task.isRepair, !task.isCancelled else { return nil }
+            return DownloadQueuePlan.Entry(id: id, isQueued: task.isQueued, isPaused: task.isPaused,
+                                           hasStarted: task.hasStarted, isAutomatic: task.isAutomatic)
+        }
+    }
+
+    /// Rows for the Downloads screen: queue order, then anything outside the queue (a repair)
+    /// by title.
+    var orderedActiveDownloads: [DownloadTask] {
+        let queued = downloadQueue.compactMap { activeDownloads[$0] }
+        let inQueue = Set(downloadQueue)
+        let rest = activeDownloads.values
+            .filter { !inQueue.contains($0.id) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        return queued + rest
+    }
+
+    /// 1-based place among the books still waiting ("Queued · 2nd"), or nil when not waiting.
+    func queuePosition(of itemId: String) -> Int? {
+        DownloadQueuePlan.waitingPosition(of: itemId, in: queueEntries())
+    }
+
+    /// Download Next: moves a waiting book ahead of every other waiting book.
+    func downloadNext(itemId: String) {
+        guard activeDownloads[itemId]?.isQueued == true else { return }
+        downloadQueue = DownloadQueuePlan.movedToFront(itemId, in: queueEntries()).map(\.id)
+        saveQueue()
+    }
+
+    /// Whether Pause All / Resume All have anything to act on.
+    var canPauseAll: Bool { queueEntries().contains { !$0.isPaused } }
+    var canResumeAll: Bool { queueEntries().contains { $0.isPaused } }
+
+    /// Pause All: every transferring and waiting book, without letting the queue start the
+    /// next one in between.
+    func pauseAllDownloads() {
+        for entry in queueEntries() where !entry.isPaused {
+            pauseDownload(itemId: entry.id, advancesQueue: false)
+        }
+        saveQueue()
+    }
+
+    /// Resume All: every paused book goes back to waiting in its place; the queue then starts
+    /// as many as it allows.
+    func resumeAllDownloads() {
+        for entry in queueEntries() where entry.isPaused {
+            resumeDownload(itemId: entry.id, advancesQueue: false)
+        }
+        advanceQueue()
+    }
+
+    /// Cancel All: the same per-book cancel the account switch uses, for every queue entry.
+    /// A repair in progress is left alone (cancelling it would not delete the book, but it
+    /// isn't one of the rows this button names).
+    func cancelAllQueuedDownloads() {
+        for entry in queueEntries() { cancelDownload(itemId: entry.id) }
+    }
+
+    /// Coalesces bursts of `activeDownloads` changes into one sync + advance per main-actor turn.
+    private func scheduleQueueSync() {
+        guard !queueSyncScheduled else { return }
+        queueSyncScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.queueSyncScheduled = false
+            guard self.queueRestored else { return }
+            self.syncQueue()
+            self.advanceQueue()
+        }
+    }
+
+    /// Drops ids that left `activeDownloads` and appends any tracked entry the queue doesn't
+    /// know (an adopted transfer, a retry started some other way).
+    private func syncQueue() {
+        let tracked = activeDownloads.values
+            .filter { !$0.isRepair && !$0.isCancelled }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            .map(\.id)
+        let synced = DownloadQueuePlan.syncedOrder(downloadQueue, tracked: tracked)
+        if synced != downloadQueue { downloadQueue = synced }
+        saveQueue()
+    }
+
+    /// Persists the queue for this account. Only once the queue has been restored for the
+    /// active scope, so a save can never write one account's queue under another's key.
+    private func saveQueue() {
+        let scope = currentScopeKey()
+        guard queueRestored, queueLoadedScope == scope else { return }
+        let records: [DownloadQueueRecord] = downloadQueue.compactMap { id in
+            guard let task = activeDownloads[id], !task.isRepair, !task.isCancelled else { return nil }
+            return DownloadQueueRecord(itemId: id, title: task.title, sizeBytes: task.knownSizeBytes,
+                                       automatic: task.isAutomatic, paused: task.isPaused,
+                                       started: task.hasStarted)
+        }
+        let key = Self.downloadQueueKey(scope: scope)
+        if records.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private func loadQueueRecords() -> [DownloadQueueRecord] {
+        guard let data = UserDefaults.standard.data(forKey: Self.downloadQueueKey(scope: currentScopeKey())),
+              let records = try? JSONDecoder().decode([DownloadQueueRecord].self, from: data) else { return [] }
+        return records
+    }
+
+    /// Rebuilds the queue after launch or an account switch, once `restorePausedDownloads` and
+    /// in-flight adoption have recreated what they can. Waiting books (which have no session
+    /// tasks and, if never started, no manifest) exist only in the saved records, so they are
+    /// recreated here.
+    private func restoreQueue(liveTaskItemIds: Set<String>) {
+        let records = loadQueueRecords()
+        var restoredIds: [String] = []
+        for record in records where !restoredIds.contains(record.itemId) {
+            let existing = activeDownloads[record.itemId]
+            let action = DownloadQueuePlan.restoreAction(
+                record: record,
+                isDownloaded: isDownloaded(itemId: record.itemId),
+                isFailed: failedDownloads[record.itemId] != nil,
+                existing: existing.map { (isPaused: $0.isPaused, isRepair: $0.isRepair) },
+                hasLiveTasks: liveTaskItemIds.contains(record.itemId))
+            switch action {
+            case .drop:
+                continue
+            case .keep(let requeue):
+                guard let existing else { continue }
+                existing.isAutomatic = record.automatic
+                existing.hasStarted = true
+                if existing.knownSizeBytes == 0 { existing.knownSizeBytes = record.sizeBytes }
+                if requeue {
+                    existing.isPaused = false
+                    existing.isQueued = true
+                }
+            case .create(let paused):
+                let task = DownloadTask(itemId: record.itemId, title: manifest(for: record.itemId)?.title ?? record.title)
+                task.isAutomatic = record.automatic
+                task.hasStarted = record.started
+                task.knownSizeBytes = record.sizeBytes
+                task.isPaused = paused
+                task.isQueued = !paused
+                if let manifest = manifest(for: record.itemId), !manifest.tracks.isEmpty {
+                    task.progress = Double(completedTrackCount(itemId: record.itemId)) / Double(manifest.tracks.count)
+                }
+                activeDownloads[record.itemId] = task
+            }
+            restoredIds.append(record.itemId)
+        }
+        // Entries the records don't name (a transfer from before this batch, or one adopted
+        // from the session) have already started, by definition.
+        let restoredSet = Set(restoredIds)
+        let untracked = activeDownloads.values
+            .filter { !$0.isRepair && !$0.isCancelled && !restoredSet.contains($0.id) }
+            .sorted { lhs, rhs in
+                if lhs.isPaused != rhs.isPaused { return !lhs.isPaused }
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+        for task in untracked { task.hasStarted = true }
+        downloadQueue = DownloadQueuePlan.restoredOrder(saved: restoredIds, untracked: untracked.map(\.id))
+        queueLoadedScope = currentScopeKey()
+        queueRestored = true
+        saveQueue()
+        // Woken in the background for session events: wait for `urlSessionDidFinishEvents`,
+        // so a book whose last track is about to be delivered isn't fetched again.
+        if UIApplication.shared.applicationState != .background { advanceQueue() }
+    }
+
+    /// Starts waiting books while there is a free slot. In the background there is no limit:
+    /// every waiting book is handed to the session at once (see the MARK comment above), under
+    /// a background-task assertion so the item fetch that precedes each start can finish.
+    func advanceQueue(inBackground: Bool? = nil) {
+        guard queueRestored else { return }
+        let background = inBackground ?? (UIApplication.shared.applicationState == .background)
+        let ids = DownloadQueuePlan.booksToStart(queueEntries(),
+                                                 limit: background ? nil : DownloadQueuePlan.maxConcurrentBooks,
+                                                 isConnected: NetworkMonitor.shared.isConnected,
+                                                 automaticAllowed: autoDownloadPolicyAllows)
+        guard !ids.isEmpty else { return }
+        let starts = ids.compactMap { startQueuedBook(itemId: $0) }
+        saveQueue()
+        guard background, !starts.isEmpty else { return }
+        let assertion = RetryBackgroundTask()
+        assertion.id = UIApplication.shared.beginBackgroundTask(withName: "ShelfHead.downloadQueue") {
+            // Called synchronously on the main thread just before suspension
+            // (UIApplication.beginBackgroundTask(withName:expirationHandler:)).
+            MainActor.assumeIsolated { assertion.end() }
+        }
+        Task { @MainActor in
+            for start in starts { await start.value }
+            assertion.end()
+        }
+    }
+
+    /// Admits one waiting book. A first start fetches the item and creates its tasks
+    /// (`enqueueDownload`); a book that has transferred before continues from its resume blobs
+    /// and track URLs when it can, and otherwise starts again (tracks on disk are skipped).
+    @discardableResult
+    private func startQueuedBook(itemId: String) -> Task<Void, Never>? {
+        guard let entry = activeDownloads[itemId], entry.isQueued, !entry.isPaused, !entry.isCancelled else { return nil }
+        entry.isQueued = false
+        if !entry.hasStarted {
+            entry.hasStarted = true
+            return launchEnqueue(entry)
+        }
+        let runId = entry.runId
+        let previousStart = entry.startTask
+        return Task { @MainActor [weak self] in
+            await previousStart?.value
+            guard let self else { return }
+            @MainActor func stillWanted() -> Bool {
+                guard let current = self.activeDownloads[itemId], current === entry else { return false }
+                return current.runId == runId && !current.isCancelled && !current.isPaused && !current.isQueued
+            }
+            guard stillWanted() else { return }
+            // Already transferring (e.g. tasks the system kept across a relaunch): nothing to do.
+            if await self.hasAnyLiveTask(itemId: itemId) { return }
+            guard stillWanted() else { return }
+            if self.canContinueFromSavedState(itemId: itemId) {
+                self.continueFromSavedState(itemId: itemId)
+            } else if NetworkMonitor.shared.isConnected {
+                self.markPaused(itemId, false)
+                self.deletePersistedPausedResume(forItem: itemId)
+                self.withCacheLock { self.pausedResumeData = self.pausedResumeData.filter { !$0.key.hasPrefix("\(itemId)|") } }
+                await self.launchEnqueue(entry).value
+            } else {
+                // Offline and nothing to continue from: wait in place for the connection.
+                entry.isQueued = true
+                self.saveQueue()
+            }
+        }
+    }
+
+    private func launchEnqueue(_ entry: DownloadTask) -> Task<Void, Never> {
+        let task = startEnqueueDownload(itemId: entry.id, title: entry.title, runId: entry.runId)
+        entry.startTask = task
+        return task
+    }
+
+    /// Whether the session holds any unfinished task for this book.
+    private func hasAnyLiveTask(itemId: String) async -> Bool {
+        await withCheckedContinuation { cont in
+            downloadSession.getAllTasks { tasks in
+                cont.resume(returning: tasks.contains {
+                    $0.state != .completed && Self.parseTaskKey($0.taskDescription)?.id == itemId
+                })
+            }
+        }
+    }
+
+    /// Installed once: background hands every waiting book over; becoming active and a
+    /// restored connection let the queue continue.
+    private func installQueueObserversIfNeeded() {
+        guard !queueObserversInstalled else { return }
+        queueObserversInstalled = true
+        let center = NotificationCenter.default
+        // Observers live as long as the process (the manager is a singleton), so the tokens are dropped.
+        _ = center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { DownloadManager.shared.advanceQueue(inBackground: true) }
+        }
+        _ = center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { DownloadManager.shared.advanceQueue() }
+        }
+        NetworkMonitor.shared.addConnectivityRestoredObserver {
+            Task { @MainActor in DownloadManager.shared.advanceQueue() }
+        }
+        // Batch 497: moving from mobile data onto Wi-Fi releases automatic books held back by
+        // "Wi-Fi only" (hand-started ones already wait inside the session for Wi-Fi).
+        NetworkMonitor.shared.addWiFiGainedObserver {
+            Task { @MainActor in DownloadManager.shared.advanceQueue() }
+        }
+        // Batch 497 (REVIEW 2026-11-11 D2 follow-up): plugging the phone in releases waiting
+        // automatic books held back by "charging only". The app already turns battery monitoring
+        // on at launch (ShelfHeadApp), which the notification requires.
+        DownloadManager.shared.lastBatteryState = UIDevice.current.batteryState
+        _ = center.addObserver(forName: UIDevice.batteryStateDidChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let state = UIDevice.current.batteryState
+                let previous = DownloadManager.shared.lastBatteryState
+                DownloadManager.shared.lastBatteryState = state
+                if DownloadQueuePlan.batteryChangeWarrantsAdvance(
+                    from: previous, to: state, chargingOnly: SettingsStore.downloadWhileChargingOnly) {
+                    DownloadManager.shared.advanceQueue()
+                }
+            }
+        }
     }
 
     // MARK: Bulk download (library multi-select)
@@ -786,6 +1150,13 @@ final class DownloadManager {
     /// Bytes available on the downloads volume, or nil when it can't be read (the planner
     /// then fails open, like `hasSpaceAvailable`).
     func availableBytes() -> Int64? {
+        volumeAvailableBytes()
+    }
+
+    /// Batch 496 (REVIEW 2026-11-11 D4): the same reading, callable off the main thread, for
+    /// Settings › Downloads' "Free on this iPhone" row. Displaying it to the person is the
+    /// disk-space required reason 85F4.1 (PrivacyInfo.xcprivacy).
+    nonisolated func volumeAvailableBytes() -> Int64? {
         guard let values = try? downloadsRoot().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
               let available = values.volumeAvailableCapacityForImportantUsage else { return nil }
         return available
@@ -895,6 +1266,13 @@ final class DownloadManager {
     /// an auto-download call is gated, cleared when one is allowed. In-memory only.
     private(set) var autoDownloadDeferral: AutoDownloadDeferral?
 
+    /// Batch 497: bumped after the cover cache is cleared, so Settings › Downloads › Storage
+    /// re-measures its cover-cache row, bar and free-space figure at once.
+    private(set) var coverCacheRevision = 0
+    /// Batch 497: last battery state seen by the queue's observer.
+    fileprivate var lastBatteryState: UIDevice.BatteryState = .unknown
+    func noteCoverCacheCleared() { coverCacheRevision += 1 }
+
     /// Polish pass (DL-3): what the Downloads screen should say, re-checked against the
     /// live gates so a line recorded on cellular disappears once Wi-Fi is back, even
     /// before the next auto-download pass runs.
@@ -953,6 +1331,14 @@ final class DownloadManager {
         guard let task = activeDownloads[itemId], !task.isPaused else { return }
         withCacheLock { _ = cellularOverrideIds.insert(itemId) }
         task.cellularOverride = true
+        // Batch 496 (REVIEW 2026-11-11 D2): a waiting book was asked for now, so it starts now,
+        // over the queue's limit, with mobile data allowed from its first request.
+        if task.isQueued {
+            downloadQueue = DownloadQueuePlan.movedToFront(itemId, in: queueEntries()).map(\.id)
+            startQueuedBook(itemId: itemId)
+            saveQueue()
+            return
+        }
         downloadSession.getAllTasks { tasks in
             for t in tasks where Self.parseTaskKey(t.taskDescription)?.id == itemId { t.cancel() }
             Task { @MainActor in
@@ -1023,10 +1409,17 @@ final class DownloadManager {
     }
 
     /// Pause an in-flight download, capturing resume data so it can continue later.
-    func pauseDownload(itemId: String) {
+    func pauseDownload(itemId: String, advancesQueue: Bool = true) {
         guard let task = activeDownloads[itemId], !task.isPaused else { return }
         task.isPaused = true
         markPaused(itemId, true)   // survive relaunch
+        // Batch 496 (REVIEW 2026-11-11 D2): a waiting book has no session tasks to cancel; it
+        // just stops waiting. A transferring one frees its slot for the next book.
+        let wasQueued = task.isQueued
+        task.isQueued = false
+        saveQueue()
+        if advancesQueue { advanceQueue() }
+        if wasQueued { return }
         downloadSession.getTasksWithCompletionHandler { _, _, downloadTasks in
             for dt in downloadTasks {
                 guard let info = Self.parseTaskKey(dt.taskDescription), info.id == itemId else { continue }
@@ -1046,9 +1439,35 @@ final class DownloadManager {
 
     /// Resume a paused download, continuing each incomplete track from its resume data
     /// (or restarting it from the original URL if none was produced).
-    func resumeDownload(itemId: String) {
+    func resumeDownload(itemId: String, advancesQueue: Bool = true) {
         guard let task = activeDownloads[itemId], task.isPaused else { return }
+        // Batch 496 (REVIEW 2026-11-11 D2): Resume puts the book back in the queue at its place;
+        // it continues (`startQueuedBook`) when a slot is free. The paused mark and resume blobs
+        // stay until then, so a relaunch in between still continues from them.
         task.isPaused = false
+        task.isQueued = true
+        saveQueue()
+        if advancesQueue { advanceQueue() }
+    }
+
+    /// Batch 496 (D2): whether a book that has already transferred something can continue from
+    /// its resume blobs / track URLs alone. False sends it back through `enqueueDownload`,
+    /// which refetches the item and skips the tracks already on disk.
+    private func canContinueFromSavedState(itemId: String) -> Bool {
+        guard let manifest = manifest(for: itemId) else { return false }
+        for idx in manifest.tracks.indices {
+            if fileManager.fileExists(atPath: trackFileURL(itemId: itemId, trackIndex: idx).path) { continue }
+            let key = "\(itemId)|\(idx)"
+            let hasBlob = Self.shouldUseResumeBlob(withCacheLock { pausedResumeData[key] })
+            let hasURL = withCacheLock { trackURLs[key] } != nil
+            if !hasBlob && !hasURL { return false }
+        }
+        return true
+    }
+
+    /// The pre-Batch 496 body of `resumeDownload`: continues each incomplete track from its
+    /// resume data (or restarts it from the original URL if none was produced).
+    private func continueFromSavedState(itemId: String) {
         markPaused(itemId, false)
         deletePersistedPausedResume(forItem: itemId)   // consumed on resume
         guard let manifest = manifest(for: itemId) else { return }
@@ -1080,7 +1499,15 @@ final class DownloadManager {
         }
     }
 
-    func removeDownload(itemId: String, userInitiated: Bool = true) {
+    /// Batch 496 (REVIEW 2026-11-11 D5): the Downloads page's multi-select Remove. One storage
+    /// walk at the end instead of one per book.
+    func removeDownloads(itemIds: [String]) {
+        guard !itemIds.isEmpty else { return }
+        for itemId in itemIds { removeDownload(itemId: itemId, userInitiated: true, refreshesStorage: false) }
+        refreshStorageUsed(force: true)
+    }
+
+    func removeDownload(itemId: String, userInitiated: Bool = true, refreshesStorage: Bool = true) {
         // Review Low (removing the playing book, 30 October 2026): the player reads this
         // book's files, so stop it first (the same public `stop()` the account paths use)
         // rather than delete files under it. Only when it is playing from local files.
@@ -1113,7 +1540,7 @@ final class DownloadManager {
         // of when the last screen-appearance walk ran, so the freed bytes and this
         // item's dropped `itemStorageBytes` entry are reflected promptly rather than
         // possibly waiting out the throttle.
-        refreshStorageUsed(force: true)
+        if refreshesStorage { refreshStorageUsed(force: true) }
     }
 
     /// ARCH-5: previously iterated only `downloadedItems`, so any directory this
@@ -1579,6 +2006,13 @@ final class DownloadManager {
         for itemId in Array(activeDownloads.keys) {
             cancelDownload(itemId: itemId)
         }
+        // Batch 496 (REVIEW 2026-11-11 D2): the waiting books go too, so signing back in to
+        // this account doesn't quietly start what this cancelled. Keyed by the scope the queue
+        // was loaded for: the account-change caller runs after the active scope has moved on.
+        if let scope = queueLoadedScope {
+            UserDefaults.standard.removeObject(forKey: Self.downloadQueueKey(scope: scope))
+        }
+        downloadQueue = []
     }
 
     /// Cached total bytes used by all downloaded audio (kept current by `refreshStorageUsed()`).
@@ -2465,16 +2899,83 @@ final class DownloadManager {
             // the main actor (inherited from `DownloadManager`'s `@MainActor`), same as
             // `AudioPlayerService` — same-actor access doesn't require hopping.
             let playingId = AudioPlayerService.shared.currentItemId
-            let finished = Array(downloadedItems).filter {
-                serverProgress[$0]?.isFinished == true && $0 != playingId
-            }
-            // Fix 9 (REVIEW-2026-09-09.md): was `await MainActor.run { }`, another no-op
-            // hop — `reconcile` is main-actor isolated already (see the comment just
-            // above about `AudioPlayerService`), so the wrapper only added a suspension
-            // point in the middle of a deletion loop and suggested, wrongly, that the
-            // surrounding sweep runs somewhere else.
-            for itemId in finished { removeDownload(itemId: itemId, userInitiated: false) }
+            // Batch 495 (REVIEW 2026-11-11 D6): was an immediate `removeDownload` per book, with
+            // no word to the listener. Now the books wait behind an Undo toast and are removed
+            // when it goes (`commitPendingAutoDelete`); a book kept with Undo is skipped.
+            let prunedKept = AutoDeletePlan.prunedKept(autoDeleteKept,
+                                                       finishedById: serverProgress.compactMapValues(\.isFinished))
+            if prunedKept != autoDeleteKept { autoDeleteKept = prunedKept; saveAutoDeleteKept() }
+            let finished = AutoDeletePlan.candidates(
+                downloaded: downloadedItems,
+                serverFinished: Set(serverProgress.filter { $0.value.isFinished == true }.keys),
+                playingId: playingId, kept: autoDeleteKept,
+                alreadyPending: Set(pendingAutoDelete.map(\.id)))
+            scheduleAutoDelete(finished)
         }
+    }
+
+    // MARK: - Auto-delete finished, with Undo (Batch 495, REVIEW 2026-11-11 D6)
+
+    private func scheduleAutoDelete(_ itemIds: [String]) {
+        guard !itemIds.isEmpty else { return }
+        let scope = currentScopeKey()
+        if pendingAutoDeleteScope != scope { pendingAutoDelete = [] }
+        pendingAutoDeleteScope = scope
+        pendingAutoDelete += itemIds.map { (id: $0, title: manifest(for: $0)?.title ?? "") }
+        autoDeleteUndoMessage = AutoDeletePlan.message(titles: pendingAutoDelete.map(\.title))
+        autoDeleteFallbackTask?.cancel()
+        autoDeleteFallbackTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(AutoDeletePlan.fallbackDelay))
+            guard !Task.isCancelled else { return }
+            self?.commitPendingAutoDelete()
+        }
+    }
+
+    /// The toast's Undo: keep every pending book, now and on later refreshes.
+    func undoPendingAutoDelete() {
+        autoDeleteKept.formUnion(pendingAutoDelete.map(\.id))
+        saveAutoDeleteKept()
+        clearPendingAutoDelete()
+    }
+
+    /// Drops one book from the pending removal without keeping it, for an undone Mark as
+    /// Finished: it isn't finished any more, so the next refresh wouldn't pick it.
+    func cancelPendingAutoDelete(itemId: String) {
+        guard pendingAutoDelete.contains(where: { $0.id == itemId }) else { return }
+        pendingAutoDelete.removeAll { $0.id == itemId }
+        if pendingAutoDelete.isEmpty {
+            clearPendingAutoDelete()
+        } else {
+            autoDeleteUndoMessage = AutoDeletePlan.message(titles: pendingAutoDelete.map(\.title))
+        }
+    }
+
+    private func clearPendingAutoDelete() {
+        pendingAutoDelete = []
+        pendingAutoDeleteScope = nil
+        autoDeleteFallbackTask?.cancel()
+        autoDeleteFallbackTask = nil
+        autoDeleteUndoMessage = nil   // its didSet then finds nothing to commit
+    }
+
+    private func commitPendingAutoDelete() {
+        let items = pendingAutoDelete
+        let scope = pendingAutoDeleteScope
+        pendingAutoDelete = []
+        pendingAutoDeleteScope = nil
+        autoDeleteFallbackTask?.cancel()
+        autoDeleteFallbackTask = nil
+        if autoDeleteUndoMessage != nil { autoDeleteUndoMessage = nil }
+        // An account switch in the window: leave that account's files for its next refresh.
+        guard !items.isEmpty, scope == currentScopeKey() else { return }
+        let playingId = AudioPlayerService.shared.currentItemId
+        for item in items where downloadedItems.contains(item.id) && item.id != playingId {
+            removeDownload(itemId: item.id, userInitiated: false)
+        }
+    }
+
+    private func saveAutoDeleteKept() {
+        UserDefaults.standard.set(Array(autoDeleteKept), forKey: Self.autoDeleteKeptDefaultsKey)
     }
 
     /// Polish pass (DL-6): conflicts the user answered "Ask Me Later", keyed by item id,
@@ -2632,11 +3133,14 @@ final class DownloadManager {
     /// `Task { await self.enqueueDownload(item, runId: runId) }` back to
     /// `Task.detached { await self.enqueueDownload(item) }`. The `assert` stays either way.
     @concurrent
-    private nonisolated func enqueueDownload(_ item: LibraryItem, runId: UUID) async {
+    private nonisolated func enqueueDownload(itemId: String, title: String, runId: UUID) async {
         #if DEBUG
         assert(!Thread.isMainThread,
                "enqueueDownload must run off the main actor — it's marked @concurrent and started from downloadBook; if this fires, that contract broke.")
         #endif
+        // Batch 496 (D2): takes the id and title rather than a `LibraryItem`, because a book the
+        // queue restored after a relaunch has only those. The body below used nothing else.
+        let item = (id: itemId, title: title)
         guard AuthStore.shared.isConfigured else {
             await MainActor.run {
                 // Review 3 Low (enqueue runId): only the live run may drop the row.
@@ -2775,7 +3279,11 @@ final class DownloadManager {
             // the one dependency in this now-`nonisolated` function that actually
             // needs a hop. Hoisted once here, outside the loop, instead of per
             // iteration: one real hop per download start, not one per track.
-            let session = await MainActor.run { downloadSession }
+            // Batch 496 (D2): also read whether the listener paused the book while it was
+            // starting; the pause found no tasks to cancel then, so none are created now.
+            let (session, pausedWhileStarting) = await MainActor.run {
+                (downloadSession, activeDownloads[item.id]?.isPaused == true)
+            }
             // Review Medium 27: re-check after the hop, and undo what was written above if
             // the user cancelled in the meantime (cancel's own cleanup may already have run).
             guard await downloadStillWanted(itemId: item.id, runId: runId) else {
@@ -2802,6 +3310,7 @@ final class DownloadManager {
                       let url = URL(string: "\(serverURL)/api/items/\(strictPathComponentEncode(item.id))/file/\(strictPathComponentEncode(ino))/download") else { continue }
                 let key = "\(item.id)|\(index)"
                 withCacheLock { trackURLs[key] = url }
+                if pausedWhileStarting { continue }   // Batch 496 (D2): Resume starts it from `trackURLs`
                 var request = AuthStore.shared.authorizedRequest(url: url)
                 // The session-level `allowsCellularAccess` was previously always true —
                 // "Download on Wi-Fi only" was only checked once at enqueue time, so a
@@ -3418,7 +3927,7 @@ final class DownloadManager {
             // app was relaunched in between). One stat, once per completed download.
             refreshLocalCoverPresence(itemId: itemId)
             // Opt-in "download complete" notification (no-op unless enabled + authorized).
-            NotificationManager.notifyDownloadComplete(title: manifest.title)
+            NotificationManager.notifyDownloadComplete(title: manifest.title, itemId: itemId)
             // Give this item's row an immediate size rather than waiting for
             // `refreshStorageUsed()`'s full (`.detached`, async) walk over every
             // downloaded item to land — scoped to just the directory that changed, so
@@ -3495,9 +4004,14 @@ final class DownloadManager {
             pausedItemsKey(scope: scope),
             failedDownloadsKey(scope: scope),
             userRemovedItemsKey(scope: scope),
-            applicationSupportMigrationKey(scope: scope)
+            applicationSupportMigrationKey(scope: scope),
+            downloadQueueKey(scope: scope)
         ]
     }
+
+    /// Batch 496 (REVIEW 2026-11-11 D2): the download queue's order and per-book flags
+    /// (`[DownloadQueueRecord]` as JSON), so it survives a relaunch.
+    nonisolated static func downloadQueueKey(scope: String) -> String { "shelfhead_downloadQueue.\(scope)" }
 
     nonisolated static func downloadedItemsKey(scope: String) -> String { "shelfhead_downloadedItems.\(scope)" }
     nonisolated static func pausedItemsKey(scope: String) -> String { "shelfhead_pausedDownloads.\(scope)" }
@@ -3818,6 +4332,9 @@ final class DownloadManager {
         // installs" reasoning as the backup exclusion just above, but for file
         // protection instead of iCloud backup.
         protectDownloadedFile(at: downloadsRoot())
+        // Batch 496 (D2): the queue is rebuilt for the new scope once adoption finishes.
+        queueRestored = false
+        downloadQueue = []
         activeDownloads.removeAll()
         completedTracksCache.removeAll()
         lastProgressPublishAt.removeAll()
@@ -3837,6 +4354,7 @@ final class DownloadManager {
         // completion too, so it accounts for disk state *after* the sweep runs
         // rather than possibly-mid-sweep.
         adoptInFlightDownloads(generation: generation) { [weak self] liveTaskItemIds in
+            self?.restoreQueue(liveTaskItemIds: liveTaskItemIds)   // Batch 496 (D2)
             self?.sweepOrphanedDownloadDirectories(additionallyExcluding: liveTaskItemIds)
             // The scope just changed (or the sweep just deleted orphans) — force past
             // the throttle so this account's real totals replace the previous scope's
@@ -4209,6 +4727,18 @@ final class DownloadTask: Identifiable {
     /// `downloadedItems` membership, which covers a sibling failure arriving after this
     /// task has already been dropped) before deleting anything.
     var isRepair = false
+    /// Batch 496 (REVIEW 2026-11-11 D2): waiting in the download queue for a free slot (no
+    /// session tasks yet). A separate flag rather than a state enum so every existing reader
+    /// of `isPaused` keeps compiling; a queued book is neither paused nor transferring.
+    var isQueued = false
+    /// Batch 496 (D2): its first start (`enqueueDownload`) has already run, so a later
+    /// admission continues from resume data / the files already on disk.
+    @ObservationIgnored var hasStarted = false
+    /// Batch 496 (D2): started by auto-download, so it queues behind books started by hand.
+    @ObservationIgnored var isAutomatic = false
+    /// Batch 496 (D2): the in-flight first start, so a quick pause-then-resume waits for it
+    /// instead of starting a second one alongside.
+    @ObservationIgnored var startTask: Task<Void, Never>?
     /// Review 2 Low (cancel-then-restart, 30 October 2026): unique per start, so async work
     /// begun for one start can tell it from a cancel-then-restart of the same book.
     let runId = UUID()
@@ -4325,6 +4855,190 @@ struct BulkDownloadPlan: Equatable {
     }
 }
 
+
+/// Batch 495 (REVIEW 2026-11-11 D6): the pure half of "Auto-delete finished downloads". Pinned by
+/// `Batch495DownloadsAutoDeleteTests`.
+nonisolated enum AutoDeletePlan {
+    /// How long the Undo toast stays up (`MainTabView`); the files go when it does.
+    static let undoWindow: Double = 8
+    /// The removal happens anyway this long after it was scheduled if the toast never cleared
+    /// (no screen showed it). Generous, so VoiceOver's persistent toast isn't cut short.
+    static let fallbackDelay: Double = 120
+
+    /// Downloaded books the server says are finished, minus the one playing, books kept with
+    /// Undo, and books already waiting. Sorted so the toast's order is stable.
+    static func candidates(downloaded: Set<String>, serverFinished: Set<String>, playingId: String?,
+                           kept: Set<String>, alreadyPending: Set<String>) -> [String] {
+        downloaded.intersection(serverFinished)
+            .subtracting(kept)
+            .subtracting(alreadyPending)
+            .filter { $0 != playingId }
+            .sorted()
+    }
+
+    /// Forgets a kept book once the server says it isn't finished any more (it's being listened
+    /// to again), so finishing it next time removes it as usual. Books the server didn't report
+    /// on (another account's, or no progress row) stay kept.
+    static func prunedKept(_ kept: Set<String>, finishedById: [String: Bool]) -> Set<String> {
+        kept.filter { finishedById[$0] != false }
+    }
+
+    /// The toast text, or nil when there's nothing pending.
+    static func message(titles: [String]) -> String? {
+        guard !titles.isEmpty else { return nil }
+        if titles.count == 1 {
+            let title = titles[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            if title.isEmpty {
+                return String(localized: "Removing 1 finished download.", comment: "Auto-delete toast, one book with no known title")
+            }
+            return String(localized: "Removing the finished download of \u{201C}\(title)\u{201D}.",
+                          comment: "Auto-delete toast with an Undo button. %@ is the book title.")
+        }
+        let count = titles.count.formatted()
+        return String(localized: "Removing \(count) finished downloads.",
+                      comment: "Auto-delete toast with an Undo button. %@ is a number of books (2 or more).")
+    }
+}
+
+/// Batch 496 (REVIEW 2026-11-11 D2): one book in the persisted download queue
+/// (`DownloadManager.downloadQueueKey`). Enough to show and restart a waiting book after a
+/// relaunch, when it may have no manifest yet.
+nonisolated struct DownloadQueueRecord: Codable, Equatable {
+    let itemId: String
+    var title: String
+    var sizeBytes: Int64
+    /// Started by auto-download (queues behind hand-started books).
+    var automatic: Bool
+    var paused: Bool
+    /// Its first start ran, so tracks may already be on disk.
+    var started: Bool
+}
+
+/// Batch 496 (REVIEW 2026-11-11 D2): the pure decisions behind the download queue, pinned by
+/// `Batch496DownloadsQueueTests`. A book is "running" when it is neither waiting nor paused.
+nonisolated enum DownloadQueuePlan {
+    /// Books transferring at once while the app is in the foreground. Two keeps one large book
+    /// from holding up everything behind it without splitting the connection many ways.
+    static let maxConcurrentBooks = 2
+
+    /// Batch 497: whether a battery-state change should try to admit waiting books: only when
+    /// "charging only" is on and the phone went from not charging to charging or full.
+    static func batteryChangeWarrantsAdvance(from previous: UIDevice.BatteryState, to current: UIDevice.BatteryState,
+                                             chargingOnly: Bool) -> Bool {
+        guard chargingOnly else { return false }
+        let wasCharging = previous == .charging || previous == .full
+        let isCharging = current == .charging || current == .full
+        return isCharging && !wasCharging
+    }
+
+    struct Entry: Equatable {
+        let id: String
+        var isQueued: Bool
+        var isPaused: Bool
+        var hasStarted: Bool
+        var isAutomatic: Bool
+
+        init(id: String, isQueued: Bool, isPaused: Bool = false, hasStarted: Bool = false, isAutomatic: Bool = false) {
+            self.id = id
+            self.isQueued = isQueued
+            self.isPaused = isPaused
+            self.hasStarted = hasStarted
+            self.isAutomatic = isAutomatic
+        }
+
+        var isRunning: Bool { !isQueued && !isPaused }
+    }
+
+    /// Where a new book goes. An automatic book goes to the end; a hand-started one goes ahead
+    /// of the first automatic book that hasn't started transferring (waiting or paused), so
+    /// auto-downloads never hold up something the listener asked for.
+    static func insertionIndex(automatic: Bool, queue: [Entry]) -> Int {
+        guard !automatic else { return queue.count }
+        return queue.firstIndex { $0.isAutomatic && !$0.isRunning } ?? queue.count
+    }
+
+    /// Download Next: the book moves to just before the first waiting book. Running and paused
+    /// books keep their places.
+    static func movedToFront(_ id: String, in queue: [Entry]) -> [Entry] {
+        guard let from = queue.firstIndex(where: { $0.id == id }) else { return queue }
+        var result = queue
+        let entry = result.remove(at: from)
+        let to = result.firstIndex { $0.isQueued } ?? result.count
+        result.insert(entry, at: min(to, from))
+        return result
+    }
+
+    /// Waiting books to start now, in queue order. `limit` nil means no limit (the app is in
+    /// the background). Offline, a book that has never started is left waiting: its first step
+    /// is fetching the item from the server, which would only fail. An automatic book that has
+    /// never started also waits while the auto-download policy (Wi-Fi only, charging only)
+    /// says no, exactly as it would have been held back before it joined the queue.
+    static func booksToStart(_ queue: [Entry], limit: Int?, isConnected: Bool,
+                             automaticAllowed: Bool = true) -> [String] {
+        let running = queue.filter(\.isRunning).count
+        var slots = limit.map { max(0, $0 - running) } ?? Int.max
+        var result: [String] = []
+        for entry in queue where entry.isQueued && slots > 0 {
+            if !isConnected && !entry.hasStarted { continue }
+            if !automaticAllowed && entry.isAutomatic && !entry.hasStarted { continue }
+            result.append(entry.id)
+            slots -= 1
+        }
+        return result
+    }
+
+    /// 1-based place among the waiting books, or nil when the book isn't waiting.
+    static func waitingPosition(of id: String, in queue: [Entry]) -> Int? {
+        let waiting = queue.filter(\.isQueued)
+        return waiting.firstIndex { $0.id == id }.map { $0 + 1 }
+    }
+
+    /// "Queued · 3rd", the row status for a waiting book.
+    static func queuedLabel(position: Int, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .ordinal
+        let ordinal = formatter.string(from: NSNumber(value: position)) ?? position.formatted()
+        return String(localized: "Queued \u{00B7} \(ordinal)",
+                      comment: "Download row status for a book waiting its turn. %@ is its place in the queue as an ordinal, e.g. 3rd.")
+    }
+
+    /// The queue after `activeDownloads` changed: ids no longer tracked go, tracked ids the
+    /// queue didn't know are appended in the order given.
+    static func syncedOrder(_ order: [String], tracked: [String]) -> [String] {
+        let trackedSet = Set(tracked)
+        var seen = Set<String>()
+        var result: [String] = []
+        for id in order where trackedSet.contains(id) && seen.insert(id).inserted { result.append(id) }
+        for id in tracked where seen.insert(id).inserted { result.append(id) }
+        return result
+    }
+
+    /// After a relaunch: books the saved queue doesn't name (already transferring before it
+    /// was saved, or from a build without the queue) first, then the saved order.
+    static func restoredOrder(saved: [String], untracked: [String]) -> [String] {
+        syncedOrder(untracked + saved, tracked: untracked + saved)
+    }
+
+    enum RestoreAction: Equatable {
+        /// Finished, failed or now a repair: not part of the queue any more.
+        case drop
+        /// Already rebuilt (paused restore or in-flight adoption). `requeue` puts a book that
+        /// was waiting to continue (resumed, but not yet started again) back in line.
+        case keep(requeue: Bool)
+        /// Only the record knows it: recreate it as waiting, or paused.
+        case create(paused: Bool)
+    }
+
+    static func restoreAction(record: DownloadQueueRecord, isDownloaded: Bool, isFailed: Bool,
+                              existing: (isPaused: Bool, isRepair: Bool)?, hasLiveTasks: Bool) -> RestoreAction {
+        if isDownloaded || isFailed { return .drop }
+        guard let existing else { return .create(paused: record.paused) }
+        if existing.isRepair { return .drop }
+        if existing.isPaused && !record.paused && !hasLiveTasks { return .keep(requeue: true) }
+        return .keep(requeue: false)
+    }
+}
 
 extension Notification.Name {
     /// Review 3 Medium 6: posted when a download whose files are playing is removed.

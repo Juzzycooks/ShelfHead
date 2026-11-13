@@ -33,6 +33,9 @@ enum SettingsPage: Hashable, CaseIterable {
     case kids
     /// Batch 492 (N1/N2): the opt-in Audible release check, moved out of System & Privacy.
     case releaseRadar
+    /// Batch 496 (REVIEW 2026-11-11 W13): what the Watch does and whether this account is
+    /// set up on it (`AppleWatchSettingsSection`). On the root only with a Watch paired.
+    case appleWatch
 
     /// Critique 2026-10-06 (clarify): the destination page's own navigation title, shown as
     /// each search result's subtitle so a result says where it leads before it's tapped.
@@ -54,6 +57,7 @@ enum SettingsPage: Hashable, CaseIterable {
         case .serverTools: return String(localized: "Server Tools", comment: "Settings page title: server backups, Library Doctor and Upload")
         case .kids: return String(localized: "Kids & Profiles", comment: "Settings page title: child accounts and the profile picker")
         case .releaseRadar: return String(localized: "Release Radar", comment: "Settings page title: opt-in check for upcoming books in your series")
+        case .appleWatch: return String(localized: "Apple Watch", comment: "Settings page title: the ShelfHead Watch app, what it can do and whether it is signed in")
         }
     }
 
@@ -140,6 +144,10 @@ enum SettingsRow {
     static let classicNowPlaying = "system.classicNowPlaying"
     static let iCloudPositions = "system.iCloudPositions"
     static let dailyReminder = "system.dailyReminder"
+    // Batch 495 (REVIEW 2026-11-11 Y1): System & Privacy › Notifications holds every notification switch.
+    static let notifyDownloadComplete = "system.notifyDownloadComplete"
+    static let releaseReminders = "system.releaseReminders"
+    static let householdNotifications = "system.householdNotifications"
     static let securityLink = "system.securityLink"
     // Batch 492 (N2): Export/Import Settings moved here from Account & Security.
     static let exportSettings = "system.exportSettings"
@@ -152,7 +160,8 @@ enum SettingsRow {
     static let imageCache = "downloads.imageCache"
     // Batch 490 (REVIEW 2026-11-11 N3)
     static let chargingOnly = "downloads.chargingOnly"
-    static let notifyDownloadComplete = "downloads.notifyComplete"
+    // Batch 495 (REVIEW 2026-11-11 D6): the series turned on for auto-download.
+    static let seriesAutoDownload = "downloads.seriesAutoDownload"
     static let storage = "downloads.storage"
 
     // Diagnostics
@@ -188,6 +197,10 @@ enum SettingsRow {
     // Batch 493 (REVIEW 2026-11-11 N3): auto-chapters and Year in Review, the last Phase 1–3 features without a row.
     static let featureAutoChapters = "features.autoChapters"
     static let featureYearInReview = "features.yearInReview"
+
+    // Apple Watch (Batch 496, REVIEW 2026-11-11 W13)
+    static let watchStatus = "appleWatch.status"
+    static let watchCapabilities = "appleWatch.capabilities"
 }
 
 /// One row per setting a user might search for, across all pages. Deliberately flat
@@ -213,6 +226,8 @@ struct SettingsSearchEntry: Equatable, Identifiable {
         case inHousehold
         /// `TranscriptsSettingsView` hides everything but its first row below iOS 26.
         case transcriptsSupported
+        /// Batch 496 (W13): Settings › Apple Watch is only on the root with a Watch paired.
+        case watchPaired
     }
 
     /// Batch 490 (REVIEW 2026-11-11 N3): the live state the conditions read. Every flag
@@ -225,6 +240,7 @@ struct SettingsSearchEntry: Equatable, Identifiable {
         var isAdmin: Bool = true
         var isInHousehold: Bool = true
         var transcriptsSupported: Bool = true
+        var hasPairedWatch: Bool = true
     }
 
     let title: String
@@ -274,6 +290,7 @@ struct SettingsSearchEntry: Equatable, Identifiable {
         case .isAdmin: return state.isAdmin
         case .inHousehold: return state.isInHousehold
         case .transcriptsSupported: return state.transcriptsSupported
+        case .watchPaired: return state.hasPairedWatch
         }
     }
 }
@@ -391,6 +408,10 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: classicLockScreenTitle, keywords: ["lock screen", "now playing", "control center", "dynamic island", "carplay", "classic"], localizedKeywords: String(localized: "lock screen, now playing, control center, dynamic island, carplay, classic", comment: "Settings search keywords for 'Classic Lock Screen controls', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.classicNowPlaying),
         SettingsSearchEntry(title: String(localized: "Sync positions with iCloud"), keywords: ["icloud", "cloud", "position sync", "sync positions"], localizedKeywords: String(localized: "icloud, cloud, position sync, sync positions", comment: "Settings search keywords for 'Sync positions with iCloud', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.iCloudPositions),
         SettingsSearchEntry(title: String(localized: "Daily reminder"), keywords: ["reminder", "notification", "daily"], localizedKeywords: String(localized: "reminder, notification, daily", comment: "Settings search keywords for 'Daily reminder', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.dailyReminder),
+        // Batch 495 (REVIEW 2026-11-11 Y1): moved from Downloads with its switch; two new switches beside it.
+        SettingsSearchEntry(title: String(localized: "Download complete notification"), keywords: ["notification", "download complete"], localizedKeywords: String(localized: "notification, download complete", comment: "Settings search keywords for 'Download complete notification', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.notifyDownloadComplete),
+        SettingsSearchEntry(title: String(localized: "Release-day reminders"), keywords: ["notification", "release day", "release radar"], localizedKeywords: String(localized: "notification, release day, release radar", comment: "Settings search keywords for 'Release-day reminders', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.releaseReminders),
+        SettingsSearchEntry(title: String(localized: "Household recommendations"), keywords: ["notification", "household", "recommendation"], localizedKeywords: String(localized: "notification, household, recommendation", comment: "Settings search keywords for 'Household recommendations', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .systemPrivacy, row: SettingsRow.householdNotifications, condition: .inHousehold),
 
         // Downloads
         SettingsSearchEntry(title: String(localized: "Auto-download"), keywords: ["auto-download", "auto download", "continue listening"], localizedKeywords: String(localized: "auto-download, auto download, continue listening", comment: "Settings search keywords for 'Auto-download', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.autoDownload),
@@ -400,12 +421,14 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Clear cover cache"), keywords: ["cache", "storage", "clear", "covers", "artwork", "images"], localizedKeywords: String(localized: "cache, storage, clear, covers, artwork, images", comment: "Settings search keywords for 'Clear cover cache', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.imageCache),
         // Batch 490 (REVIEW 2026-11-11 N3)
         SettingsSearchEntry(title: String(localized: "Auto-download only while charging"), keywords: ["charging", "charger", "power", "plugged in", "battery"], localizedKeywords: String(localized: "charging, charger, power, plugged in, battery", comment: "Settings search keywords for 'Auto-download only while charging', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.chargingOnly),
-        SettingsSearchEntry(title: String(localized: "Download complete notification"), keywords: ["notification", "download complete"], localizedKeywords: String(localized: "notification, download complete", comment: "Settings search keywords for 'Download complete notification', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.notifyDownloadComplete),
+        // Batch 495 (REVIEW 2026-11-11 D6)
+        SettingsSearchEntry(title: String(localized: "Auto-download series"), keywords: ["series", "auto-download series", "new in series"], localizedKeywords: String(localized: "series, auto-download series, new in series", comment: "Settings search keywords for 'Auto-download series', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.seriesAutoDownload),
         // Stage 3 (REDESIGN_PROPOSAL_2026-08-26.md §2.1): the management half of the
         // old Downloads tab. Critique 2026-10-06 (distill): transfers and the book list
         // live on the Downloads page now; these land on Settings > Downloads' link to it.
         SettingsSearchEntry(title: String(localized: "Active & failed downloads"), keywords: ["downloading", "failed", "retry", "in progress", "downloaded", "offline"], localizedKeywords: String(localized: "downloading, failed, retry, in progress, downloaded, offline", comment: "Settings search keywords for 'Active & failed downloads', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.downloadedBooksLink),
-        SettingsSearchEntry(title: String(localized: "Storage used by downloads"), keywords: ["storage", "space", "remove all downloads", "downloaded", "offline"], localizedKeywords: String(localized: "storage, space, remove all downloads, downloaded, offline", comment: "Settings search keywords for 'Storage used by downloads', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.storage),
+        // Batch 497: the Storage section now shows this account's downloads, other accounts, transcripts and ebooks, the cover cache and free space.
+        SettingsSearchEntry(title: String(localized: "Storage"), keywords: ["storage", "space", "free space", "free on this iphone", "cover cache", "transcripts", "ebooks", "other accounts", "signed-out servers", "remove all downloads", "downloaded", "offline"], localizedKeywords: String(localized: "storage, space, free space, free on this iPhone, cover cache, transcripts, ebooks, other accounts, signed-out servers, remove all downloads, downloaded, offline", comment: "Settings search keywords for 'Storage', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.storage),
         // T3 (REVIEW_2026-09-04_UI.md)
         SettingsSearchEntry(title: String(localized: "Downloaded books"), keywords: ["downloaded books", "what's downloaded", "offline books", "on this device", "downloaded", "offline"], localizedKeywords: String(localized: "downloaded books, what's downloaded, offline books, on this device, downloaded, offline", comment: "Settings search keywords for 'Downloaded books', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .downloads, row: SettingsRow.downloadedBooksLink),
 
@@ -417,6 +440,9 @@ enum SettingsSearchIndex {
         SettingsSearchEntry(title: String(localized: "Library Doctor"), keywords: ["doctor", "duplicates", "missing cover", "series", "chapters", "metadata", "fix"], localizedKeywords: String(localized: "doctor, duplicates, missing cover, series, chapters, metadata, fix", comment: "Settings search keywords for 'Library Doctor', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .serverTools, row: SettingsRow.libraryDoctor, condition: .canUpdateLibrary),
         SettingsSearchEntry(title: String(localized: "Upload"), keywords: ["upload", "add book", "import", "epub", "m4b", "audiobook"], localizedKeywords: String(localized: "upload, add book, import, epub, m4b, audiobook", comment: "Settings search keywords for 'Upload', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .serverTools, row: SettingsRow.upload, condition: .canUpload),
         SettingsSearchEntry(title: String(localized: "Release Radar"), keywords: ["release radar", "upcoming", "new releases", "audible", "series", "reminder"], localizedKeywords: String(localized: "release radar, upcoming, new releases, audible, series, reminder", comment: "Settings search keywords for 'Release Radar', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .releaseRadar, row: SettingsRow.releaseRadar),
+        // Batch 496 (REVIEW 2026-11-11 W13): Settings › Apple Watch, only with a Watch paired.
+        SettingsSearchEntry(title: String(localized: "Set up Apple Watch"), keywords: ["watch", "apple watch", "set up watch", "watch sign in", "sign in on watch", "send sign-in"], localizedKeywords: String(localized: "watch, apple watch, set up watch, watch sign in, sign in on watch, send sign-in", comment: "Settings search keywords for 'Set up Apple Watch', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .appleWatch, row: SettingsRow.watchStatus, condition: .watchPaired),
+        SettingsSearchEntry(title: String(localized: "What the Watch can do"), keywords: ["watch", "standalone", "without iphone", "remote", "wrist", "run"], localizedKeywords: String(localized: "watch, standalone, without iphone, remote, wrist, run", comment: "Settings search keywords for 'What the Watch can do', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .appleWatch, row: SettingsRow.watchCapabilities, condition: .watchPaired),
 
         // Critique 2026-10-06 (clarify): Recent Changes is on the Settings root now.
         SettingsSearchEntry(title: String(localized: "Recent Changes"), keywords: ["recent changes", "undo", "history", "playback history", "changed position", "mark finished"], localizedKeywords: String(localized: "recent changes, undo, history, playback history, changed position, mark finished", comment: "Settings search keywords for 'Recent Changes', comma-separated. Translate each term and add common synonyms; keep commas between terms."), page: .recentChanges),

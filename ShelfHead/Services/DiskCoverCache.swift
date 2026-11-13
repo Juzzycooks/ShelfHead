@@ -51,6 +51,12 @@ nonisolated enum DiskCoverCache {
         try? Data(contentsOf: fileURL(for: url))
     }
 
+    /// Batch 496 (REVIEW 2026-11-11 Y6): read-only "is this cover cached" check (one stat, no
+    /// bytes read), so the Spotlight indexer can decide whether an item has a thumbnail source.
+    static func contains(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(for: url).path)
+    }
+
     static func store(_ data: Data, for url: URL) {
         try? data.write(to: fileURL(for: url), options: .atomic)
     }

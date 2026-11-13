@@ -60,6 +60,8 @@
 	</array>
 	<key>CKSharingSupported</key>
 	<true/>
+	<key>CoreSpotlightContinuation</key>
+	<true/>
 	<key>INIntentsSupported</key>
 	<array>
 		<string>INPlayMediaIntent</string>
@@ -138,5 +140,10 @@
 		<string>processing</string>
 		<string>remote-notification</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 </dict>
 </plist>

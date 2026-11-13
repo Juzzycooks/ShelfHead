@@ -139,7 +139,8 @@ struct SettingsView: View {
                 Text("Playback")
             } footer: {
                 Text(store.mode == .standalone
-                     ? "Change speed from Now Playing. Skip times are fixed on this Watch."
+                     // Batch 495 (W7): skip times follow the iPhone; speed is per book.
+                     ? "Skip times follow your iPhone. Speed changes from Now Playing and is kept for each book."
                      : "Set on your iPhone. Speed also changes from Now Playing.")
             }
 
@@ -217,7 +218,8 @@ struct SettingsView: View {
         // Critique 2026-10-06 (clarify): standalone used to show the iPhone's values,
         // which aren't what this Watch's own player uses.
         if store.mode == .standalone {
-            let back = Int(StandaloneAudioEngine.skipBackwardSeconds), fwd = Int(StandaloneAudioEngine.skipForwardSeconds)
+            // Batch 495 (REVIEW 2026-11-11 W7): the engine now uses the iPhone's intervals.
+            let back = Int(store.standalone.skipBackwardInterval), fwd = Int(store.standalone.skipForwardInterval)
             return back == fwd
                 ? String(localized: "\(back)s", comment: "Skip interval in seconds, like 15s")
                 : String(localized: "back \(back)s / fwd \(fwd)s", comment: "Skip intervals differ: %1$lld seconds back, %2$lld seconds forward")

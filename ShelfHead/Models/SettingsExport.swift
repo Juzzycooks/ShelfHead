@@ -139,10 +139,18 @@ enum SettingsExport {
         SettingsKeys.dailyReminderHour,
         SettingsKeys.dailyReminderMinute,
         SettingsKeys.notifyDownloadComplete,
+        // Batch 495 (Y1): the two newer notification switches. Both are plain on/off
+        // preferences; importing one never schedules or sends anything by itself.
+        SettingsKeys.releaseReminderNotifications,
+        SettingsKeys.householdRecommendationNotifications,
         SettingsKeys.shakeAction,
         SettingsKeys.smartSleepTimer,
         SettingsKeys.librarySortOption,
         SettingsKeys.librarySortDescending,
+        // Batch 496 (L8): the Series browse sort, direction and Hide finished.
+        SettingsKeys.seriesSortOption,
+        SettingsKeys.seriesSortDescending,
+        SettingsKeys.seriesHideFinished,
         SettingsKeys.libraryProgressFilter,
         SettingsKeys.dailyListeningGoalMinutes,
         SettingsKeys.autoSkipIntroOutro,
@@ -302,7 +310,8 @@ enum SettingsExport {
             if case .bool = value { return value }
             return nil
         case SettingsKeys.dailyReminder, SettingsKeys.appLockEnabled, SettingsKeys.wifiOnlyDownloads,
-             SettingsKeys.smartRewind, SettingsKeys.keepScreenAwake:
+             SettingsKeys.smartRewind, SettingsKeys.keepScreenAwake,
+             SettingsKeys.releaseReminderNotifications, SettingsKeys.householdRecommendationNotifications:
             if case .bool = value { return value }
             return nil
         default: return value

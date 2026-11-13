@@ -153,15 +153,36 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     /// `WatchJumpBack.visibleSeconds`. Lived on each mode's pager before Batch 410.
     @State private var jumpBack: WatchJumpBack?
     @State private var jumpBackExpiry: Task<Void, Never>?
+    /// Batch 497 (REVIEW 2026-11-11 W10): the scroll view's height inside its safe area,
+    /// once measured. Until then the layout works from the screen size.
+    @State private var measuredContainer: CGSize?
 
     /// Critique 2026-10-06 (adapt): sized from the screen, not fixed — 44 + 54 + 44 +
     /// 2 × 12 is wider than a 40 mm screen. See `WatchTransportLayout`.
+    /// Batch 497 (W10): the compact layout caps Play at the skip buttons' 44 pt.
     private var transportLayout: WatchTransportLayout {
-        WatchTransportLayout.forScreenWidth(WKInterfaceDevice.current().screenBounds.width)
+        var layout = WatchTransportLayout.forScreenWidth(WKInterfaceDevice.current().screenBounds.width)
+        if let cap = nowPlayingLayout.playSizeCap { layout.play = min(layout.play, cap) }
+        return layout
     }
 
-    private var headerLayout: WatchNowPlayingHeaderLayout {
-        WatchNowPlayingHeaderLayout.forAccessibilitySize(dynamicTypeSize.isAccessibilitySize)
+    /// Batch 497 (REVIEW 2026-11-11 W10): what the first screen sheds so the tool row
+    /// fits above the fold (`WatchNowPlayingLayout.decide`).
+    private var nowPlayingLayout: WatchNowPlayingLayout {
+        let container = measuredContainer
+            ?? WatchNowPlayingLayout.estimatedContainerSize(screen: WKInterfaceDevice.current().screenBounds.size)
+        return WatchNowPlayingLayout.decide(containerSize: container, dynamicTypeSize: dynamicTypeSize)
+    }
+
+    /// Batch 497 (W10): the time the screen shows, the Crown's while it scrubs.
+    private var displayTime: Double {
+        WatchChapterWindow.displayTime(elapsed: model.elapsed, crownPosition: crownPosition,
+                                       isScrubbing: isScrubbingWithCrown || isScrubFocused)
+    }
+
+    /// Batch 497 (W10): the current chapter, or the whole book when there are none.
+    private var chapterWindow: WatchChapterWindow {
+        WatchChapterWindow.resolve(chapters: model.chapters, at: displayTime, duration: model.duration)
     }
 
     private var visibleJumpBack: WatchJumpBack? {
@@ -170,7 +191,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 6) {
+            VStack(spacing: nowPlayingLayout.stackSpacing) {
                 if WatchPhoneLinkDecision.showsSyncingBanner(isStateStale: model.isStale, isOutOfRange: model.isPhoneOutOfRange) {
                     StaleBanner()
                 }
@@ -193,6 +214,15 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
                 }
             }
             .padding(.horizontal, WatchMetrics.scrollContentHorizontalPadding)
+        }
+        // Batch 497 (REVIEW 2026-11-11 W10): the height the first screen really has, so
+        // `WatchNowPlayingLayout.decide` isn't working from a guessed top bar.
+        .onGeometryChange(for: CGSize.self) { proxy in
+            CGSize(width: proxy.size.width,
+                   height: proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
+        } action: { size in
+            guard size.width > 60, size.height > 60 else { return }
+            measuredContainer = size
         }
         .watchAnimation(.easeOut(duration: WatchMetrics.stateChangeAnimationDuration), value: visibleJumpBack)
         .containerBackground(for: .navigation) { backdrop }
@@ -223,6 +253,10 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
             if let expectedProgrammatic, abs(expectedProgrammatic - newValue) <= 0.5 {
                 return
             }
+            // Batch 497 (REVIEW 2026-11-11 W10): the Crown only turns this value while the
+            // row has focus. Unfocused, a change can only be the system pulling it into a
+            // new chapter's range as playback crosses a boundary; that must not seek.
+            guard isScrubFocused else { return }
             commitCrownSeek(to: newValue)
         }
         .onChange(of: isScrubFocused) { _, focused in
@@ -297,7 +331,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     /// screen of a 41mm watch at the default text size.
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
-            if headerLayout.showsCover {
+            if nowPlayingLayout.showsCover {
                 CoverThumbnail(data: model.coverData, side: coverSide, spinning: model.isPlaying)
                     .opacity(isLuminanceReduced ? 0.6 : 1)
             }
@@ -305,7 +339,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
                 Text(model.title)
                     .font(WatchMetrics.navigationRowTitleFont(weight: .bold))
                     .foregroundStyle(WatchTheme.primaryText)
-                    .lineLimit(headerLayout.titleLineLimit)
+                    .lineLimit(nowPlayingLayout.titleLineLimit)
                     .multilineTextAlignment(.leading)
                 statusLine
             }
@@ -350,27 +384,57 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
                     .foregroundStyle(isLuminanceReduced ? WatchTheme.secondaryText : WatchTheme.accentText)
                     .monospacedDigit()
                     .accessibilityLabel("Sleep timer, \(model.sleepText ?? sleepText)")
+                    .fixedSize()
+                    .layoutPriority(1)
+            }
+            // Batch 497 (REVIEW 2026-11-11 W10): the chapter, or the author for a book
+            // without chapters; truncated first, since the glyph and timer matter more.
+            if let chapter = statusChapterTitle {
+                Text(verbatim: "·").foregroundStyle(WatchTheme.secondaryText).accessibilityHidden(true)
+                Text(verbatim: chapter)
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .truncationMode(.tail)
+                    .accessibilityLabel(Text("Chapter, \(chapter)"))
+            } else if !model.author.isEmpty {
+                Text(verbatim: "·").foregroundStyle(WatchTheme.secondaryText).accessibilityHidden(true)
+                Text(verbatim: model.author)
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .truncationMode(.tail)
             }
         }
         .font(WatchMetrics.captionFont(weight: .medium))
         .lineLimit(1)
     }
 
+    /// Batch 497 (W10): the window's chapter title, else the adapter's (companion gets it
+    /// from the phone's snapshot even before its chapter list arrives).
+    private var statusChapterTitle: String? {
+        if let title = chapterWindow.title { return title }
+        let fallback = model.chapterTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return fallback.isEmpty ? nil : fallback
+    }
+
     /// Progress plus elapsed/remaining, the crown-scrub target. Under Always-On the times
     /// drop to minutes (`WatchNowPlayingTime`), since the dimmed screen updates rarely and
     /// a seconds readout would sit visibly wrong.
+    ///
+    /// Batch 497 (REVIEW 2026-11-11 W10): within the current chapter when the book has
+    /// chapters (`WatchChapterWindow`), the whole book otherwise, in both modes.
     private var scrubRow: some View {
-        VStack(spacing: 3) {
-            WatchLinearProgressBar(progress: model.progress)
+        let window = chapterWindow
+        let time = displayTime
+        let crownRange = window.crownRange(bookDuration: model.duration)
+        return VStack(spacing: 3) {
+            WatchLinearProgressBar(progress: window.progress(at: time))
             HStack {
-                Text(WatchNowPlayingTime.elapsed(model.elapsed, minuteLevel: isLuminanceReduced))
+                Text(WatchNowPlayingTime.elapsed(window.elapsed(at: time), minuteLevel: isLuminanceReduced))
                 Spacer()
-                Text(WatchNowPlayingTime.remaining(model.duration - model.elapsed, minuteLevel: isLuminanceReduced))
+                Text(WatchNowPlayingTime.remaining(window.remaining(at: time), minuteLevel: isLuminanceReduced))
             }
             .font(WatchMetrics.captionFont().monospacedDigit())
             .foregroundStyle(WatchTheme.secondaryText)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, nowPlayingLayout.scrubVerticalPadding)
         .padding(.horizontal, 4)
         .background {
             if isScrubFocused {
@@ -391,27 +455,42 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
         }
         .focusable(model.isReady)
         .focused($isScrubFocused)
+        // Batch 497 (W10): the chapter's range plus a second either side, so a turn past
+        // its edge carries into the neighbour and the window follows
+        // (`WatchChapterWindow.crownRange`). Whole book without chapters, as before.
         .digitalCrownRotation(
             $crownPosition,
-            from: 0, through: max(model.duration, 1), by: 1,
+            from: crownRange.lowerBound, through: crownRange.upperBound, by: 1,
             sensitivity: .medium, isContinuous: false, isHapticFeedbackEnabled: true
         )
         // P3-7: one adjustable "Playback position" stop for VoiceOver, through the same
         // commit path a crown turn takes.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Playback position")
-        .accessibilityValue("\(model.elapsed.watchFormattedTime) of \(model.duration.watchFormattedTime)")
+        .accessibilityValue(scrubAccessibilityValue(window: window, time: time))
         .accessibilityAdjustableAction { direction in
             guard model.isReady else { return }
             let step: Double = 15
-            let newValue: Double
+            let target: Double
             switch direction {
-            case .increment: newValue = min(model.duration, model.elapsed + step)
-            case .decrement: newValue = max(0, model.elapsed - step)
+            case .increment: target = model.elapsed + step
+            case .decrement: target = model.elapsed - step
             @unknown default: return
             }
-            commitCrownSeek(to: newValue)
+            commitCrownSeek(to: WatchChapterWindow.clampedSeek(target, duration: model.duration))
         }
+    }
+
+    /// Batch 497 (W10): chapter-relative when there's a chapter, e.g. "3:10 of 12:40 in
+    /// Chapter 4"; the whole book otherwise.
+    private func scrubAccessibilityValue(window: WatchChapterWindow, time: Double) -> String {
+        let elapsed = window.elapsed(at: time).watchFormattedTime
+        let length = window.length.watchFormattedTime
+        if window.isChapter, let title = window.title {
+            return String(localized: "\(elapsed) of \(length) in \(title)",
+                          comment: "VoiceOver value of the Watch Now Playing time row: time into the chapter, chapter length, chapter title")
+        }
+        return String(localized: "\(elapsed) of \(length)")
     }
 
     private var transport: some View {
@@ -445,7 +524,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
             }
         }
         .disabled(!model.isReady)
-        .padding(.top, 2)
+        .padding(.top, nowPlayingLayout.transportTopPadding)
     }
 
     // MARK: - Tools
@@ -453,20 +532,27 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
     /// Speed, Sleep, Chapters, Bookmark: each one tap from the transport. Speed and
     /// Sleep show their current value. Bookmark adds on a tap (the run case: no sheet to
     /// dismiss) and lists on a long press; the list is also in "⋯".
+    ///
+    /// Batch 497 (REVIEW 2026-11-11 W10): where the screen is short the tools drop their
+    /// captions (`WatchNowPlayingLayout.showsToolCaptions`) so they fit the first screen.
+    /// Speed then shows its rate as the glyph. Each tool keeps a VoiceOver label and value
+    /// whichever way it's drawn.
     @ViewBuilder
     private var toolRow: some View {
         HStack(spacing: 2) {
             if let speed = model.speed, actions.setSpeed != nil {
                 let label = WatchSpeedCycler.label(for: speed)
-                toolButton(systemImage: "speedometer", title: label,
-                           accessibilityLabel: String(localized: "Playback speed, \(label)"),
+                toolButton(systemImage: "speedometer", title: label, glyphText: label,
+                           accessibilityLabel: String(localized: "Playback speed", comment: "VoiceOver label of the speed button on the Watch Now Playing screen; the value is the rate"),
+                           accessibilityValue: label,
                            accessibilityHint: String(localized: "Opens speed options"),
                            action: { sheet = .speed })
             }
             if actions.setSleepTimer != nil {
                 toolButton(systemImage: model.sleepText == nil ? "moon.zzz" : "moon.zzz.fill",
                            title: model.sleepText ?? String(localized: "Sleep", comment: "Short label under the sleep timer button on the Watch Now Playing screen"),
-                           accessibilityLabel: model.sleepText.map { String(localized: "Sleep timer, \($0)") } ?? String(localized: "Sleep timer, off"),
+                           accessibilityLabel: String(localized: "Sleep timer", comment: "VoiceOver label of the sleep timer button on the Watch Now Playing screen; the value is the time left or Off"),
+                           accessibilityValue: model.sleepText ?? String(localized: "Off"),
                            accessibilityHint: String(localized: "Opens sleep timer options"),
                            action: { sheet = .sleep })
             }
@@ -474,6 +560,7 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
                 toolButton(systemImage: "list.bullet",
                            title: String(localized: "Chapters", comment: "Short label under the chapters button on the Watch Now Playing screen"),
                            accessibilityLabel: String(localized: "Chapters"),
+                           accessibilityValue: statusChapterTitle ?? "",
                            accessibilityHint: String(localized: "Opens the chapter list"),
                            action: { sheet = .chapters })
             }
@@ -507,32 +594,48 @@ struct WatchNowPlayingScreen<Notice: View, MoreActions: View>: View {
             .accessibilityAction(named: Text("Show Bookmarks")) { sheet = .bookmarks }
     }
 
-    private func toolButton(systemImage: String, title: String, accessibilityLabel: String,
+    private func toolButton(systemImage: String, title: String, glyphText: String? = nil,
+                            accessibilityLabel: String, accessibilityValue: String,
                             accessibilityHint: String, action: @escaping () -> Void) -> some View {
         Button {
             WatchHaptics.tap()
             action()
         } label: {
-            toolLabel(systemImage: systemImage, title: title)
+            toolLabel(systemImage: systemImage, title: title, glyphText: glyphText)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
         .accessibilityHint(accessibilityHint)
     }
 
-    private func toolLabel(systemImage: String, title: String) -> some View {
-        VStack(spacing: 2) {
-            Image(systemName: systemImage)
-                .font(WatchMetrics.rowIconFont())
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(WatchTheme.icon)
-            Text(title)
-                .font(WatchMetrics.captionFont(weight: .medium).monospacedDigit())
-                .foregroundStyle(WatchTheme.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+    /// Batch 497 (W10): `glyphText` replaces the icon when captions are off (Speed's
+    /// "1.5×"), so an icon-only tool still shows its value. Height comes from
+    /// `WatchNowPlayingLayout.toolMinHeight`, never under the HIG's 28 pt minimum.
+    private func toolLabel(systemImage: String, title: String, glyphText: String? = nil) -> some View {
+        let layout = nowPlayingLayout
+        return VStack(spacing: 2) {
+            if !layout.showsToolCaptions, let glyphText {
+                Text(verbatim: glyphText)
+                    .font(WatchMetrics.secondaryFont(weight: .semibold).monospacedDigit())
+                    .foregroundStyle(WatchTheme.icon)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else {
+                Image(systemName: systemImage)
+                    .font(WatchMetrics.rowIconFont())
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(WatchTheme.icon)
+            }
+            if layout.showsToolCaptions {
+                Text(title)
+                    .font(WatchMetrics.captionFont(weight: .medium).monospacedDigit())
+                    .foregroundStyle(WatchTheme.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        .frame(maxWidth: .infinity, minHeight: layout.toolMinHeight)
         .contentShape(Rectangle())
     }
 

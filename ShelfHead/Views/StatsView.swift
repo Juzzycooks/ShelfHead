@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import CryptoKit
 import UniformTypeIdentifiers
 
 /// Stage 3 (REDESIGN_PROPOSAL_2026-08-26.md §2.1): this is now the root screen of the
@@ -107,6 +108,16 @@ enum StatsStaleness {
         return status == .ok ? String(localized: "Couldn\u{2019}t refresh. Showing figures from \(when).", comment: "%@ is a relative date such as yesterday")
                              : String(localized: "Showing figures from \(when). \(problem)", comment: "%1$@ is a relative date such as yesterday, %2$@ is a short problem sentence such as You\u{2019}re offline.")
     }
+
+    /// Batch 496 (REVIEW 2026-11-11 E3): the quiet line over figures read from the disk cache while
+    /// the live load is still in flight (no failure yet). Same relative-date wording as `message`.
+    static func cachedWhileLoading(asOf date: Date, now: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        f.dateTimeStyle = .named
+        let when = f.localizedString(for: date, relativeTo: now)
+        return String(localized: "Showing figures from \(when). Refreshing\u{2026}", comment: "%@ is a relative date such as yesterday")
+    }
 }
 
 /// Critique 2026-10-06 (clarify): pure helper for the week comparison's empty-last-week line.
@@ -187,11 +198,14 @@ enum StatsFormat {
 
 /// Which body the screen shows.
 enum StatsScreenPhase: Equatable {
-    case skeleton, failed, content
+    case skeleton, failed, failedWithCache, content
 
-    static func resolve(isLoading: Bool, loadFailed: Bool, hasStats: Bool) -> StatsScreenPhase {
+    /// Batch 496 (REVIEW 2026-11-11 E3): `statsAreCached` is true while the figures on screen came from
+    /// the disk cache rather than a response; a failed load over those is `.failedWithCache`.
+    static func resolve(isLoading: Bool, loadFailed: Bool, hasStats: Bool, statsAreCached: Bool = false) -> StatsScreenPhase {
         if isLoading { return .skeleton }
         if loadFailed && !hasStats { return .failed }
+        if loadFailed && statsAreCached { return .failedWithCache }
         return .content
     }
 
@@ -201,6 +215,168 @@ enum StatsScreenPhase: Equatable {
     /// while it retried. A load with nothing to show starts on the skeleton; a refresh
     /// over figures already on screen keeps them.
     static func showsSkeletonWhileLoading(hasStats: Bool) -> Bool { !hasStats }
+}
+
+/// Batch 495 (REVIEW 2026-11-11 E3): which blocks the screen shows in which phase. The failed
+/// phase keeps the scroll view with a compact failure block, Year in Review (it fetches its own
+/// stats and has its own failure state) and More (Bookmarks fetch for themselves, Mixtapes are
+/// local, the Wall and Passport use the finished-book cache). Everything fed by the stats
+/// response stays out until it loads.
+enum StatsScreenSection: Equatable {
+    case failureBlock, hero, figures, yearInReview, listening, history, mostListened, yourLibrary, more
+
+    static func sections(for phase: StatsScreenPhase) -> [StatsScreenSection] {
+        switch phase {
+        case .skeleton: return []
+        case .failed: return [.failureBlock, .yearInReview, .more]
+        // Batch 496: the failure block (which says the figures are from the last good load), then the cached screen.
+        case .failedWithCache: return [.failureBlock] + content
+        case .content: return content
+        }
+    }
+
+    private static let content: [StatsScreenSection] =
+        [.hero, .figures, .yearInReview, .listening, .history, .mostListened, .yourLibrary, .more]
+}
+
+/// Batch 496 (REVIEW 2026-11-11 E3): the last successful Stats load, kept in `Library/Caches/stats/` so
+/// the tab still shows figures offline. Same rules as `HomeShelvesCache`: Caches only (Apple's File System
+/// Programming Guide: the Caches directory is not backed up by iTunes or iCloud and may be purged), a
+/// versioned JSON file per account scope (file name = SHA-256 of the scope, scope re-checked inside),
+/// ignored on a version or scope mismatch, deleted when unreadable, removed on sign-out and account
+/// switch. Holds only what the screen already shows that account. Writes go through one serial queue
+/// so a late write can never land after a `removeAll`.
+enum StatsCache {
+    static let currentVersion = 1
+
+    /// The four library totals the "Your library" section shows (`LibraryStats` itself is decode-only).
+    struct LibrarySummary: Codable, Equatable {
+        var totalItems: Int?
+        var totalAuthors: Int?
+        var totalDuration: Double?
+        var totalSize: Double?
+
+        init(_ stats: LibraryStats) {
+            totalItems = stats.totalItems; totalAuthors = stats.totalAuthors
+            totalDuration = stats.totalDuration; totalSize = stats.totalSize
+        }
+        var libraryStats: LibraryStats {
+            LibraryStats(totalItems: totalItems, totalAuthors: totalAuthors, totalDuration: totalDuration, totalSize: totalSize)
+        }
+    }
+
+    struct Payload: Codable {
+        var version: Int
+        var scope: String
+        /// When the stats response landed (not when the file was last written).
+        var savedAt: Date
+        var stats: ListeningStats
+        var sessions: [ListeningSession]
+        var libraryId: String?
+        var library: LibrarySummary?
+        var finishedBooks: Int
+    }
+
+    private struct Header: Decodable { var version: Int }
+
+    enum DecodeOutcome {
+        case payload(Payload)
+        /// Readable but not for this version or scope: ignore, leave the file.
+        case ignore
+        /// Not readable at all: the caller deletes the file.
+        case corrupt
+    }
+
+    static var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("stats", isDirectory: true)
+    }
+
+    static func fileName(forScope scope: String) -> String {
+        let digest = SHA256.hash(data: Data(scope.utf8))
+        return "stats-" + digest.map { String(format: "%02x", $0) }.joined() + ".json"
+    }
+
+    static func fileURL(forScope scope: String, in directory: URL = StatsCache.directory) -> URL {
+        directory.appendingPathComponent(fileName(forScope: scope))
+    }
+
+    /// Never cache without a real signed-in scope.
+    static func isCacheable(scope: String) -> Bool { !scope.isEmpty && scope != "unscoped" }
+
+    static func encode(_ payload: Payload) -> Data? { try? JSONEncoder().encode(payload) }
+
+    /// Pure decision: what a file's bytes mean for this scope.
+    static func decode(_ data: Data, scope: String) -> DecodeOutcome {
+        guard let header = try? JSONDecoder().decode(Header.self, from: data) else { return .corrupt }
+        guard header.version == currentVersion else { return .ignore }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return .corrupt }
+        guard payload.scope == scope else { return .ignore }
+        return .payload(payload)
+    }
+
+    static func load(scope: String, in directory: URL = StatsCache.directory) -> Payload? {
+        guard isCacheable(scope: scope) else { return nil }
+        let url = fileURL(forScope: scope, in: directory)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        switch decode(data, scope: scope) {
+        case .payload(let payload): return payload
+        case .ignore: return nil
+        case .corrupt:
+            try? FileManager.default.removeItem(at: url)
+            ShelfLog.info(.storage, "Discarded an unreadable Stats cache file")
+            return nil
+        }
+    }
+
+    /// Synchronous write (best effort); `saveAsync` is what the screen calls.
+    static func write(_ payload: Payload, in directory: URL = StatsCache.directory) {
+        guard isCacheable(scope: payload.scope), let data = encode(payload) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: fileURL(forScope: payload.scope, in: directory), options: .atomic)
+    }
+
+    private static let ioQueue = DispatchQueue(label: "com.shelfhead.stats-cache", qos: .utility)
+
+    /// Off the main thread, ordered with `removeAllAsync` on the same serial queue.
+    static func saveAsync(_ payload: Payload) { ioQueue.async { write(payload) } }
+    static func removeAllAsync() { ioQueue.async { removeAll() } }
+
+    /// Every scope's file: sign-out and account/server switches.
+    static func removeAll(in directory: URL = StatsCache.directory) {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    // MARK: Pure display decisions
+
+    /// "Today" from a response is only today's figure on the day it was loaded. From an earlier day it is
+    /// nil (the screen says so) rather than a stale number under a "today" label.
+    static func todaySeconds(_ today: Double?, loadedAt: Date?, now: Date, calendar: Calendar = .current) -> Double? {
+        guard let today else { return nil }
+        guard let loadedAt else { return today }
+        return calendar.isDate(loadedAt, inSameDayAs: now) ? today : nil
+    }
+
+    /// Finished-books figure: the live count wins; with only cached figures on screen and no live count
+    /// yet (progress hasn't loaded offline), the cached count stands in.
+    static func finishedCount(live: Int, cached: Int?, statsAreCached: Bool) -> Int {
+        guard statsAreCached, live == 0, let cached else { return live }
+        return cached
+    }
+
+    /// Library totals for the selected library: the live ones, else (only while figures are cached) the cached
+    /// ones saved for that same library.
+    static func libraryStatsToShow(live: LibraryStats?, cached: LibraryStats?, cachedLibraryId: String?,
+                                   selectedLibraryId: String?, statsAreCached: Bool) -> LibraryStats? {
+        if let live { return live }
+        guard statsAreCached, let cached, let cachedLibraryId, cachedLibraryId == selectedLibraryId else { return nil }
+        return cached
+    }
+
+    /// The CSV export is of live figures only: cached days are not offered for export.
+    static func exportableDays(_ days: [String: Double]?, statsAreCached: Bool) -> [String: Double]? {
+        statsAreCached ? nil : days
+    }
 }
 
 /// The row of four figures under the hero.
@@ -457,6 +633,12 @@ struct StatsView: View {
     @State private var loadFailed = false
     // Critique 2026-10-06 (harden): when `stats` last loaded, for the stale-figures line.
     @State private var statsLoadedAt: Date?
+    // Batch 496 (REVIEW 2026-11-11 E3): true while `stats` came from the disk cache (`StatsCache`) and no
+    // live response has replaced it; the cached library totals, library id and finished count ride along.
+    @State private var statsAreCached = false
+    @State private var cachedLibraryStats: LibraryStats?
+    @State private var cachedLibraryId: String?
+    @State private var cachedFinishedBooks: Int?
     private let reachability = ReachabilityStore.shared
     @State private var range: StatRange = .week
     @AppStorage(SettingsKeys.dailyListeningGoalMinutes) private var dailyGoalMinutes = 30
@@ -509,7 +691,7 @@ struct StatsView: View {
     var body: some View {
         ZStack {
             Color.shelfBackground.ignoresSafeArea()
-            switch StatsScreenPhase.resolve(isLoading: isLoading, loadFailed: loadFailed, hasStats: stats != nil) {
+            switch StatsScreenPhase.resolve(isLoading: isLoading, loadFailed: loadFailed, hasStats: stats != nil, statsAreCached: statsAreCached) {
             case .skeleton:
                 // LS-6 (docs/design-review.md, Round 3): a skeleton that mirrors this
                 // screen's real layout, so the first load (and now Try Again) already reads
@@ -520,11 +702,57 @@ struct StatsView: View {
                 // Critique 2026-10-06 (harden): offline vs unreachable wording, and the retry
                 // is EmptyStateView's own 44pt button, lifted clear of the mini-player/tab
                 // bar (it used to float at a fixed 40pt).
-                EmptyStateView(icon: "chart.bar", title: LocalizedStringResource("Couldn’t load stats"),
-                               subtitle: .verbatim(StatsStaleness.failureSubtitle(status: reachability.status)),
-                               actionTitle: LocalizedStringResource("Retry"),
-                               action: { Task { await load() } })
-                    .padding(.bottom, bottomClearance)
+                // Batch 495 (REVIEW 2026-11-11 E3): the scroll view stays, so Year in Review and
+                // More (which don't need the stats response) are still reachable offline.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Space.xl) {
+                        // Drawn from the pure list, so its test pins what this phase shows.
+                        ForEach(StatsScreenSection.sections(for: .failed), id: \.self) { section in
+                            switch section {
+                            case .failureBlock: failureBlock
+                            case .yearInReview: yearInReviewLink
+                            case .more: moreSection
+                            default: EmptyView()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Space.pageH)
+                    .padding(.top, Space.m)
+                    .padding(.bottom, Space.xl + bottomClearance)
+                }
+                .refreshable { await load() }
+                .transition(.opacity)
+            case .failedWithCache:
+                // Batch 496 (REVIEW 2026-11-11 E3): the failure block (which names the cached date), then
+                // the last good figures, drawn from the pure section list.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Space.xl) {
+                        ForEach(StatsScreenSection.sections(for: .failedWithCache), id: \.self) { section in
+                            switch section {
+                            case .failureBlock: failureBlock
+                            case .hero: hero
+                            case .figures:
+                                VStack(alignment: .leading, spacing: Space.s) {
+                                    figureRow
+                                    booksGoalLine
+                                }
+                            case .yearInReview: yearInReviewLink
+                            case .listening:
+                                listeningSection
+                                    .onChange(of: range) { _, _ in refreshChartBars() }
+                            case .history: historySection
+                            case .mostListened: mostListenedSection
+                            case .yourLibrary: yourLibrarySection
+                            case .more: moreSection
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Space.pageH)
+                    .padding(.top, Space.m)
+                    .padding(.bottom, Space.xl + bottomClearance)
+                }
+                .refreshable { await load() }
+                .transition(.opacity)
             case .content:
                 ScrollView {
                     // Critique 2026-10-06 (distill → layout): one hero card, then everything
@@ -534,6 +762,11 @@ struct StatsView: View {
                         // keeps them on screen and says so quietly.
                         if loadFailed, stats != nil {
                             Typo.fine(Text(StatsStaleness.message(asOf: statsLoadedAt, now: Date(), status: reachability.status)))
+                                .foregroundStyle(Color.shelfMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if statsAreCached, let loadedAt = statsLoadedAt {
+                            // Batch 496: disk-cache figures shown while the live load is in flight.
+                            Typo.fine(Text(StatsStaleness.cachedWhileLoading(asOf: loadedAt, now: Date())))
                                 .foregroundStyle(Color.shelfMuted)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -548,11 +781,7 @@ struct StatsView: View {
 
                         // Critique 2026-10-06 (peak-end): Year in Review stays near the top.
                         // Now a quiet row on the ground rather than a card.
-                        NavigationLink(destination: YearInReviewView(bottomInset: bottomInset)) {
-                            quietLinkRow(icon: "sparkles", title: "Year in Review",
-                                         subtitle: "Your listening, looked back on")
-                        }
-                        .buttonStyle(.plain)
+                        yearInReviewLink
 
                         listeningSection
                             // `range` isn't a per-tick value — it only changes when the user
@@ -585,7 +814,10 @@ struct StatsView: View {
         .navigationBarTitleDisplayMode(.inline)
         // G7 (REVIEW_2026-09-04_UI.md): the nav-bar streak capsule (Stage 3 moved it here
         // from Home's header) is gone — it duplicated the streak figure below it.
-        .task { await load() }
+        .task {
+            restoreFromCache()   // Batch 496 (REVIEW 2026-11-11 E3): last figures first, live load next
+            await load()
+        }
         // Batch 490 (REVIEW 2026-11-11 F27): finish dates for the books goal, only when it's on.
         .task(id: booksYearGoal) {
             if booksYearGoal > 0 { await finishedCatalog.refresh() }
@@ -607,6 +839,12 @@ struct StatsView: View {
             statsLoadedAt = nil
             sessions = []
             libraryStats = nil   // Batch 490 (REVIEW 2026-11-11 F11a)
+            // Batch 496 (REVIEW 2026-11-11 E3): nothing of the old account's cache survives a switch.
+            statsAreCached = false
+            cachedLibraryStats = nil
+            cachedLibraryId = nil
+            cachedFinishedBooks = nil
+            StatsCache.removeAllAsync()
             isLoading = true
             // Drop the stale account's cached derived figures too — otherwise the old
             // account's streaks/month total/chart would flash on screen for one frame
@@ -643,6 +881,7 @@ struct StatsView: View {
             if scope == activeStatsScope() {
                 stats = fetched
                 statsLoadedAt = Date()
+                statsAreCached = false   // Batch 496: a live response replaces any cached figures
                 // `stats` just landed — this is the refresh trigger for the cached
                 // streaks/month total/chart bars (see the `cached*` @State above).
                 refreshStatsDerivedValues()
@@ -660,7 +899,39 @@ struct StatsView: View {
         if libraryViewModel.finishedBooksCount == 0 {
             await libraryViewModel.loadUserProgress()
         }
-        if scope == activeStatsScope() { isLoading = false }
+        if scope == activeStatsScope() {
+            isLoading = false
+            persistCache()
+        }
+    }
+
+    // MARK: - Disk cache (Batch 496, REVIEW 2026-11-11 E3)
+
+    /// Paints the last successful load, if this account has one, before the network answers.
+    /// Only when nothing is on screen yet; a live response replaces it.
+    private func restoreFromCache() {
+        guard stats == nil,
+              let cached = StatsCache.load(scope: DownloadManager.shared.currentScopeKey()) else { return }
+        stats = cached.stats
+        sessions = cached.sessions
+        statsLoadedAt = cached.savedAt
+        cachedLibraryStats = cached.library?.libraryStats
+        cachedLibraryId = cached.libraryId
+        cachedFinishedBooks = cached.finishedBooks
+        statsAreCached = true
+        isLoading = false
+        refreshStatsDerivedValues()
+    }
+
+    /// Writes the live figures off the main thread. Never from cached figures, never for a failed load.
+    private func persistCache() {
+        let scope = DownloadManager.shared.currentScopeKey()
+        guard !statsAreCached, let stats, let savedAt = statsLoadedAt, StatsCache.isCacheable(scope: scope) else { return }
+        StatsCache.saveAsync(StatsCache.Payload(
+            version: StatsCache.currentVersion, scope: scope, savedAt: savedAt, stats: stats, sessions: sessions,
+            libraryId: libraryStats == nil ? nil : libraryViewModel.selectedLibrary?.id,
+            library: libraryStats.map(StatsCache.LibrarySummary.init),
+            finishedBooks: libraryViewModel.finishedBooksCount))
     }
 
     /// Recomputes the cached figures that scan the whole `stats.days` map. Called when
@@ -726,9 +997,18 @@ struct StatsView: View {
     // Daily goal (ShelfPlayer/AudioBooth both ship this; `stats.today` and the existing
     // streak infrastructure already have everything a ring needs.)
 
+    /// Batch 496 (REVIEW 2026-11-11 E3): today's seconds, or nil when the response is from an earlier day
+    /// (cached figures): a cached "today" is not today.
+    private var todaySeconds: Double? {
+        StatsCache.todaySeconds(stats?.today, loadedAt: statsLoadedAt, now: Date())
+    }
+
     private var goalLine: String {
-        let todayMinutes = Int((stats?.today ?? 0) / 60)
         guard dailyGoalMinutes > 0 else { return String(localized: "Daily goal off") }
+        guard let todayValue = todaySeconds else {
+            return String(localized: "Today\u{2019}s total isn\u{2019}t available right now", comment: "Daily goal line when only figures from an earlier day are on screen")
+        }
+        let todayMinutes = Int(todayValue / 60)
         return todayMinutes >= dailyGoalMinutes
             ? String(localized: "Goal hit \u{00B7} \(todayMinutes) min today", comment: "%lld is minutes listened today")
             : String(localized: "\(todayMinutes) of \(dailyGoalMinutes) min today", comment: "%1$lld is minutes listened today, %2$lld is the daily goal in minutes")
@@ -737,7 +1017,7 @@ struct StatsView: View {
     private var goalRow: some View {
         HStack(spacing: Space.m) {
             HStack(spacing: Space.m) {
-                DailyGoalRing(progressMinutes: (stats?.today ?? 0) / 60, goalMinutes: Double(dailyGoalMinutes))
+                DailyGoalRing(progressMinutes: (todaySeconds ?? 0) / 60, goalMinutes: Double(dailyGoalMinutes))
                     .frame(width: 36, height: 36)
                 Typo.metadata(Text(goalLine))
                     .foregroundStyle(Color.shelfCream)
@@ -870,7 +1150,8 @@ struct StatsView: View {
         let items = StatsFigureRow.items(monthSeconds: cachedMonthTotal,
                                          currentStreak: cachedCurrentStreak,
                                          bestStreak: cachedBestStreak,
-                                         finished: libraryViewModel.finishedBooksCount)
+                                         finished: StatsCache.finishedCount(live: libraryViewModel.finishedBooksCount,
+                                                                            cached: cachedFinishedBooks, statsAreCached: statsAreCached))
         switch StatsFigureRow.arrangement(isAccessibilitySize: dynamicTypeSize.isAccessibilitySize) {
         case .list:
             VStack(alignment: .leading, spacing: Space.m) {
@@ -1065,8 +1346,12 @@ struct StatsView: View {
     /// and when the call failed or came back empty.
     @ViewBuilder private var yourLibrarySection: some View {
         if libraryViewModel.selectedLibrary?.mediaType != "podcast",
-           let libraryStats, libraryStats.hasFigures {
-            let items = LibraryStatsFigures.items(libraryStats)
+           let shownStats = StatsCache.libraryStatsToShow(live: libraryStats, cached: cachedLibraryStats,
+                                                          cachedLibraryId: cachedLibraryId,
+                                                          selectedLibraryId: libraryViewModel.selectedLibrary?.id,
+                                                          statsAreCached: statsAreCached),
+           shownStats.hasFigures {
+            let items = LibraryStatsFigures.items(shownStats)
             VStack(alignment: .leading, spacing: Space.m) {
                 RetroSectionHeader(title: LocalizedStringResource("Your library", comment: "Stats section header: totals for the selected library"))
                 if dynamicTypeSize.isAccessibilitySize {
@@ -1106,6 +1391,50 @@ struct StatsView: View {
         // The account or library can change while this is in flight; drop a stale answer.
         guard scope == activeStatsScope(), library.id == libraryViewModel.selectedLibrary?.id else { return }
         libraryStats = fetched   // nil on failure hides the section
+        persistCache()   // Batch 496: the totals usually land after the stats; rewrite with them
+    }
+
+    // MARK: - Failed phase (Batch 495, REVIEW 2026-11-11 E3)
+
+    private var failureBlock: some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            // Title and subtitle read as one VoiceOver element; Retry stays its own labelled button.
+            VStack(alignment: .leading, spacing: Space.s) {
+                Text("Couldn’t load stats")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.shelfCream)
+                    .accessibilityAddTraits(.isHeader)
+                // Batch 496: with cached figures below, say which load they are from instead.
+                Text(statsAreCached && stats != nil
+                     ? StatsStaleness.message(asOf: statsLoadedAt, now: Date(), status: reachability.status)
+                     : StatsStaleness.failureSubtitle(status: reachability.status))
+                    .font(.subheadline)
+                    .foregroundStyle(Color.shelfMuted)
+            }
+            .accessibilityElement(children: .combine)
+
+            Button { Task { await load() } } label: {
+                Text("Retry")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.onAccent)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 44)
+                    .background(Color.shelfAmber, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Retry loading stats"))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var yearInReviewLink: some View {
+        // Critique 2026-10-06 (peak-end): Year in Review stays near the top, a quiet row.
+        NavigationLink(destination: YearInReviewView(bottomInset: bottomInset)) {
+            quietLinkRow(icon: "sparkles", title: "Year in Review",
+                         subtitle: "Your listening, looked back on")
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - More
@@ -1139,7 +1468,8 @@ struct StatsView: View {
             }
             .buttonStyle(.plain)
             // Batch 490 (REVIEW 2026-11-11 F27): the per-day listening map as a CSV.
-            if let days = stats?.days, !days.isEmpty {
+            // Batch 496 (REVIEW 2026-11-11 E3): live figures only; cached days aren't offered for export.
+            if let days = StatsCache.exportableDays(stats?.days, statsAreCached: statsAreCached), !days.isEmpty {
                 ShareLink(item: ListeningHistoryCSVFile(days: days),
                           preview: SharePreview(Text("Listening history"))) {
                     quietLinkRow(icon: "tablecells", title: "Export listening history",

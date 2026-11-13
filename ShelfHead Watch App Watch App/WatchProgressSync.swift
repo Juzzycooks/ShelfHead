@@ -309,6 +309,11 @@ final class WatchProgressSyncCoordinator {
         monitor.start(queue: DispatchQueue(label: "watch.progress.path"))
     }
 
+    /// Batch 495 (REVIEW 2026-11-11 W6): false only once the path monitor has reported no
+    /// network; unknown (before its first report) counts as available. Observable through
+    /// `lastPathSatisfied`, so the Shelf redraws when the network drops or returns.
+    var isNetworkAvailable: Bool { lastPathSatisfied != false }
+
     /// Pure: flush only on a real loss-to-regain edge.
     nonisolated static func shouldFlushOnPathChange(previouslySatisfied: Bool?, nowSatisfied: Bool) -> Bool {
         previouslySatisfied == false && nowSatisfied

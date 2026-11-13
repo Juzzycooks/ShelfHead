@@ -72,6 +72,35 @@ struct WatchBookDetailView: View {
     private var hasWatchSession: Bool { watchStore.authState == .active }
     private var knownSizeBytes: Int64? { sizeBytes ?? fetchedSizeBytes }
 
+    /// Batch 497 (REVIEW 2026-11-11 W6): the Shelf's inputs for this book's availability
+    /// (`WatchShelfView.input` sets the same four).
+    private var availabilityInput: WatchShelfInput {
+        var input = WatchShelfInput()
+        input.phoneIsReachable = companion.isReachable
+        input.hasWatchSession = hasWatchSession
+        input.networkIsAvailable = watchStore.progressSync.isNetworkAvailable
+        input.serverIsReachable = !watchStore.library.inProgressIsFromCache
+        return input
+    }
+
+    private var isLoadedOnWatch: Bool {
+        watchStore.standalone.isLoaded && watchStore.standalone.currentItemId == itemId
+    }
+
+    private func playUnavailableReason(_ target: WatchBookPlayTarget) -> WatchShelfUnavailableReason? {
+        WatchBookDetailAvailability.playUnavailableReason(target: target,
+                                                          isDownloaded: manager.isDownloaded(itemId: itemId),
+                                                          isLoadedOnWatch: isLoadedOnWatch,
+                                                          input: availabilityInput)
+    }
+
+    /// Batch 497 (W6): offline or with the server silent, Download would fail at once.
+    /// No sign-in keeps its own "Set up this Watch to download" link.
+    private var downloadBlockedReason: WatchShelfUnavailableReason? {
+        let reason = WatchBookDetailAvailability.downloadBlockedReason(input: availabilityInput)
+        return reason == .noWatchSession ? nil : reason
+    }
+
     /// Re-check the room whenever what's on the Watch, or the Storage Limit, changes.
     private var roomCheckKey: String {
         "\(itemId)|\(manager.downloads.count)|\(manager.totalBytesUsed)|\(knownSizeBytes ?? 0)|\(manager.storageLimit.rawValue)"
@@ -257,25 +286,59 @@ struct WatchBookDetailView: View {
                 .tint(WatchTheme.cardBackground)
                 .foregroundStyle(WatchTheme.primaryText)
         }
+        // Batch 497 (REVIEW 2026-11-11 W6): why the primary Play can't work, in words at
+        // full contrast (the Shelf's Dim-the-Picture Rule). The Download section below
+        // stays the way forward when a download can start.
+        if let reason = playUnavailableReason(options.primary) {
+            Label {
+                Text(Self.playUnavailableText(reason))
+            } icon: {
+                Image(systemName: reason.systemImage)
+            }
+            .font(WatchMetrics.captionFont(weight: .medium))
+            .foregroundStyle(WatchTheme.primaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityHidden(true)   // the disabled button's hint says it
+        }
     }
 
     @ViewBuilder
     private func playControl(_ target: WatchBookPlayTarget) -> some View {
+        let reason = playUnavailableReason(target)
         switch target {
         case .watch:
+            // Batch 497 (REVIEW 2026-11-11 W6): was a NavigationLink with no check, so a
+            // book that isn't downloaded opened a Now Playing that couldn't load offline.
             NavigationLink {
                 StandaloneNowPlayingView(itemId: itemId, title: title, author: author, coverItemId: itemId)
             } label: {
                 playLabel(target)
             }
+            .disabled(reason != nil)
+            .accessibilityHint(reason.map(Self.playUnavailableText) ?? "")
         case .iPhone:
             Button {
                 companion.requestPlay(itemId: itemId, title: title, pending: $pendingPlay)
             } label: {
                 playLabel(target)
             }
-            .disabled(!companion.isReachable)
-            .accessibilityHint(companion.isReachable ? "" : String(localized: "Unavailable, your iPhone isn\u{2019}t reachable"))
+            .disabled(reason != nil)
+            .accessibilityHint(reason.map(Self.playUnavailableText) ?? "")
+        }
+    }
+
+    /// Batch 497 (W6): Book Details' sentence for each Shelf reason.
+    private nonisolated static func playUnavailableText(_ reason: WatchShelfUnavailableReason) -> String {
+        switch reason {
+        case .phoneOutOfReach:
+            return String(localized: "Unavailable, your iPhone isn\u{2019}t reachable")
+        case .noWatchSession:
+            return String(localized: "This Watch isn\u{2019}t signed in, and the book isn\u{2019}t downloaded.", comment: "Book Details on the Watch: why Play on Watch is unavailable")
+        case .offline:
+            return String(localized: "You\u{2019}re offline, and the book isn\u{2019}t downloaded to this Watch.", comment: "Book Details on the Watch: why Play on Watch is unavailable")
+        case .serverUnreachable:
+            return String(localized: "The server isn\u{2019}t answering, and the book isn\u{2019}t downloaded to this Watch.", comment: "Book Details on the Watch: why Play on Watch is unavailable")
         }
     }
 
@@ -307,7 +370,9 @@ struct WatchBookDetailView: View {
                     .buttonStyle(.bordered)
                     .tint(WatchTheme.cardBackground)
                     .foregroundStyle(WatchTheme.primaryText)
-                    .disabled(!hasWatchSession)
+                    .disabled(!hasWatchSession || downloadBlockedReason != nil)
+                    .accessibilityHint(downloadBlockedReason.map(Self.downloadBlockedText) ?? "")
+                    downloadBlockedLine
                     roomLines
                 }
                 if !hasWatchSession {
@@ -347,7 +412,9 @@ struct WatchBookDetailView: View {
                 .buttonStyle(.bordered)
                 .tint(WatchTheme.cardBackground)
                 .foregroundStyle(WatchTheme.primaryText)
-                .disabled(!hasWatchSession)
+                .disabled(!hasWatchSession || downloadBlockedReason != nil)
+                .accessibilityHint(downloadBlockedReason.map(Self.downloadBlockedText) ?? "")
+                downloadBlockedLine
             case .downloaded:
                 statusLine("On This Watch", systemImage: "checkmark.circle.fill")
                 // Critique 2026-10-06 (shape → harden): "Plays on this Watch when your
@@ -364,6 +431,27 @@ struct WatchBookDetailView: View {
                 }
                 .buttonStyle(.bordered)
             }
+        }
+    }
+
+    /// Batch 497 (REVIEW 2026-11-11 W6): why Download is off, under the disabled button.
+    @ViewBuilder
+    private var downloadBlockedLine: some View {
+        if let reason = downloadBlockedReason {
+            Text(Self.downloadBlockedText(reason))
+                .font(WatchMetrics.captionFont())
+                .foregroundStyle(WatchTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHidden(true)   // the button's hint says it
+        }
+    }
+
+    private nonisolated static func downloadBlockedText(_ reason: WatchShelfUnavailableReason) -> String {
+        switch reason {
+        case .serverUnreachable:
+            return String(localized: "The server isn\u{2019}t answering. Download when it\u{2019}s back.", comment: "Book Details on the Watch: why Download to Watch is unavailable")
+        default:
+            return String(localized: "Connect to a network to download.", comment: "Book Details on the Watch: why Download to Watch is unavailable while offline")
         }
     }
 

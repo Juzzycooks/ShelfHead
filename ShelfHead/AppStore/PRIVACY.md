@@ -1,6 +1,6 @@
 # ShelfHead Privacy Policy
 
-_Last updated: 11 November 2026_
+_Last updated: 13 November 2026_
 
 ShelfHead is an iPhone and Apple Watch app for [Audiobookshelf](https://www.audiobookshelf.org),
 the self-hosted audiobook and podcast server. This policy explains what the app stores, what it
@@ -28,8 +28,14 @@ sends, and where it sends it.
 - **Things the app works out from your books.** Transcripts, captions, X-Ray notes, recaps and
   mixtapes. See "Processing on your device" below.
 - **A search index.** Book titles, authors, narrators and series are added to Spotlight so you can
-  search for a book from the Home Screen. This is on by default and can be turned off in Settings.
-  The index is cleared when you sign out or switch accounts.
+  search for a book from the Home Screen, with a small copy of the cover when that cover is
+  already saved on the device. This is on by default and can be turned off in Settings. The index
+  is cleared when you sign out or switch accounts.
+- **Short-lived copies for working offline.** The shelves on Home and your listening statistics
+  (totals, daily listening, recent sessions and time per book) from the last successful load are
+  kept in the app's cache so those screens still show something when your server can't be
+  reached. They are not backed up, the system may clear them at any time, and they are removed
+  when you sign out or switch accounts.
 
 ## What ShelfHead sends to your Audiobookshelf server
 
@@ -38,8 +44,9 @@ ShelfHead talks directly to the server you sign in to, in order to:
 - sign you in and keep your session active
 - browse your libraries and search them
 - stream or download audio, ebooks and covers
-- sync your progress, bookmarks and finished status, and report listening sessions (how long you
-  listened), which is how your server builds its listening statistics
+- sync your progress (including how far through an ebook you have read), bookmarks and finished
+  status, and report listening sessions (how long you listened), which is how your server builds
+  its listening statistics
 - keep a live connection open so progress made on another device shows up promptly
 - carry out changes you choose to make, such as uploading files, fixing a book's cover, chapters or
   series details, removing a book from Continue Listening, starting a server backup, or (for
@@ -71,8 +78,11 @@ If you turn on "Sync positions with iCloud", ShelfHead saves your place in each 
 iCloud account, as a fallback for when your server can't be reached. For each book it stores the
 book's identifier, your position, the book's length, the time it was saved and the generic name of
 the device (for example "iPhone"). Your server address and username are not stored; they are used
-only to make a scrambled label that keeps different accounts apart. Turning the setting off stops
-further updates. Positions already saved remain in your iCloud account.
+only to make a scrambled label that keeps different accounts apart. For an ebook read in
+ShelfHead's EPUB reader it also stores the chapter you are in, how far through it you are and the
+time that was saved. Turning the setting off stops further updates, and ShelfHead then asks
+whether to delete the positions already saved. If you choose to delete them they are removed from
+your iCloud account, and so from your other devices; if you keep them they stay there.
 
 ### Household
 

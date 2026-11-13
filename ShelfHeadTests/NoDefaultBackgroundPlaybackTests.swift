@@ -24,6 +24,16 @@ final class NoDefaultBackgroundPlaybackTests: XCTestCase {
         XCTAssertFalse(SettingsStore.deckButtonSounds)
     }
 
+    /// Batch 496 (P3): every control in the player's Sound sheet ships off or flat.
+    func testSoundSheetControlsShipOff() {
+        for key in [SettingsKeys.dialogueEnhance, SettingsKeys.matchLoudness, SettingsKeys.spatialAudioEnabled] {
+            XCTAssertNotEqual(registeredDefault(key) as? Bool, true, key)
+        }
+        for key in [SettingsKeys.volumeBoostDB, SettingsKeys.bassBoostDB, SettingsKeys.trebleBoostDB] {
+            XCTAssertEqual((registeredDefault(key) as? Double) ?? 0, 0, key)
+        }
+    }
+
     func testNoProfileStartsAnAmbientBed() {
         for profile in ListeningProfile.allCases {
             XCTAssertNil(profile.overrides.ambientBed, "\(profile)")

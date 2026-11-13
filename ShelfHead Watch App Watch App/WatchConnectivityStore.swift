@@ -578,6 +578,18 @@ final class WatchConnectivityStore: NSObject {
              rollback: { [weak self] in self?.playbackState?.playbackRate = previous })
     }
 
+    /// Batch 497 (REVIEW 2026-11-11 W7): a speed set for a book in standalone playback,
+    /// for the iPhone to remember too (`WatchSessionManager.session(_:didReceiveUserInfo:)`).
+    /// `transferUserInfo(_:)` queues it and the system delivers it in order, even while the
+    /// iPhone app is suspended or out of reach (Apple's WCSession.transferUserInfo page),
+    /// unlike `sendMessage`, which fails when the counterpart isn't reachable. Not sent
+    /// before the session has activated; the Watch's own entry still applies then.
+    func sendBookSpeed(itemId: String, rate: Double) {
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
+              let data = try? JSONEncoder().encode(WatchBookSpeedUpdate(itemId: itemId, rate: rate)) else { return }
+        WCSession.default.transferUserInfo([WatchBookSpeedUpdate.userInfoKey: data])
+    }
+
     func setSleepTimer(_ option: WatchSleepTimerOption) {
         guard let state = playbackState else { return }
         send(.setSleepTimer(option: option), itemId: state.itemId)
@@ -644,7 +656,11 @@ extension WatchConnectivityStore: WCSessionDelegate {
         Task { @MainActor in
             self.isActivated = activationState == .activated
             self.isReachable = reachable
-            if self.isActivated { self.requestFreshSnapshotOnForeground() }
+            if self.isActivated {
+                self.requestFreshSnapshotOnForeground()
+                // Batch 496 (REVIEW 2026-11-11 W13): bootstrap may have finished before activation.
+                WatchStore.shared.publishSetupReport()
+            }
         }
     }
 
@@ -741,10 +757,18 @@ extension WatchConnectivityStore: WCSessionDelegate {
         if let data = context["chapterSkipSettings"],
            let decoded = try? JSONDecoder().decode(WatchChapterSkipSettings.self, from: data) {
             decoded.save()
+            // Batch 495 (REVIEW 2026-11-11 W7): the engine holds its copy in memory now.
+            WatchStore.shared.standalone.reloadPhonePlaybackSettings()
         }
 
         if context["wipeCredentials"] != nil {
-            Task { await WatchStore.shared.wipeCredentials() }
+            // Batch 496 (REVIEW 2026-11-11 W13): marked as the iPhone's, so the Shelf says why.
+            Task { await WatchStore.shared.wipeCredentials(initiatedByPhone: true) }
+        }
+        // Batch 496 (W13): the iPhone's "Send Sign-In to Watch". Carries no credential; this
+        // Watch asks for one through the usual interactive hand-over.
+        if context["offerCredentialHandoff"] != nil {
+            Task { await WatchStore.shared.acceptSignInOfferFromPhone() }
         }
     }
 }

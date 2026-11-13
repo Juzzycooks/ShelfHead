@@ -626,7 +626,9 @@ struct PlayerView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-        .sheet(isPresented: $showReadAlong) {
+        // Batch 495 (REVIEW 2026-11-11 L13): a full-screen cover, as from Book Detail, so a drag
+        // at the top of a chapter doesn't close the book. The reader has its own Close button.
+        .fullScreenCover(isPresented: $showReadAlong) {
             if #available(iOS 26.0, *), let book = playerViewModel.currentBook {
                 EbookReaderView(item: book, followsPlayback: true)
             }

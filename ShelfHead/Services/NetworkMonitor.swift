@@ -42,6 +42,22 @@ final class NetworkMonitor: @unchecked Sendable {
         lock.withLock { restoredObservers.append(handler) }
     }
 
+    /// Batch 497: handlers for "moved onto Wi-Fi while already connected" (mobile data to
+    /// Wi-Fi). Coming back from offline straight onto Wi-Fi is a "connectivity restored" event
+    /// and is not repeated here. Same rules as above: runs on `queue`, lives for the process.
+    private var wifiGainedObservers: [@Sendable () -> Void] = []
+
+    func addWiFiGainedObserver(_ handler: @escaping @Sendable () -> Void) {
+        lock.withLock { wifiGainedObservers.append(handler) }
+    }
+
+    /// Pure: which event a path change is, if any.
+    nonisolated static func pathChangeEvents(wasConnected: Bool, wasOnWiFi: Bool,
+                                             nowConnected: Bool, nowOnWiFi: Bool) -> (restored: Bool, gainedWiFi: Bool) {
+        let restored = nowConnected && !wasConnected
+        return (restored, !restored && nowOnWiFi && !wasOnWiFi)
+    }
+
     private init() {
         // Don't assume "connected" until the monitor has actually told us — if the app
         // launches in Airplane Mode, defaulting to `true` meant the first few
@@ -56,13 +72,15 @@ final class NetworkMonitor: @unchecked Sendable {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             let nowConnected = path.status == .satisfied
-            var restored = false
+            let nowOnWiFi = nowConnected && path.usesInterfaceType(.wifi)
             var observers: [@Sendable () -> Void] = []
             self.lock.withLock {
-                restored = nowConnected && !self._isConnected
+                let events = Self.pathChangeEvents(wasConnected: self._isConnected, wasOnWiFi: self._isOnWiFi,
+                                                   nowConnected: nowConnected, nowOnWiFi: nowOnWiFi)
                 self._isConnected = nowConnected
-                self._isOnWiFi = nowConnected && path.usesInterfaceType(.wifi)
-                if restored { observers = self.restoredObservers }
+                self._isOnWiFi = nowOnWiFi
+                if events.restored { observers = self.restoredObservers }
+                if events.gainedWiFi { observers = self.wifiGainedObservers }   // Batch 497
             }
             observers.forEach { $0() }
         }

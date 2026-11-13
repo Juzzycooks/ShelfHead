@@ -8,6 +8,18 @@ import Observation
 
 /// Lightweight haptic helper, gated by the user's Haptics setting. Safe to call
 /// from anywhere on the main thread.
+/// Batch 495 (REVIEW 2026-11-11 V7): one feedback per action class. Use the row's call;
+/// don't pick an intensity per screen.
+///
+/// | Action class                                    | Call                     |
+/// |-------------------------------------------------|--------------------------|
+/// | Play / pause (any surface)                      | `impact(.medium)`        |
+/// | Skip back / forward                             | `impact(.light)`         |
+/// | Add to Up Next / Play Next                      | fired by `PlayerViewModel.addToQueue` / `playNext`; call sites add none |
+/// | Selection (pickers, toggles, menus, filters)    | `selection()`            |
+/// | Success (a save or bulk action that completed)  | `success()`              |
+/// | Refused, nothing to do (no change was made)     | `warning()`              |
+/// | Failure (the action was tried and failed)       | `error()`                |
 enum Haptics {
     static func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
         guard SettingsStore.hapticsEnabled else { return }
@@ -20,6 +32,16 @@ enum Haptics {
     static func success() {
         guard SettingsStore.hapticsEnabled else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    /// Batch 495 (V7): an action that was refused before anything changed.
+    static func warning() {
+        guard SettingsStore.hapticsEnabled else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+    }
+    /// Batch 495 (V7): an action that failed. Failures used to fire `impact(.heavy)`.
+    static func error() {
+        guard SettingsStore.hapticsEnabled else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 }
 
@@ -365,6 +387,8 @@ struct BookContextMenu: ViewModifier {
     @ViewBuilder
     private func bookMenu(_ content: Content) -> some View {
         let finished = libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished
+        // Batch 497 (L12): listening progress only (`progress` is never the reading fraction),
+        // so a read-but-never-played audiobook says Play, not Resume.
         let progressPercent = libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent
         // CO-7 (Batch 353): item glyphs in the label colour on the menu's glass, as the
         // other system menus and dialogs now are. The cover inside keeps the app's tint.
@@ -390,10 +414,10 @@ struct BookContextMenu: ViewModifier {
                 )
             }
             if playerViewModel.currentBook != nil, playerViewModel.currentBook?.id != item.id {
-                Button { Haptics.selection(); playerViewModel.playNext(item) } label: {
+                Button { playerViewModel.playNext(item) } label: {   // V7: playNext gives the feedback
                     Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                 }
-                Button { Haptics.selection(); playerViewModel.addToQueue(item) } label: {
+                Button { playerViewModel.addToQueue(item) } label: {   // V7: addToQueue gives the feedback
                     Label("Add to Up Next", systemImage: "text.badge.plus")
                 }
             }

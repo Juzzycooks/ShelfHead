@@ -52,6 +52,18 @@ enum ParentGate {
         switchNeedsGate(to: targetAccountId, store: store)
     }
 
+    /// Pure: Batch 497 (REVIEW 2026-11-11 N5). The gate for one tap on a picker tile. A child tile, or no child
+    /// profile saved: never. Home's picker (`openedInSession`) tapping the account already signed in: never, since
+    /// the person is already in that account and nothing changes. Every other grown-up tile: always. The launch
+    /// picker keeps gating the active grown-up tile (Review 2 High 1): there the restored session wasn't chosen
+    /// by whoever is holding the phone, so that tap is what grants access.
+    nonisolated static func pickerTapNeedsGate(currentAccountId: String?, tappedAccountId: String,
+                                               tappedIsKid: Bool, anyKidSaved: Bool, openedInSession: Bool) -> Bool {
+        guard anyKidSaved, !tappedIsKid else { return false }
+        if openedInSession, let currentAccountId, currentAccountId == tappedAccountId { return false }
+        return true
+    }
+
     /// Pure: the gate for `AuthViewModel.switchAccount`, which every route (picker, Other Servers, Add Server,
     /// insecure-connection retry) goes through. Needed when the active account is a child's and the target is an
     /// adult one. With no active account (signed out) it falls back to `switchNeedsGate(to:)`, so a child can't use

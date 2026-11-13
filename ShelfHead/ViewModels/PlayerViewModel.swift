@@ -62,6 +62,14 @@ final class PlayerViewModel {
     /// What `retryFailedStart()` retries. Kept apart from `startFailureMessage` because the
     /// alert clears its message before calling Retry.
     private var lastFailedStart: (item: LibraryItem, episode: PodcastEpisode?)?
+    /// Batch 495 (REVIEW 2026-11-11 P4): `startFailureMessage` is the lost-stream notice, so
+    /// Retry reloads the current track at its position instead of starting a book again.
+    /// Read by the root alert to title it "Playback Stopped" rather than "Can't Start Playback".
+    private(set) var failureIsLostStream = false
+    /// Batch 495 (P4): the lost-stream notice.
+    nonisolated static var streamLostMessage: String {
+        String(localized: "Playback stopped. Lost the connection to your server.", comment: "Shown (alert and Driving Mode status line) when a streamed book's connection died and couldn't be recovered")
+    }
     /// Transient positive confirmation (e.g. "Added to Up Next"), shown as a success toast.
     var infoMessage: String?
 
@@ -663,6 +671,20 @@ final class PlayerViewModel {
             self.seekUndoTarget = now
             self.seekUndoTargetChapterId = self.chapters.last(where: { $0.start <= now })?.id
         }
+        // Batch 495 (REVIEW 2026-11-11 P4): a stream that died for good used to end as a
+        // silent pause. Its reason goes through the failed-start path (root alert, Driving
+        // Mode's status line), whose Retry reloads the track here rather than restarting.
+        playerService.onStreamLostChanged = { [weak self] lost in
+            guard let self else { return }
+            if lost {
+                self.lastFailedStart = nil
+                self.failureIsLostStream = true
+                self.startFailureMessage = Self.streamLostMessage
+            } else if self.failureIsLostStream {
+                self.failureIsLostStream = false
+                self.startFailureMessage = nil
+            }
+        }
         // Restore a queue persisted from a previous launch (assignment in init does
         // not trigger didSet, so this doesn't re-save).
         upNext = Self.loadQueue()
@@ -670,6 +692,10 @@ final class PlayerViewModel {
 
     /// Put a book at the front of the queue ("Play Next").
     func playNext(_ item: LibraryItem, episode: PodcastEpisode? = nil) {
+        // Batch 495 (REVIEW 2026-11-11 V7): the queue-add feedback lives here and in
+        // `addToQueue(_:episode:)`, so every surface gives the same one. Not in
+        // `playNext(_ entry:)`, which also serves the queue's own Move to Top.
+        Haptics.impact(.light)
         playNext(UpNextEntry(item: item, episode: episode))
     }
 
@@ -685,6 +711,7 @@ final class PlayerViewModel {
     /// Append a book to the end of the queue ("Add to Up Next").
     func addToQueue(_ item: LibraryItem, episode: PodcastEpisode? = nil) {
         let entry = UpNextEntry(item: item, episode: episode)
+        Haptics.impact(.light)   // Batch 495 (V7): the one queue-add feedback; see `playNext`
         // Dedupe by entry id: two episodes of one show are two entries, the same episode is one.
         guard !upNext.contains(where: { $0.id == entry.id }) else {
             infoMessage = String(localized: "Already in Up Next", comment: "Toast when the book is already in the Up Next queue")
@@ -1128,6 +1155,13 @@ final class PlayerViewModel {
     /// (a paused estimate would be misleading, so callers hide it then).
     /// The alert's Retry: starts the same book or episode again.
     func retryFailedStart() {
+        // Batch 495 (P4): the lost-stream notice's Retry. Runs only from the listener's tap.
+        if failureIsLostStream {
+            failureIsLostStream = false
+            startFailureMessage = nil
+            playerService.retryAfterStreamLoss()
+            return
+        }
         guard let failed = lastFailedStart else { return }
         lastFailedStart = nil
         Task {
@@ -1247,6 +1281,7 @@ final class PlayerViewModel {
         // alert never show a failure for a book that then started fine (fourth run).
         startFailureMessage = nil
         lastFailedStart = nil
+        failureIsLostStream = false   // Batch 495 (P4)
 
         // Keep the access token fresh for streamed playback — the token is embedded in
         // the AVPlayer asset URL and expires ~hourly. Skipped for downloads/offline.
@@ -1427,6 +1462,7 @@ final class PlayerViewModel {
         defer { endLoading() }
         startFailureMessage = nil
         lastFailedStart = nil
+        failureIsLostStream = false   // Batch 495 (P4)
 
         // Starting an episode abandons whatever book was warmed for Up Next.
         resolvePrefetchedSession(for: .discarded)

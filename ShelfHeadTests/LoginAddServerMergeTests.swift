@@ -341,9 +341,8 @@ final class LoginAddServerMergeTests: XCTestCase {
         // `nil` covers both "no test has run yet" and a server old enough not to report
         // the field at all — neutral label, collapsed either way.
         XCTAssertFalse(ServerConnectionRules.advertisesSingleSignOn(authMethods: nil))
-        XCTAssertFalse(ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: nil))
-        XCTAssertEqual(ServerConnectionRules.otherSignInOptionsTitle(authMethods: nil),
-                       "Other sign-in options")
+        // Batch 495 (O3): the disclosure helpers were retired for `signInLayout`.
+        XCTAssertEqual(ServerConnectionRules.signInLayout(authMethods: nil), .passwordWithSSODisclosure)
     }
 
     func testLocalOnlyServerDoesNotAdvertiseSingleSignOn() {
@@ -354,9 +353,7 @@ final class LoginAddServerMergeTests: XCTestCase {
     func testOpenIDInAuthMethodsOpensAndRelabelsTheDisclosure() {
         XCTAssertTrue(ServerConnectionRules.advertisesSingleSignOn(authMethods: ["local", "openid"]))
         XCTAssertTrue(ServerConnectionRules.advertisesSingleSignOn(authMethods: ["OpenID"]))
-        XCTAssertTrue(ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: ["openid"]))
-        XCTAssertEqual(ServerConnectionRules.otherSignInOptionsTitle(authMethods: ["openid"]),
-                       "Other sign-in options \u{2014} SSO available")
+        XCTAssertEqual(ServerConnectionRules.signInLayout(authMethods: ["openid"]), .singleSignOnOnly)
     }
 
     // `ReachabilityStore.testConnection` now reads `/status` after a passing `/ping` and
@@ -366,21 +363,21 @@ final class LoginAddServerMergeTests: XCTestCase {
     func testConnectionResultDefaultsAuthMethodsToNilWithTheTwoArgumentInitializer() {
         let plain = ReachabilityStore.ConnectionTestResult(outcome: .reachable, resolvedURL: "https://a.example")
         XCTAssertNil(plain.authMethods)
-        XCTAssertFalse(ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: plain.authMethods))
+        XCTAssertEqual(ServerConnectionRules.signInLayout(authMethods: plain.authMethods), .passwordWithSSODisclosure)
     }
 
     func testConnectionResultCarryingOpenIDExpandsAndRelabelsTheDisclosure() {
         let withSSO = ReachabilityStore.ConnectionTestResult(outcome: .reachable, resolvedURL: "https://a.example",
                                                               authMethods: ["local", "openid"])
         XCTAssertTrue(ServerConnectionRules.advertisesSingleSignOn(authMethods: withSSO.authMethods))
-        XCTAssertTrue(ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: withSSO.authMethods))
+        XCTAssertEqual(ServerConnectionRules.signInLayout(authMethods: withSSO.authMethods), .passwordAndSSO)
     }
 
     func testConnectionResultCarryingOnlyLocalStaysNeutral() {
         let localOnly = ReachabilityStore.ConnectionTestResult(outcome: .reachable, resolvedURL: "https://a.example",
                                                                 authMethods: ["local"])
         XCTAssertFalse(ServerConnectionRules.advertisesSingleSignOn(authMethods: localOnly.authMethods))
-        XCTAssertFalse(ServerConnectionRules.otherSignInOptionsStartExpanded(authMethods: localOnly.authMethods))
+        XCTAssertEqual(ServerConnectionRules.signInLayout(authMethods: localOnly.authMethods), .passwordWithSSODisclosure)
     }
 
     // MARK: - `GET /status` → `authMethods` parsing

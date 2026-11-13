@@ -14,8 +14,15 @@ struct LiveCaptionsView: View {
 
     @Environment(PlayerViewModel.self) private var playerViewModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage(SettingsKeys.captionTranslationLanguage) private var targetLanguage = ""
+    /// Batch 495 (REVIEW 2026-11-11 P10): the same setting as the ⋯ menu's Show Captions
+    /// toggle, so the Show Cover button here can hand the slot back to the cover.
+    @AppStorage(SettingsKeys.playerShowsCaptions) private var showsCaptions = false
+    /// Batch 495 (P10): the spoken line's size, capped at 1.4× like the player's other large
+    /// elements (`PlayerView.cappedTransportMetric`). It used to grow without limit.
+    @ScaledMetric(relativeTo: .title2) private var anchorLineMetric: CGFloat = 24
 
     @State private var transcript: Transcript?
     @State private var lastTick = Tick(time: 0, date: .now)
@@ -66,8 +73,13 @@ struct LiveCaptionsView: View {
         // Bottom-trailing, over the faded last line, so the button never covers live text.
         ZStack(alignment: .bottomTrailing) {
             captions
-            if #available(iOS 18.0, *), transcript != nil {
-                translateMenu
+            // Batch 495 (REVIEW 2026-11-11 P10): Show Cover beside Translate. It used to take
+            // the ⋯ menu's Show Captions toggle, about nine rows down, to get the cover back.
+            HStack(spacing: 0) {
+                showCoverButton
+                if #available(iOS 18.0, *), showsTranslateMenu {
+                    translateMenu
+                }
             }
         }
         .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -123,44 +135,99 @@ struct LiveCaptionsView: View {
         let before = window.lines.filter { index in anchor.map { index < $0 } ?? false }
         let after = window.lines.filter { index in anchor.map { index > $0 } ?? true }
 
-        return VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(before, id: \.self) { index in
-                    line(index, transcript: transcript, window: window, time: time)
+        // Batch 495 (REVIEW 2026-11-11 P10): the lines scroll. The spoken line used to sit in
+        // a fixed slot between two greedy halves, so a long sentence lost its start and end
+        // to the clip. Now the stack scrolls to keep the spoken line in view whenever it
+        // changes, and the listener can drag to read the rest of a long one.
+        return GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        // Room above the first line so it can sit below the top fade.
+                        Color.clear.frame(height: geometry.size.height * 0.25)
+                            .accessibilityHidden(true)
+                        ForEach(before, id: \.self) { index in
+                            line(index, transcript: transcript, window: window, time: time)
+                                .id(index)
+                        }
+                        if let anchor {
+                            line(anchor, transcript: transcript, window: window, time: time)
+                                .padding(.vertical, 8)
+                                .id(anchor)
+                        }
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(after, id: \.self) { index in
+                                line(index, transcript: transcript, window: window, time: time)
+                                    .id(index)
+                            }
+                            if translator.lastError != nil {
+                                Typo.supporting(Text("Translation unavailable"))
+                                    .foregroundStyle(Color.shelfMuted)
+                                    .padding(.top, 4)
+                            }
+                        }
+                        // Keep the following lines clear of the buttons in the bottom-trailing corner.
+                        .padding(.trailing, buttonRowWidth)
+                        // Room below the last line so it can scroll clear of the bottom fade.
+                        Color.clear.frame(height: geometry.size.height * 0.35)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 8)
+                }
+                .scrollIndicators(.hidden)
+                .onAppear { scrollToSpokenLine(window.anchor, proxy: proxy, animated: false) }
+                .onChange(of: window.anchor) { _, newAnchor in
+                    scrollToSpokenLine(newAnchor, proxy: proxy, animated: true)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .bottomLeading)
-
-            if let anchor {
-                line(anchor, transcript: transcript, window: window, time: time)
-                    // The spoken line always gets its full height; the greedy halves around it
-                    // otherwise squeezed it to one truncated line (simulator check).
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 14)
-                    .layoutPriority(1)
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(after, id: \.self) { index in
-                    line(index, transcript: transcript, window: window, time: time)
-                }
-                if translator.lastError != nil {
-                    Typo.supporting(Text("Translation unavailable"))
-                        .foregroundStyle(Color.shelfMuted)
-                        .padding(.top, 4)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
-            // Keep the following lines clear of the translate button in the bottom-trailing corner.
-            .padding(.trailing, 52)
         }
-        .padding(.horizontal, 8)
-        // The halves size to their lines, which can be taller than the slot; without a bounded
-        // frame before the clip they spilled over the title below (simulator check).
         .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         .clipped()
         .mask(fadeMask)
         .shelfAnimation(.easeInOut(duration: 0.3), value: window.anchor)
+    }
+
+    /// Batch 495 (P10): brings the spoken line into view a little above centre, so the line
+    /// before it shows as context. No animation under Reduce Motion.
+    private func scrollToSpokenLine(_ anchor: Int?, proxy: ScrollViewProxy, animated: Bool) {
+        guard let anchor else { return }
+        let target = UnitPoint(x: 0.5, y: 0.35)
+        if animated && !reduceMotion {
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(anchor, anchor: target) }
+        } else {
+            proxy.scrollTo(anchor, anchor: target)
+        }
+    }
+
+    // MARK: - Buttons
+
+    /// Batch 495 (P10): Translate shows only once a transcript is loaded (iOS 18+).
+    private var showsTranslateMenu: Bool { transcript != nil }
+
+    /// Width the bottom-trailing buttons take, kept clear by the lines that follow the spoken one.
+    private var buttonRowWidth: CGFloat {
+        if #available(iOS 18.0, *), showsTranslateMenu { return 96 }
+        return 52
+    }
+
+    /// Batch 495 (REVIEW 2026-11-11 P10): hands the artwork slot back to the cover. Same
+    /// 36 pt glass circle in a 44 pt target as Translate.
+    private var showCoverButton: some View {
+        Button {
+            Haptics.selection()
+            showsCaptions = false
+        } label: {
+            Image(systemName: "photo")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Color.shelfCream)
+                .frame(width: 36, height: 36)
+                .glassPill(Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show Cover")
+        .accessibilityHint("Hides the captions")
     }
 
     private var fadeMask: some View {
@@ -188,7 +255,8 @@ struct LiveCaptionsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if isAnchor {
                         Text(Self.attributed(segment.text, highlight: highlight))
-                            .scaledFont(24, weight: .semibold, design: .rounded, relativeTo: .title2)
+                            .font(.system(size: PlayerView.cappedTransportMetric(anchorLineMetric, base: 24),
+                                          weight: .semibold, design: .rounded))
                             .foregroundStyle(Color.shelfCream)
                     } else {
                         Typo.rowTitle(Text(verbatim: segment.text))

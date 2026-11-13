@@ -187,6 +187,123 @@ final class CloudPositionStore {
         return Self.decode(NSUbiquitousKeyValueStore.default.dictionary(forKey: Self.key(scope: scope, itemId: itemId)))
     }
 
+    // MARK: EPUB reading position (Batch 495, REVIEW 2026-11-11 L12)
+
+    /// One book's EPUB spine position, as carried between the listener's own devices.
+    struct EPUBRecord: Equatable, Sendable {
+        var spineIndex: Int
+        var fraction: Double
+        var updatedAt: Date
+    }
+
+    /// `"epub.<16 hex>.<id>"`, built exactly like `key(scope:itemId:)` (same folded scope,
+    /// same verbatim-or-hashed item id), so it is at most `maxEPUBKeyLength` (62) UTF-16
+    /// characters, under both documented key limits.
+    nonisolated static func epubKey(scope: String, itemId: String) -> String {
+        let foldedScope = digest(scope, hexLength: 16)
+        let id = itemId.utf16.count <= maxVerbatimItemIdLength ? itemId : digest(itemId, hexLength: 32)
+        return "\(epubKeyPrefix)\(foldedScope).\(id)"
+    }
+
+    nonisolated static let epubKeyPrefix = "epub."
+    nonisolated static let maxEPUBKeyLength = 5 + 16 + 1 + maxVerbatimItemIdLength
+
+    /// The store allows 1,024 keys in all (Apple, `NSUbiquitousKeyValueStore` overview), and
+    /// the audio `pos.` keys share them. EPUB keys are capped here; the oldest go first.
+    nonisolated static let maxEPUBKeys = 200
+
+    nonisolated static func encodeEPUB(_ record: EPUBRecord) -> [String: Any] {
+        ["s": record.spineIndex, "f": record.fraction, "u": record.updatedAt.timeIntervalSince1970]
+    }
+
+    nonisolated static func decodeEPUB(_ any: Any?) -> EPUBRecord? {
+        guard let dict = any as? [String: Any],
+              let s = (dict["s"] as? NSNumber)?.intValue,
+              let f = (dict["f"] as? NSNumber)?.doubleValue, f.isFinite,
+              let u = (dict["u"] as? NSNumber)?.doubleValue
+        else { return nil }
+        return EPUBRecord(spineIndex: max(0, s), fraction: min(1, max(0, f)), updatedAt: Date(timeIntervalSince1970: u))
+    }
+
+    /// Pure: which EPUB keys to remove so at most `limit` remain, oldest `updatedAt` first
+    /// (ties by key, so the choice is stable). Keys that aren't EPUB keys are never chosen.
+    nonisolated static func epubKeysToEvict(_ updatedAtByKey: [String: Date], limit: Int) -> [String] {
+        let epub = updatedAtByKey.filter { $0.key.hasPrefix(epubKeyPrefix) }
+        let excess = epub.count - max(0, limit)
+        guard excess > 0 else { return [] }
+        return epub.sorted { $0.value != $1.value ? $0.value < $1.value : $0.key < $1.key }
+            .prefix(excess).map(\.key)
+    }
+
+    /// Pure: should the cloud EPUB position replace the one saved on this device? Only when
+    /// there is one, and it is newer than the local save (a local position with no save time,
+    /// from before Batch 495, counts as older). A one-second margin absorbs clock rounding.
+    nonisolated static func shouldAdoptCloudEPUBPosition(cloud: EPUBRecord?, localSavedAt: Date?) -> Bool {
+        guard let cloud else { return false }
+        guard let localSavedAt else { return true }
+        return cloud.updatedAt.timeIntervalSince(localSavedAt) > 1
+    }
+
+    @ObservationIgnored private var lastEPUBWriteAt: [String: Date] = [:]
+
+    /// Writes the EPUB position for `itemId`, at most once per 20 s per book unless `force`.
+    /// No-op unless iCloud position sync is on.
+    func recordEPUB(itemId: String, spineIndex: Int, fraction: Double, force: Bool = false) {
+        guard isEnabled, let accountId = AccountStore.currentAccountId else { return }
+        let now = Date()
+        if !force, let last = lastEPUBWriteAt[itemId], now.timeIntervalSince(last) < 20 { return }
+        lastEPUBWriteAt[itemId] = now
+        let record = EPUBRecord(spineIndex: spineIndex, fraction: fraction, updatedAt: now)
+        if let scope = cachedCloudScope() {
+            writeEPUB(record, key: Self.epubKey(scope: scope, itemId: itemId))
+        } else {
+            Task { @MainActor in
+                guard let scope = await self.resolveCloudScope(for: accountId) else { return }
+                self.writeEPUB(record, key: Self.epubKey(scope: scope, itemId: itemId))
+            }
+        }
+    }
+
+    private func writeEPUB(_ record: EPUBRecord, key: String) {
+        let store = NSUbiquitousKeyValueStore.default
+        store.set(Self.encodeEPUB(record), forKey: key)
+        var stamps: [String: Date] = [:]
+        for (k, value) in store.dictionaryRepresentation where k.hasPrefix(Self.epubKeyPrefix) {
+            stamps[k] = Self.decodeEPUB(value)?.updatedAt ?? .distantPast
+        }
+        for stale in Self.epubKeysToEvict(stamps, limit: Self.maxEPUBKeys) {
+            store.removeObject(forKey: stale)
+        }
+    }
+
+    /// The cloud EPUB position for `itemId`, or nil (also nil while sync is off).
+    func epubPosition(forItemId itemId: String) -> EPUBRecord? {
+        guard isEnabled, let scope = cachedCloudScope() else { return nil }
+        return Self.decodeEPUB(NSUbiquitousKeyValueStore.default.dictionary(forKey: Self.epubKey(scope: scope, itemId: itemId)))
+    }
+
+    // MARK: Delete everything (Batch 495)
+
+    /// Pure: whether a key in the app's iCloud key-value store was written by this store —
+    /// audio positions (`pos.`, including the 6.0/6.1 build 1 long-key format) and EPUB
+    /// positions (`epub.`), for every account scope.
+    nonisolated static func isOwnedKey(_ key: String) -> Bool {
+        key.hasPrefix("pos.") || key.hasPrefix(epubKeyPrefix)
+    }
+
+    /// Removes every key this app has written to `NSUbiquitousKeyValueStore` (all accounts,
+    /// audio and EPUB), synchronises, and returns how many keys were removed. Used when the
+    /// listener turns iCloud position sync off and chooses to delete what is there.
+    @discardableResult func deleteAllFromCloud() -> Int {
+        let store = NSUbiquitousKeyValueStore.default
+        let owned = store.dictionaryRepresentation.keys.filter(Self.isOwnedKey)
+        for key in owned { store.removeObject(forKey: key) }
+        store.synchronize()
+        lastWriteAt.removeAll()
+        lastEPUBWriteAt.removeAll()
+        return owned.count
+    }
+
     /// Pure decision: should the cloud position replace the locally-resolved start time?
     /// Only when the server can't answer for itself (it stays authoritative when
     /// reachable), the cloud record exists, it's meaningfully ahead of the local

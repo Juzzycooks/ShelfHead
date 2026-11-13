@@ -22,6 +22,8 @@ import QuickLook
 /// P-15 (REVIEW_2026-09-14_DESIGN.md): reading position now syncs back to Audiobookshelf
 /// for the PDF path only. `QLPreviewController` exposes no current-page/location API for
 /// EPUB/CBZ, so nothing is written for those formats — see `persistPDFProgressIfNeeded()`.
+/// Batch 495 (L12): the iOS 26 EPUB reader sends `ebookProgress` (only) itself; see
+/// `EPUBReaderModel.sendReadingProgress`. Every format is cached by `EbookStore` (L11).
 struct EbookReaderView: View {
     let item: LibraryItem
     /// Batch 431: open the EPUB following the audio (the player's Read Along item).
@@ -31,6 +33,7 @@ struct EbookReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
+    /// The cached file (`EbookStore`) for PDF and Quick Look. Never deleted on dismiss (Batch 495).
     @State private var downloadedFileURL: URL?
     /// The cached EPUB file (`EbookStore`) on iOS 26+. Never deleted on dismiss.
     @State private var epubFileURL: URL?
@@ -178,13 +181,9 @@ struct EbookReaderView: View {
             .systemChromeTint()
             .task { await load() }
             .onDisappear {
+                // Batch 495 (REVIEW 2026-11-11 L11): the file is the `EbookStore` cache now,
+                // kept so the book opens again offline; it is no longer deleted here.
                 persistPDFProgressIfNeeded()
-                // Quick Look reads directly from disk (and, since P-15, so does PDFKit —
-                // see `load()`), so a temp file was written for it — clean it up rather
-                // than leaving it for the system's own temp-directory GC.
-                if let downloadedFileURL {
-                    try? FileManager.default.removeItem(at: downloadedFileURL)
-                }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 // Backgrounding the app is a common way to actually stop reading without
@@ -239,49 +238,19 @@ struct EbookReaderView: View {
             isLoading = false
             return
         }
-        guard let ino = ebookFile.ino else {
-            errorMessage = String(localized: "This ebook file is missing required information.")
-            isLoading = false
-            return
-        }
-        let serverURL = AuthStore.shared.serverURL
-        let path = "/api/items/\(item.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.id)/file/\(ino.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ino)/download"
-        guard let url = URL(string: "\(serverURL)\(path)") else {
-            errorMessage = String(localized: "Couldn't build a download URL for this file.")
-            isLoading = false
-            return
-        }
         do {
-            // Item 6 (REVIEW-2026-09-09 remaining): was
-            // `URLSession.shared.data(for: AuthStore.shared.authorizedRequest(url:))`.
-            // That built the right headers (bearer + per-account custom headers) but had
-            // no refresh-and-retry, so behind a reverse proxy — or simply with a
-            // short-lived access token that had rotated since the last API call — opening
-            // an ebook hard-failed with "The server couldn't provide this file" and kept
-            // failing until something else refreshed the token or the app was restarted.
-            // `authorizedData(for:)` builds the identical request via
-            // `AuthStore.authorizedRequest(url:)` and adds the one silent refresh-and-retry
-            // on 401 that every other authenticated call gets. It also validates the
-            // status itself (throwing on any non-2xx), which is why the explicit
-            // `HTTPURLResponse` check that used to live here is gone — that check is now
-            // `validateStatus` inside the API type, surfaced through the `catch` below.
-            let data = try await AudiobookshelfAPI.shared.authorizedData(for: url)
-            // P-15 (REVIEW_2026-09-14_DESIGN.md): both formats now go through a URL-based
-            // initializer (`PDFDocument(url:)`, Quick Look's `QLPreviewItem` URL) instead
-            // of PDFKit keeping the raw response as a second, separate `Data` copy in
-            // SwiftUI `@State` for the life of the reader. The initial fetch above still
-            // brings the whole response into memory once — `AudiobookshelfAPI` has no
-            // streaming download-to-disk entry point today, and adding one is beyond this
-            // file-guarded pass (only this file and `AudiobookshelfAPI.swift`) — but
-            // nothing holds onto that `Data` past this `write(to:)`.
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(ProcessInfo.processInfo.globallyUniqueString)
-                .appendingPathExtension(fileExtension)
-            try data.write(to: tempURL, options: .atomic)
-            downloadedFileURL = tempURL
+            // Batch 495 (REVIEW 2026-11-11 L11): PDF and CBZ (and EPUB on iOS 17–25) used to be
+            // fetched into a temp file on every open and deleted on close, so they never opened
+            // offline. They now share the EPUB cache in `EbookStore` (per account, beside the
+            // transcript, counted and cleared with it), fetched through `authorizedData` as before.
+            let fileURL = try await EbookStore.fetch(item: item)
+            downloadedFileURL = fileURL
 
             if isPDF {
-                guard let document = PDFDocument(url: tempURL) else {
+                guard let document = PDFDocument(url: fileURL) else {
+                    // A damaged cached copy would otherwise fail every open; the next try downloads afresh.
+                    EbookStore.delete(itemId: item.id)
+                    downloadedFileURL = nil
                     errorMessage = String(localized: "Couldn't open this PDF.")
                     isLoading = false
                     return
@@ -292,9 +261,15 @@ struct EbookReaderView: View {
                 // off, if it recorded a page that's actually in range for this document.
                 // Best-effort: a failure here just means the reader opens at page one,
                 // same as before this pass.
-                if let stored = try? await AudiobookshelfAPI.shared.getEbookProgress(itemId: item.id),
-                   let locationString = stored.location,
-                   let page = Int(locationString), page >= 0, page < document.pageCount {
+                // Batch 495 (L11): offline, or with the server unreachable, the page the item
+                // already carries is used instead of waiting on a request that can't answer.
+                var locationString = item.mediaProgress?.ebookLocation
+                if ReachabilityStore.shared.status == .ok,
+                   let stored = try? await AudiobookshelfAPI.shared.getEbookProgress(itemId: item.id) {
+                    locationString = stored.location
+                }
+                // Batch 497 (L11): a replaced, shorter PDF opens on its last page, not page one.
+                if let locationString, let page = EbookStore.clampedPage(Int(locationString), pageCount: document.pageCount) {
                     initialPageIndex = page
                     currentPageIndex = page
                     lastPersistedPageIndex = page
@@ -362,7 +337,8 @@ struct EbookReaderView: View {
     /// current server URL plus account id, or `"unscoped"` if signed out entirely. Must be
     /// called synchronously, before any `await`, by whoever is capturing a position to
     /// queue (see that method's doc comment for the account-switch race this avoids).
-    private static func currentProgressScope() -> String {
+    /// Internal (was private) since Batch 495: the EPUB reader's `ebookProgress` write uses it too.
+    static func currentProgressScope() -> String {
         let server = AuthStore.shared.serverURL
         guard !server.isEmpty else { return "unscoped" }
         return DownloadManager.scopeKey(serverURL: server, accountId: AccountStore.currentAccountId ?? "unknown")
@@ -389,6 +365,11 @@ struct EbookReaderView: View {
     /// (the house split, as on Series and Collections); the details go to `ShelfLog` at the
     /// call sites instead.
     nonisolated static func downloadFailureMessage(for error: Error) -> String {
+        // Batch 495 (L11): every format now goes through `EbookStore.fetch`, whose own errors
+        // carry the same sentences this view used to show for a missing file or bad URL.
+        if let storeError = error as? EbookStore.StoreError, let message = storeError.errorDescription {
+            return message
+        }
         guard let apiError = error as? APIError else {
             if let urlError = error as? URLError {
                 switch urlError.code {

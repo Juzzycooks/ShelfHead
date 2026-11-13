@@ -66,6 +66,20 @@ struct HomeView: View {
     @State private var showUploadSheet = false
     /// Batch 490 (REVIEW 2026-11-11 V6): hosts Release Radar's Undo toast (see `.toast` in `body`).
     @State private var releaseRadar = ReleaseRadarViewModel.shared
+    /// Batch 496 (REVIEW 2026-11-11 N5): the profile picker, mid-session, as a full-screen cover.
+    @State private var showProfilePicker = false
+    /// Batch 496 (N5): the picker is never shown over App Lock (see `.fullScreenCover` in `body`).
+    @State private var appLock = AppLockManager.shared
+    @Environment(\.scenePhase) private var scenePhase
+    private var hasAnyKidProfile: Bool {
+        _ = kidProfilesData
+        return KidProfileStore.standard.hasAnyKid
+    }
+    private var showsProfileButton: Bool {
+        HomeState.showsProfileButton(savedAccountCount: authViewModel.accounts.count,
+                                     hasAnyKid: hasAnyKidProfile,
+                                     isAppLocked: appLock.isLocked)
+    }
 
     /// Stable identity for a shelf so hide/show survives relaunches.
     private func shelfKey(_ shelf: PersonalizedView) -> String {
@@ -343,11 +357,18 @@ struct HomeView: View {
     private func sectionView(for key: String) -> some View {
         if key == Self.downloadedShelfKey {
             if !downloadManager.downloadedItems.isEmpty {
-                CompactShelfRow(title: String(localized: "Downloaded", comment: "Home shelf title: books saved on this device"), items: downloadManager.downloadedLibraryItems())
+                // Batch 496 (REVIEW 2026-11-11 N4): capped at a dozen tiles; See all opens Downloads.
+                CompactShelfRow(title: String(localized: "Downloaded", comment: "Home shelf title: books saved on this device"),
+                                items: HomeState.capped(downloadManager.downloadedLibraryItems(), to: HomeState.downloadedTileCap),
+                                seeAll: HomeState.seeAllDestination(forSectionKey: key),
+                                bottomInset: bottomInset)
             }
         } else if key == Self.narratorShelfKey {
             if !libraryViewModel.favoriteNarratorItems.isEmpty {
-                CompactShelfRow(title: String(localized: "From Narrators You Follow", comment: "Home shelf title"), items: libraryViewModel.favoriteNarratorItems)
+                // Batch 497 (N4): See all opens the Narrators list (starred first).
+                CompactShelfRow(title: String(localized: "From Narrators You Follow", comment: "Home shelf title"), items: libraryViewModel.favoriteNarratorItems,
+                                seeAll: HomeState.seeAllDestination(forSectionKey: key),
+                                bottomInset: bottomInset)
             }
         } else if key == Self.smartFiltersKey {
             if libraryViewModel.selectedLibrary != nil {
@@ -398,7 +419,10 @@ struct HomeView: View {
             // Critique 2026-10-05 (Home, 2nd): the Continue Listening branch that used to
             // sit here was unreachable (the NOW zone is rendered separately by
             // `nowZoneItems`, and BROWSE filters out `.now` keys); removed.
-            CompactShelfRow(title: shelfTitle(shelf), items: entities)
+            // Batch 496 (N4): Recently Added and Next in Series get a See all (HomeState).
+            CompactShelfRow(title: shelfTitle(shelf), items: entities,
+                            seeAll: HomeState.seeAllDestination(forSectionKey: key),
+                            bottomInset: bottomInset)
         }
     }
 
@@ -518,7 +542,7 @@ struct HomeView: View {
                             // any more) or only on the server shelf (see `nowZoneItems`).
                             let nowItems = nowZoneItems
                             if !nowItems.isEmpty {
-                                ContinueListeningSection(items: nowItems)
+                                ContinueListeningSection(items: nowItems, bottomInset: bottomInset)
                             } else {
                                 nowZoneEmptyState
                             }
@@ -649,6 +673,19 @@ struct HomeView: View {
                 // HIG audit 2026-09-17 L17: monochrome toolbar icons (see View.monochromeToolbarItem)
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Group {
+                        // Batch 496 (REVIEW 2026-11-11 N5): the profile picker without quitting the
+                        // app. Titled Label (VoiceOver, iPhone Duo overflow); the parent gate lives
+                        // in the picker's tiles, as at launch.
+                        if showsProfileButton {
+                            Button {
+                                guard !appLock.isLocked else { return }
+                                Haptics.selection()
+                                showProfilePicker = true
+                            } label: {
+                                Label("Switch Profile", systemImage: "person.crop.circle")
+                            }
+                            .accessibilityHint("Choose who’s listening")
+                        }
                         if libraryViewModel.libraries.count > 1 {
                             Menu {
                                 ForEach(libraryViewModel.libraries) { library in
@@ -708,6 +745,7 @@ struct HomeView: View {
                 // Review 6 Medium 10: the iOS 26 shell doesn't remount Home, so reload this shelf too.
                 Task { await libraryViewModel.loadFavoriteNarratorItems() }
                 Task { await loadWeekStats() }
+                Task { await authViewModel.loadAccounts() }   // Batch 496 (N5): an added server
             }
             // Review 7 Medium 3: the handler above runs before the new account's library is
             // selected (and before its progress loads), so reload both once it is.
@@ -756,6 +794,8 @@ struct HomeView: View {
                     hiddenSections.remove(Self.continueListeningKey)
                     SettingsStore.setHomeSection(Self.continueListeningKey, hidden: false)
                 }
+                // Batch 496 (N5): the saved-account count decides the profile button.
+                Task { await authViewModel.loadAccounts() }
                 if libraryViewModel.libraries.isEmpty {
                     await libraryViewModel.loadLibraries()
                 }
@@ -816,6 +856,23 @@ struct HomeView: View {
             }
             // Batch 490 (REVIEW 2026-11-11 V6): Release Radar's "Not Interested" Undo. Hosted here, not
             // on the shelf, because hiding the last entry unmounts the shelf (and its toast with it).
+            // Batch 496 (REVIEW 2026-11-11 N5): the picker mid-session. Switching runs through the
+            // picker's own `ServerSwitchFlow` (password, insecure-connection and failure follow-ups),
+            // and `MainTabView`'s `.shelfheadAccountChanged` receiver resets account state as for any
+            // switch. A full-screen cover sits above ContentView's App Lock overlay, so it closes
+            // when the app locks and is blanked while the scene is inactive (the switcher snapshot).
+            .fullScreenCover(isPresented: $showProfilePicker) {
+                ProfilePickerView(onFinish: { showProfilePicker = false },
+                                  onCancel: { showProfilePicker = false })
+                    .overlay {
+                        if SettingsStore.appLockEnabled && (scenePhase != .active || appLock.isLocked) {
+                            Color.shelfBackground.ignoresSafeArea()
+                        }
+                    }
+            }
+            .onChange(of: appLock.isLocked) { _, locked in
+                if locked { showProfilePicker = false }
+            }
             .toast(message: $releaseRadar.notInterestedToast,
                    style: .info, duration: 4, bottomInset: bottomInset,
                    action: ToastAction(label: LocalizedStringResource("Undo")) {
@@ -1073,6 +1130,8 @@ struct HomeView: View {
 /// most recently played book.
 struct ContinueListeningSection: View {
     let items: [LibraryItem]
+    /// Batch 496 (N4): clearance for the pushed "Also in Progress" page on the legacy tab bar.
+    var bottomInset: CGFloat = 0
     @Environment(LibraryViewModel.self) private var libraryViewModel
 
     var body: some View {
@@ -1091,7 +1150,7 @@ struct ContinueListeningSection: View {
             }
 
             if items.count > 1 {
-                ContinueListeningQueue(items: Array(items.dropFirst()))
+                ContinueListeningQueue(items: Array(items.dropFirst()), bottomInset: bottomInset)
             }
         }
     }
@@ -1116,9 +1175,10 @@ struct ContinueListeningHeroCard: View {
     }
 
     private var progressValue: Double {
-        if let serverProgress { return serverProgress.progress ?? item.progressPercent }
+        // Batch 497 (L12): reading only for a book with no audio (`LibraryItem.shownProgress`).
+        if let serverProgress { return item.shownProgress(serverProgress) }
         if let live = livePlayerProgress, item.progressPercent == 0 { return live.time / live.duration }
-        return item.progressPercent
+        return item.shownProgress(nil)
     }
 
     private var currentTimeValue: Double {
@@ -1332,9 +1392,13 @@ struct ContinueListeningHeroCard: View {
 /// queue underneath the hero card rather than a second, equally-weighted shelf.
 struct ContinueListeningQueue: View {
     let items: [LibraryItem]
+    var bottomInset: CGFloat = 0
     @Environment(LibraryViewModel.self) private var libraryViewModel
 
     var body: some View {
+        // Batch 496 (REVIEW 2026-11-11 N4): at most three rows under the hero; the rest are
+        // one See all away, so a heavy listener reaches the first shelf without scrolling.
+        let shown = HomeState.capped(items, to: HomeState.alsoInProgressRowCap)
         VStack(alignment: .leading, spacing: 8) {
             // UI-4: was a bare hand-rolled `Text`, its own third visual language for a
             // section header alongside `RetroSectionHeader` (used two sections above by
@@ -1345,11 +1409,20 @@ struct ContinueListeningQueue: View {
             // introducing its own.
             // Critique 2026-10-06 (clarify): was "Up Next", which everywhere else in the app
             // is the play queue. These are the other books in progress, not a queue.
-            RetroSectionHeader(title: .verbatim(HomeState.alsoInProgressTitle))
-                .padding(.horizontal, Space.pageH)
+            Group {
+                if HomeState.alsoInProgressHasSeeAll(otherCount: items.count) {
+                    RetroSectionHeader(title: .verbatim(HomeState.alsoInProgressTitle),
+                                       seeAllLabel: HomeState.seeAllAccessibilityLabel(.alsoInProgress)) {
+                        HomeAlsoInProgressPage(items: items, bottomInset: bottomInset)
+                    }
+                } else {
+                    RetroSectionHeader(title: .verbatim(HomeState.alsoInProgressTitle))
+                }
+            }
+            .padding(.horizontal, Space.pageH)
 
             VStack(spacing: 8) {
-                ForEach(items) { item in
+                ForEach(shown) { item in
                     ContinueListeningQueueRow(
                         item: item,
                         serverProgress: libraryViewModel.progressFor(itemId: item.id)
@@ -1367,7 +1440,7 @@ struct ContinueListeningQueueRow: View {
     @Environment(PlayerViewModel.self) private var playerViewModel
 
     private var progressValue: Double {
-        serverProgress?.progress ?? item.progressPercent
+        item.shownProgress(serverProgress)  // Batch 497 (L12)
     }
 
     // Code review fix (26 August 2026): this row had no `accessibilityElement`/
@@ -1381,7 +1454,7 @@ struct ContinueListeningQueueRow: View {
     /// (playing -> pause, loaded+paused -> resume, else start), so tapping the row's
     /// button on the book that is already loaded no longer rebuilds its session.
     private func performPlay() {
-        Haptics.impact(.light)
+        Haptics.impact(.medium)   // Batch 495 (V7): play/pause class
         if isCurrent {
             playerViewModel.togglePlayPause()
         } else {
@@ -1517,14 +1590,26 @@ struct ContinueListeningQueueRow: View {
 struct CompactShelfRow: View {
     let title: String
     let items: [LibraryItem]
+    /// Batch 496 (REVIEW 2026-11-11 N4): where the header's See all goes, or nil for none.
+    var seeAll: HomeState.SeeAllDestination? = nil
+    var bottomInset: CGFloat = 0
     @State private var downloadManager = DownloadManager.shared
     @Environment(PlayerViewModel.self) private var playerViewModel
     @Environment(LibraryViewModel.self) private var libraryViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            RetroSectionHeader(title: .verbatim(title))
-                .padding(.horizontal, Space.pageH)
+            Group {
+                if let seeAll {
+                    RetroSectionHeader(title: .verbatim(title),
+                                       seeAllLabel: HomeState.seeAllAccessibilityLabel(seeAll)) {
+                        HomeSeeAllPage(destination: seeAll, bottomInset: bottomInset)
+                    }
+                } else {
+                    RetroSectionHeader(title: .verbatim(title))
+                }
+            }
+            .padding(.horizontal, Space.pageH)
 
             if items.count == 1, let item = items.first {
                 // A single-item shelf (common for "Next in Series") uses a wide
@@ -1577,7 +1662,7 @@ struct CompactShelfRow: View {
                                     subtitle: item.authorName,
                                     // Critique 2026-10-05 (Home): in-progress / finished
                                     // books show it on the tile like Library's grid does.
-                                    progress: libraryViewModel.progressFor(itemId: item.id)?.progress ?? item.progressPercent,
+                                    progress: item.shownProgress(libraryViewModel.progressFor(itemId: item.id)),  // Batch 497 (L12)
                                     isFinished: libraryViewModel.progressFor(itemId: item.id)?.isFinished ?? item.isFinished,
                                     downloaded: downloadManager.isDownloaded(itemId: item.id),
                                     downloadProgress: downloadManager.isDownloading(itemId: item.id)
@@ -1600,6 +1685,212 @@ struct CompactShelfRow: View {
                 .accessibilityLabel(title)
             }
         }
+    }
+}
+
+// MARK: - See all destinations (Batch 496, REVIEW 2026-11-11 N4)
+
+/// Where a Home shelf's See all goes. Pushed inside Home's own navigation stack (as the
+/// Other Servers shelf's See all is), built from Library's existing pages and tiles.
+struct HomeSeeAllPage: View {
+    let destination: HomeState.SeeAllDestination
+    var bottomInset: CGFloat = 0
+
+    var body: some View {
+        switch destination {
+        case .recentlyAdded: HomeRecentlyAddedPage(bottomInset: bottomInset)
+        case .series: HomeSeriesPage(bottomInset: bottomInset)
+        case .downloads: DownloadsView(bottomInset: bottomInset)
+        // Reached from `ContinueListeningQueue` with its items, not through this switch.
+        case .alsoInProgress: EmptyView()
+        case .listenAgain: HomeRecentlyAddedPage(shelf: .listenAgain, bottomInset: bottomInset)   // Batch 497 (N4)
+        case .narrators: HomeNarratorsPage()   // Batch 497 (N4)
+        }
+    }
+}
+
+/// Batch 497 (REVIEW 2026-11-11 N4): Library's Narrators list (starred first), pushed from
+/// From Narrators You Follow. It loads the narrator list itself if Library hasn't yet.
+struct HomeNarratorsPage: View {
+    var body: some View {
+        ZStack {
+            Color.shelfBackground.ignoresSafeArea()
+            NarratorsBrowseView()
+        }
+        .navigationTitle(String(localized: "Narrators"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Every other in-progress book, as the same rows Home shows under the hero.
+struct HomeAlsoInProgressPage: View {
+    let items: [LibraryItem]
+    var bottomInset: CGFloat = 0
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+
+    var body: some View {
+        ZStack {
+            Color.shelfBackground.ignoresSafeArea()
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(items) { item in
+                        ContinueListeningQueueRow(item: item,
+                                                  serverProgress: libraryViewModel.progressFor(itemId: item.id))
+                    }
+                }
+                .padding(.horizontal, Space.pageH)
+                .padding(.top, Space.l)
+                .padding(.bottom, 16 + bottomInset)
+            }
+        }
+        .navigationTitle(HomeState.alsoInProgressTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .reexpandsTabBarOnAppear()
+    }
+}
+
+/// Library's Series grid, pushed from Next in Series. Loads the series list if Library
+/// hasn't yet (Home can be the first screen to need it).
+struct HomeSeriesPage: View {
+    var bottomInset: CGFloat = 0
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+
+    var body: some View {
+        ZStack {
+            Color.shelfBackground.ignoresSafeArea()
+            SeriesBrowseView(bottomInset: bottomInset)
+        }
+        .navigationTitle(String(localized: "Series"))
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if !libraryViewModel.seriesLoaded && !libraryViewModel.isLoadingSeries {
+                await libraryViewModel.loadSeries()
+            }
+        }
+        .reexpandsTabBarOnAppear()
+    }
+}
+
+/// The library, newest first: Recently Added's full list. Its own page (paged 50 at a time
+/// from `/api/libraries/<id>/items?sort=addedAt&desc=1`) rather than a switch to the Library
+/// tab, so Library's own sort choice is left alone.
+/// Batch 497 (N4): also Listen Again's page (`shelf: .listenAgain`), every finished book with
+/// the latest finish first; the query comes from `HomeState.pagedQuery(for:)`.
+struct HomeRecentlyAddedPage: View {
+    var shelf: HomeState.SeeAllDestination = .recentlyAdded
+    var bottomInset: CGFloat = 0
+    @Environment(LibraryViewModel.self) private var libraryViewModel
+    @State private var books: [LibraryItem] = []
+    @State private var total = 0
+    @State private var nextPage = 0
+    @State private var lastPageCount = 0
+    @State private var isLoading = true
+    @State private var isLoadingMore = false
+    @State private var loadFailed = false
+
+    private static let pageSize = 50
+    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 16)]
+
+    var body: some View {
+        ZStack {
+            Color.shelfBackground.ignoresSafeArea()
+            if isLoading && books.isEmpty {
+                ScrollView {
+                    SkeletonGrid(padding: EdgeInsets(top: Space.l, leading: Space.pageH, bottom: Space.l, trailing: Space.pageH))
+                }
+                .scrollDisabled(true)
+                .accessibilityElement()
+                .accessibilityLabel("Loading…")
+                .transition(.opacity)
+            } else if loadFailed && books.isEmpty {
+                LoadFailedStateView { Task { await reload() } }
+            } else if books.isEmpty {
+                if shelf == .listenAgain {
+                    EmptyStateView(icon: "checkmark.circle",
+                                   title: LocalizedStringResource("No finished books yet"),
+                                   subtitle: LocalizedStringResource("Books you finish will appear here."))
+                } else {
+                    EmptyStateView(icon: "books.vertical",
+                                   title: LocalizedStringResource("This library is empty"),
+                                   subtitle: LocalizedStringResource("Add books on your server, then check again."))
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 20) {
+                        ForEach(books) { item in
+                            BookLink(item) {
+                                BookGridTile(item: item)
+                            }
+                            .buttonStyle(.plain)
+                            .bookContextMenu(item)
+                            .onAppear {
+                                if item.id == books.last?.id { Task { await loadMore() } }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Space.pageH)
+                    .padding(.vertical, Space.l)
+                    if isLoadingMore {
+                        ProgressView()
+                            .shelfSpinner()
+                            .accessibilityLabel("Loading…")
+                            .padding(.bottom, Space.l)
+                    }
+                    Color.clear.frame(height: bottomInset)
+                }
+                .transition(.opacity)
+            }
+        }
+        .shelfAnimation(.easeInOut(duration: 0.25), value: isLoading)
+        .navigationTitle(shelf == .listenAgain
+                         ? String(localized: "Listen Again", comment: "Home shelf title")
+                         : String(localized: "Recently Added", comment: "Home shelf title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await reload() }
+        .task { await reload() }
+        .reexpandsTabBarOnAppear()
+    }
+
+    /// One page, or nil on failure. `stale` when the account or library changed meanwhile.
+    private func fetch(page: Int) async -> (response: LibraryItemsResponse?, stale: Bool) {
+        guard let libraryId = libraryViewModel.selectedLibrary?.id,
+              let query = HomeState.pagedQuery(for: shelf) else { return (nil, false) }
+        let accountId = AccountStore.currentAccountId
+        let response = try? await AudiobookshelfAPI.shared.getLibraryItems(
+            libraryId: libraryId, limit: Self.pageSize, page: page, filter: query.filter,
+            sort: query.sort, desc: query.desc)
+        let stale = libraryViewModel.selectedLibrary?.id != libraryId || AccountStore.currentAccountId != accountId
+        return (response, stale)
+    }
+
+    private func reload() async {
+        isLoading = true
+        loadFailed = false
+        let result = await fetch(page: 0)
+        guard !result.stale else { return }
+        if let response = result.response {
+            books = response.results
+            total = response.total
+            lastPageCount = response.results.count
+            nextPage = 1
+        } else if libraryViewModel.selectedLibrary != nil {
+            loadFailed = true
+        }
+        isLoading = false
+    }
+
+    private func loadMore() async {
+        guard !isLoading, !isLoadingMore,
+              HomeState.recentlyAddedHasMore(loaded: books.count, total: total, lastPageCount: lastPageCount) else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        let result = await fetch(page: nextPage)
+        guard !result.stale, let response = result.response else { return }
+        let known = Set(books.map(\.id))
+        books += response.results.filter { !known.contains($0.id) }
+        total = response.total
+        lastPageCount = response.results.count
+        nextPage += 1
     }
 }
 
@@ -1826,7 +2117,7 @@ struct HomeBSideCard: View {
             libraryViewModel.progressFor(itemId: $0.id) == nil
         }
         guard let pick = unstarted.randomElement() else {
-            Haptics.impact(.heavy)
+            Haptics.warning()   // Batch 495 (V7): nothing to shuffle
             toastMessage = String(localized: "Every book in this library has already been started.")
             return
         }
@@ -2315,6 +2606,105 @@ enum HomeState {
     /// own (the bare B-Side row); otherwise two caps labels would stack.
     static func browseNeedsOwnHeader(firstKey: String?) -> Bool {
         firstKey == HomeView.bSideKey
+    }
+
+    // MARK: Batch 496 (REVIEW 2026-11-11 N4): shelf caps and See all
+
+    /// Rows under the hero before "Also in Progress" needs See all.
+    static let alsoInProgressRowCap = 3
+    /// Tiles in the Downloaded shelf; See all (Downloads) has the rest.
+    static let downloadedTileCap = 12
+
+    enum SeeAllDestination: Equatable {
+        /// The library, newest first (`HomeRecentlyAddedPage`).
+        case recentlyAdded
+        /// Library's Series grid (`HomeSeriesPage`).
+        case series
+        /// The Downloads screen (`DownloadsView`).
+        case downloads
+        /// Every other in-progress book (`HomeAlsoInProgressPage`).
+        case alsoInProgress
+        /// Batch 497 (N4): every finished book, most recently finished first
+        /// (`HomeRecentlyAddedPage(shelf: .listenAgain)`).
+        case listenAgain
+        /// Batch 497 (N4): Library's Narrators list, starred narrators first
+        /// (`HomeNarratorsPage`). The shelf already shows every book it loaded; the full set
+        /// would mean paging each narrator separately, so this goes to the narrators instead.
+        case narrators
+    }
+
+    /// Batch 497 (N4): the server query behind a paged See all page: `/api/libraries/<id>/items`
+    /// with this sort, direction and `filter`.
+    struct PagedShelfQuery: Equatable {
+        let sort: String
+        let desc: Bool
+        let filter: String?
+    }
+
+    /// Batch 497 (N4): the paged query for a See all destination, or nil when it isn't a
+    /// paged page. Listen Again is the server's own shelf query (Audiobookshelf
+    /// `libraryFilters.getMediaFinished`: `progress` filter `finished`), sorted by
+    /// `progress.finishedAt` (`libraryItemsBookFilters.getOrder`) so the latest finish leads.
+    static func pagedQuery(for destination: SeeAllDestination) -> PagedShelfQuery? {
+        switch destination {
+        case .recentlyAdded:
+            return PagedShelfQuery(sort: LibrarySort.addedAt.rawValue, desc: true, filter: nil)
+        case .listenAgain:
+            return PagedShelfQuery(sort: "progress.finishedAt", desc: true,
+                                   filter: LibraryProgressFilter.finished.filterValue)
+        case .series, .downloads, .alsoInProgress, .narrators:
+            return nil
+        }
+    }
+
+    /// The first `cap` items (none for a negative cap).
+    static func capped<T>(_ items: [T], to cap: Int) -> [T] {
+        Array(items.prefix(max(cap, 0)))
+    }
+
+    /// Which BROWSE shelves get a See all. Discover (random by design), a server's own labels
+    /// and the app's own shelves other than Downloaded and the narrator shelf get none.
+    static func seeAllDestination(forSectionKey key: String) -> SeeAllDestination? {
+        switch key {
+        case "LabelRecentlyAdded": return .recentlyAdded
+        case "LabelContinueSeries": return .series
+        case HomeView.downloadedShelfKey: return .downloads
+        case "LabelListenAgain": return .listenAgain        // Batch 497 (N4)
+        case HomeView.narratorShelfKey: return .narrators   // Batch 497 (N4)
+        default: return nil
+        }
+    }
+
+    /// "Also in Progress" gets See all only when it holds more books than it shows.
+    static func alsoInProgressHasSeeAll(otherCount: Int) -> Bool {
+        otherCount > alsoInProgressRowCap
+    }
+
+    /// VoiceOver label for a See all link: names the shelf, not just "See all".
+    static func seeAllAccessibilityLabel(_ destination: SeeAllDestination) -> String {
+        switch destination {
+        case .recentlyAdded: return String(localized: "See all recently added", comment: "VoiceOver: Home's Recently Added shelf link to the whole library, newest first")
+        case .series: return String(localized: "See all series", comment: "VoiceOver: Home's Next in Series shelf link to the Series list")
+        case .downloads: return String(localized: "See all downloaded books", comment: "VoiceOver: Home's Downloaded shelf link to the Downloads screen")
+        case .alsoInProgress: return String(localized: "See all books in progress", comment: "VoiceOver: Home's Also in Progress link to every in-progress book")
+        case .listenAgain: return String(localized: "See all finished books", comment: "VoiceOver: Home's Listen Again shelf link to every finished book, most recently finished first")
+        case .narrators: return String(localized: "See all narrators", comment: "VoiceOver: Home's From Narrators You Follow shelf link to the Narrators list")
+        }
+    }
+
+    /// Recently Added's full page: another page to fetch while fewer than `total` are
+    /// loaded and the last page wasn't empty (a server that under-reports can't loop).
+    static func recentlyAddedHasMore(loaded: Int, total: Int, lastPageCount: Int) -> Bool {
+        lastPageCount > 0 && loaded < total
+    }
+
+    // MARK: Batch 496 (REVIEW 2026-11-11 N5): the profile button
+
+    /// Home's profile button: shown when there is someone to switch to (more than one saved
+    /// account) or a child profile exists, and never while App Lock is locked.
+    static func showsProfileButton(savedAccountCount: Int, hasAnyKid: Bool, isAppLocked: Bool) -> Bool {
+        guard !isAppLocked else { return false }
+        return savedAccountCount > 1 || hasAnyKid
     }
 
     enum PlaybackState: Equatable { case none, playing, paused }

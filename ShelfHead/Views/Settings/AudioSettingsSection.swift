@@ -12,10 +12,13 @@ struct AudioSettingsSection: View {
     /// on got no toast, no badge, just controls that quietly stopped working. See
     /// `AudioProcessingStatus`'s doc comment (`AudioProcessingChain.swift`).
     @State private var processingStatus = AudioProcessingStatus.shared
+    /// Batch 496 (REVIEW 2026-11-11 P3): the player's Sound sheet passes its own decision
+    /// (`SoundSheetLayout.showsFormatNotice`); Settings keeps the default and shows it as before.
+    var showsFormatNotice: Bool = true
 
     var body: some View {
         Section {
-            if processingStatus.formatUnsupportedThisSession {
+            if showsFormatNotice && processingStatus.formatUnsupportedThisSession {
                 Typo.supporting(Label {
                     Text("This book’s audio format isn’t supported by these controls — volume boost, bass, and treble are off for this playback session.")
                 } icon: {

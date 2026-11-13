@@ -227,10 +227,16 @@ struct SystemPrivacySettingsSection: View {
     @AppStorage(SettingsKeys.dailyReminder) private var dailyReminder = false
     @AppStorage(SettingsKeys.dailyReminderHour) private var reminderHour = 19
     @AppStorage(SettingsKeys.dailyReminderMinute) private var reminderMinute = 0
+    // Batch 495 (REVIEW 2026-11-11 Y1): every notification switch lives in this section now.
+    @AppStorage(SettingsKeys.notifyDownloadComplete) private var notifyDownloadComplete = false
+    @AppStorage(SettingsKeys.releaseReminderNotifications) private var releaseReminders = true
+    @AppStorage(SettingsKeys.householdRecommendationNotifications) private var householdNotifications = true
 
     /// L3 (REVIEW_2026-08-20_UI_SECURITY.md): a denied notification permission used to
     /// snap the reminder toggle back off with no explanation. Moved here with the toggle.
     @State private var showNotificationsDeniedAlert = false
+    /// Batch 495: turning iCloud position sync off asks whether to delete what is already there.
+    @State private var showCloudDeleteDialog = false
 
     /// Bridges the stored hour/minute to a DatePicker Date, rescheduling on change.
     private var reminderTimeBinding: Binding<Date> {
@@ -247,6 +253,17 @@ struct SystemPrivacySettingsSection: View {
                 }
             }
         )
+    }
+
+    /// Batch 495 (Y1): the L3 pattern shared by the notification switches — ask for permission
+    /// when one is turned on; if it's refused, turn the switch back off and explain why.
+    private func requestPermissionOrRevert(_ revert: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            if !(await NotificationManager.requestAuthorization()) {
+                revert()
+                showNotificationsDeniedAlert = true
+            }
+        }
     }
 
     var body: some View {
@@ -312,6 +329,28 @@ struct SystemPrivacySettingsSection: View {
                     Toggle(isOn: $cloudPositionSync) {
                         settingRow("icloud", "Sync positions with iCloud")
                     }
+                    .onChange(of: cloudPositionSync) { _, on in
+                        // Batch 495: off stops new writes; what is already in iCloud stays
+                        // unless the listener chooses to delete it here.
+                        if !on { showCloudDeleteDialog = true }
+                    }
+                    .tint(Color.shelfAmberText) // keeps the switch amber under systemChromeTint() below
+                    .confirmationDialog(String(localized: "Delete Positions from iCloud?",
+                                               comment: "Confirmation title after turning off iCloud position sync"),
+                                        isPresented: $showCloudDeleteDialog, titleVisibility: .visible) {
+                        Button(String(localized: "Delete Positions from iCloud",
+                                      comment: "Destructive button: remove saved book positions from iCloud"),
+                               role: .destructive) {
+                            CloudPositionStore.shared.deleteAllFromCloud()
+                        }
+                        Button(String(localized: "Keep in iCloud",
+                                      comment: "Button: leave saved book positions in iCloud"),
+                               role: .cancel) {}
+                    } message: {
+                        Text(String(localized: "Deleting removes your saved positions from iCloud on your other devices too.",
+                                    comment: "Message under the Delete Positions from iCloud confirmation"))
+                    }
+                    .systemChromeTint()
                     SettingsCaption(text: "A backup for when your server is down.",
                                     topic: "iCloud position sync",
                                     detail: "Keeps your last position for each book in iCloud, so you can pick up where you left off when your server can\u{2019}t be reached.")
@@ -348,6 +387,47 @@ struct SystemPrivacySettingsSection: View {
                     DatePicker(selection: reminderTimeBinding, displayedComponents: .hourAndMinute) {
                         settingRow("clock", "Reminder time")
                     }
+                }
+
+                // Batch 495 (REVIEW 2026-11-11 Y1): moved here from Settings › Downloads so this
+                // is the one list of notification switches. Same key, same permission handling.
+                Toggle(isOn: $notifyDownloadComplete) {
+                    settingRow("bell.badge", "Notify when downloads finish")
+                }
+                .onChange(of: notifyDownloadComplete) { _, on in
+                    if on { requestPermissionOrRevert { notifyDownloadComplete = false } }
+                }
+                .settingsRowAnchor(SettingsRow.notifyDownloadComplete)
+
+                // Batch 495 (Y1): Release Radar reminders are scheduled one book at a time from
+                // Release Radar; this switch silences them all. Off cancels the pending ones.
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(isOn: $releaseReminders) {
+                        settingRow("calendar.badge.clock", "Release-day reminders")
+                    }
+                    .onChange(of: releaseReminders) { _, on in
+                        if on {
+                            requestPermissionOrRevert { releaseReminders = false }
+                        } else {
+                            Task { await NotificationManager.cancelAllReleaseReminders() }
+                        }
+                    }
+                    SettingsCaption(text: "For books you asked Release Radar to remind you about.")
+                }
+                .settingsRowAnchor(SettingsRow.releaseReminders)
+
+                // Batch 495 (Y1): the Household recommendation notification had no switch.
+                if HouseholdStore.shared.isSocialAvailable {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle(isOn: $householdNotifications) {
+                            settingRow("person.2", "Household recommendations")
+                        }
+                        .onChange(of: householdNotifications) { _, on in
+                            if on { requestPermissionOrRevert { householdNotifications = false } }
+                        }
+                        SettingsCaption(text: "When someone in your household recommends a book to you.")
+                    }
+                    .settingsRowAnchor(SettingsRow.householdNotifications)
                 }
             } header: {
                 RetroSectionHeader(title: "Notifications")

@@ -76,6 +76,10 @@ enum SettingsKeys {
     static let smartSleepTimer = "settings_smartSleepTimer"        // snap to chapter end near the target (F2)
     static let librarySortOption = "settings_librarySortOption"    // LibrarySort.rawValue
     static let librarySortDescending = "settings_librarySortDescending"
+    // Batch 496 (REVIEW 2026-11-11 L8): Series browse sort, remembered like the Books sort (global, not per library).
+    static let seriesSortOption = "settings_seriesSortOption"      // SeriesSortOption.rawValue
+    static let seriesSortDescending = "settings_seriesSortDescending"
+    static let seriesHideFinished = "settings_seriesHideFinished"
     static let libraryProgressFilter = "settings_libraryProgressFilter"  // LibraryProgressFilter.rawValue
     // `settings_libraryDownloadedOnly` was retired in G6 (REVIEW_2026-09-04_UI.md): the
     // Downloaded filter is per-session view state now. Any value left on disk from
@@ -255,6 +259,19 @@ enum SettingsStore {
     static var librarySortOption: LibrarySort {
         get { LibrarySort(rawValue: UserDefaults.standard.string(forKey: SettingsKeys.librarySortOption) ?? "") ?? .title }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: SettingsKeys.librarySortOption) }
+    }
+    // Batch 496 (REVIEW 2026-11-11 L8): Series browse sort / direction / Hide finished.
+    static var seriesSortOption: SeriesSortOption {
+        get { SeriesSortOption(rawValue: UserDefaults.standard.string(forKey: SettingsKeys.seriesSortOption) ?? "") ?? .name }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: SettingsKeys.seriesSortOption) }
+    }
+    static var seriesSortDescending: Bool {
+        get { UserDefaults.standard.bool(forKey: SettingsKeys.seriesSortDescending) }
+        set { UserDefaults.standard.set(newValue, forKey: SettingsKeys.seriesSortDescending) }
+    }
+    static var seriesHideFinished: Bool {
+        get { UserDefaults.standard.bool(forKey: SettingsKeys.seriesHideFinished) }
+        set { UserDefaults.standard.set(newValue, forKey: SettingsKeys.seriesHideFinished) }
     }
     static var librarySortDescending: Bool {
         get { UserDefaults.standard.bool(forKey: SettingsKeys.librarySortDescending) }
@@ -714,14 +731,8 @@ enum SettingsStore {
 
     /// Seconds to rewind on resume, scaled by how long playback was paused.
     static func smartRewindAmount(pausedFor seconds: TimeInterval) -> Double {
-        guard smartRewind else { return 0 }
-        switch seconds {
-        case ..<10: return 0
-        case ..<60: return 3
-        case ..<600: return 5
-        case ..<3600: return 10
-        default: return 20
-        }
+        // Batch 495 (W7): one scale for the phone and the Watch's standalone player.
+        WatchSmartRewind.seconds(pausedFor: seconds, isEnabled: smartRewind)
     }
 
     // MARK: - Per-book speed memory

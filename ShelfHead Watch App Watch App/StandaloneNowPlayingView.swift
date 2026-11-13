@@ -202,8 +202,8 @@ private struct StandaloneNowPlayingPage: View {
             return WatchNowPlayingModel(
                 title: title, author: author, chapterTitle: nil, coverData: coverData,
                 elapsed: 0, duration: 0, isPlaying: false, isReady: false,
-                skipBackwardSeconds: StandaloneAudioEngine.skipBackwardSeconds,
-                skipForwardSeconds: StandaloneAudioEngine.skipForwardSeconds,
+                skipBackwardSeconds: engine.skipBackwardInterval,
+                skipForwardSeconds: engine.skipForwardInterval,
                 speed: engine.playbackRate, sleepSecondsLeft: nil, source: .watch,
                 sleepUnavailableReason: String(localized: "Play a book on this Watch to set a sleep timer."))
         }
@@ -218,11 +218,11 @@ private struct StandaloneNowPlayingPage: View {
             // Batch 490 (REVIEW 2026-11-11 F29): the ring while a stream stalls; never
             // for a download (`StandaloneAudioEngine.isBuffering`).
             isBuffering: engine.isBuffering,
-            // The engine's own 15/30 (its skip commands and the remote-command
-            // router's `preferredIntervals` use the same constants), so the glyph and
-            // the VoiceOver label state what a tap actually does.
-            skipBackwardSeconds: StandaloneAudioEngine.skipBackwardSeconds,
-            skipForwardSeconds: StandaloneAudioEngine.skipForwardSeconds,
+            // The engine's own intervals (its skip commands and the remote-command
+            // router's `preferredIntervals` use the same values; Batch 495 W7 made them
+            // the iPhone's), so the glyph and the VoiceOver label state what a tap does.
+            skipBackwardSeconds: engine.skipBackwardInterval,
+            skipForwardSeconds: engine.skipForwardInterval,
             speed: engine.playbackRate,
             sleepSecondsLeft: engine.sleepTimer?.secondsLeft(currentTime: engine.currentTime),
             source: .watch,
